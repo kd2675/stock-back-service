@@ -1,0 +1,45 @@
+server:
+  port: 30480
+
+spring:
+  config:
+    activate:
+      on-profile: test
+  cloud:
+    discovery:
+      enabled: false
+  test:
+    database:
+      replace: any
+  data:
+    redis:
+      repositories:
+        enabled: false
+
+eureka:
+  client:
+    enabled: false
+    registerWithEureka: false
+    fetchRegistry: false
+
+stock:
+  market:
+    price-stream:
+      redis-listener-enabled: false
+
+database:
+  datasource:
+    pub:
+      master:
+        url: jdbc:h2:mem:stock_service_testdb;MODE=MySQL;DB_CLOSE_DELAY=-1;DATABASE_TO_UPPER=false
+        driver-class-name: org.h2.Driver
+        username: sa
+        password:
+      slave1:
+        url: jdbc:h2:mem:stock_service_testdb;MODE=MySQL;DB_CLOSE_DELAY=-1;DATABASE_TO_UPPER=false
+        driver-class-name: org.h2.Driver
+        username: sa
+        password:
+  jpa:
+    hibernate:
+      ddl-auto: create-drop

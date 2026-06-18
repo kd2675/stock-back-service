@@ -1,0 +1,80 @@
+spring:
+  config:
+    import:
+      - optional:file:.env[.properties]
+      - optional:file:stock-back-service/.env[.properties]
+  application:
+    name: stock-back-service
+  profiles:
+    active: local
+    group:
+      local: local
+      test: test
+      dev: dev
+      prod: prod
+  devtools:
+    livereload:
+      enabled: false
+    restart:
+      enabled: false
+  cloud:
+    discovery:
+      enabled: true
+    openfeign:
+      client:
+        config:
+          default:
+            connectTimeout: 5000
+            readTimeout: 5000
+            loggerLevel: basic
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        format_sql: true
+        use_sql_comments: true
+        jdbc:
+          batch_size: 20
+          fetch_size: 50
+  jackson:
+    date-format: yyyy-MM-dd HH:mm:ss
+    serialization:
+      FAIL_ON_EMPTY_BEANS: false
+  data:
+    jpa:
+      repositories:
+        enabled: false
+    redis:
+      host: ${STOCK_REDIS_HOST:localhost}
+      port: ${STOCK_REDIS_PORT:6379}
+
+database:
+  jpa:
+    hibernate:
+      ddl-auto: validate
+
+stock:
+  trading:
+    initial-cash: ${STOCK_INITIAL_CASH:10000000}
+
+eureka:
+  client:
+    serviceUrl:
+      defaultZone: http://localhost:8761/eureka/
+    registerWithEureka: true
+    fetchRegistry: true
+  instance:
+    preferIpAddress: true
+    hostname: localhost
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,metrics,info
+      base-path: /actuator
+  endpoint:
+    health:
+      show-details: always

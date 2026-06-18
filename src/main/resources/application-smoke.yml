@@ -1,0 +1,10 @@
+spring:
+  config:
+    activate:
+      on-profile: smoke
+  jpa:
+    defer-datasource-initialization: true
+  sql:
+    init:
+      mode: always
+      data-locations: classpath:db/ddl/stock_h2_smoke_data.sql

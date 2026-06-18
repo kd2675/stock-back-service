@@ -1,0 +1,35 @@
+server:
+  port: 10480
+
+spring:
+  config:
+    activate:
+      on-profile: prod
+  data:
+    redis:
+      host: ${STOCK_REDIS_HOST}
+      port: ${STOCK_REDIS_PORT}
+
+database:
+  datasource:
+    pub:
+      master:
+        url: ${STOCK_DB_URL}
+        username: ${STOCK_DB_USERNAME}
+        password: ${STOCK_DB_PASSWORD}
+        driver-class-name: com.mysql.cj.jdbc.Driver
+        configure:
+          maximum-pool-size: ${STOCK_DB_MAX_POOL_SIZE:8}
+          connection-timeout: ${STOCK_DB_CONNECTION_TIMEOUT:30000}
+          max-lifetime: ${STOCK_DB_MAX_LIFETIME:540000}
+          keepalive-time: ${STOCK_DB_KEEPALIVE_TIME:300000}
+      slave1:
+        url: ${STOCK_DB_SLAVE_URL:${STOCK_DB_URL}}
+        username: ${STOCK_DB_SLAVE_USERNAME:${STOCK_DB_USERNAME}}
+        password: ${STOCK_DB_SLAVE_PASSWORD:${STOCK_DB_PASSWORD}}
+        driver-class-name: com.mysql.cj.jdbc.Driver
+        configure:
+          maximum-pool-size: ${STOCK_DB_SLAVE_MAX_POOL_SIZE:${STOCK_DB_MAX_POOL_SIZE:8}}
+          connection-timeout: ${STOCK_DB_SLAVE_CONNECTION_TIMEOUT:${STOCK_DB_CONNECTION_TIMEOUT:30000}}
+          max-lifetime: ${STOCK_DB_SLAVE_MAX_LIFETIME:${STOCK_DB_MAX_LIFETIME:540000}}
+          keepalive-time: ${STOCK_DB_SLAVE_KEEPALIVE_TIME:${STOCK_DB_KEEPALIVE_TIME:300000}}

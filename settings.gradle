@@ -1,0 +1,7 @@
+rootProject.name = 'stock-back-service'
+
+include 'web-common-core'
+include 'auth-common-core'
+
+project(':web-common-core').projectDir = file('../web-common-core')
+project(':auth-common-core').projectDir = file('../auth-common-core')
