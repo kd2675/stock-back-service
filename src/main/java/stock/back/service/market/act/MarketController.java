@@ -23,6 +23,7 @@ import stock.back.service.market.vo.AutoMarketConfigResponse;
 import stock.back.service.market.vo.AutoMarketConfigUpdateRequest;
 import stock.back.service.market.vo.AutoParticipantCashAdjustmentRequest;
 import stock.back.service.market.vo.AutoParticipantCashAdjustmentResponse;
+import stock.back.service.market.vo.AutoParticipantOverviewResponse;
 import stock.back.service.market.vo.AutoParticipantRequest;
 import stock.back.service.market.vo.AutoParticipantResponse;
 import stock.back.service.market.vo.AutoParticipantSymbolConfigRequest;
@@ -33,6 +34,8 @@ import stock.back.service.market.vo.CorporateActionResponse;
 import stock.back.service.market.vo.InstrumentResponse;
 import stock.back.service.market.vo.InstrumentReportRequest;
 import stock.back.service.market.vo.InstrumentReportResponse;
+import stock.back.service.market.vo.ListingAutoAccountRequest;
+import stock.back.service.market.vo.ListingAutoAccountResponse;
 import stock.back.service.market.vo.MarketStatusUpdateRequest;
 import stock.back.service.market.vo.OrderBookInstrumentRequest;
 import stock.back.service.market.vo.OrderBookInstrumentResponse;
@@ -180,6 +183,21 @@ public class MarketController {
     @GetMapping("/auto-market")
     public ResponseDataDTO<AutoMarketStatusResponse> getAutoMarketStatus() {
         return ResponseDataDTO.of(marketService.getAutoMarketStatus());
+    }
+
+    @GetMapping("/auto-market/participants/overviews")
+    @RequirePrincipalRole(anyOf = {UserRole.ADMIN})
+    public ResponseDataDTO<List<AutoParticipantOverviewResponse>> getAutoParticipantOverviews() {
+        return ResponseDataDTO.of(marketService.getAutoParticipantOverviews());
+    }
+
+    @PatchMapping("/auto-market/listing-accounts/{symbol}")
+    @RequirePrincipalRole(anyOf = {UserRole.ADMIN})
+    public ResponseDataDTO<ListingAutoAccountResponse> updateListingAutoAccountConfig(
+            @PathVariable String symbol,
+            @RequestBody ListingAutoAccountRequest request
+    ) {
+        return ResponseDataDTO.of(marketService.updateListingAutoAccountConfig(symbol, request));
     }
 
     @PatchMapping("/auto-market/configs/{symbol}")

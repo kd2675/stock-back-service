@@ -62,14 +62,15 @@
 
 ## 자동장 반영
 
-자동장은 참여자별 1~10 성향을 기본으로 한다. 최신 활성 평가 보고서 점수가 있으면 참여자 성향과 보고서 점수를 섞어 유효 강도를 만든다.
+자동장은 참여자별 1~10 성향을 기본으로 한다. 최신 활성 평가 보고서 점수가 있으면 자동 참여자 심리 프로필의 뉴스 민감도에 따라 참여자 성향과 보고서 점수를 섞어 유효 강도를 만든다.
 
-현재 비율:
+현재 반영 방식:
 
-- 참여자 성향: 65%
-- 보고서 점수: 35%
+- `NEWS_REACTIVE`는 보고서 점수를 크게 반영한다.
+- `NOISE_TRADER`, `SCALPER`, `HERD_FOLLOWER` 등은 보고서 점수를 일부만 반영한다.
+- `OBSERVER`, `MARKET_MAKER`, `VALUE_ANCHOR` 등은 보고서 점수보다 기존 전략과 호가/가격 흐름을 더 크게 본다.
 
-이 비율을 둔 이유:
+이 방식을 둔 이유:
 
 - 자동 참여자 성향이 개별 행위자의 주된 개성이다.
 - 평가 보고서는 종목별 관리 신호이지만, 모든 참여자를 같은 방향으로 완전히 덮으면 주문장이 단조로워진다.
@@ -84,7 +85,7 @@
 ## 변경 순서
 
 1. 보고서 필드나 점수 정책을 먼저 문서에 정의한다.
-2. `stock_instrument_report_event` DDL, H2 DDL, alter DDL을 함께 바꾼다.
+2. `stock_instrument_report_event` MySQL DDL과 H2 DDL을 함께 바꾼다.
 3. `StockInstrumentReportEvent`, request/response DTO를 바꾼다.
 4. `MarketService` validation과 최신 보고서 조회 규칙을 바꾼다.
 5. 자동장 영향이 있으면 `AutoMarketReader`와 `AutoMarketService.effectiveIntensity`를 함께 바꾼다.

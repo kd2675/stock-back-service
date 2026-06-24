@@ -4,5 +4,6 @@ public enum StockCorporateActionStatus {
     ANNOUNCED,
     EX_RIGHTS_APPLIED,
     PAID,
-    LISTED
+    LISTED,
+    DELISTED
 }

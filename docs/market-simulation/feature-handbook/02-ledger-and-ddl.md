@@ -21,11 +21,9 @@ stock 원장은 주문, 체결, 계좌, 보유, 가격, 주문장 종목, 기업
 ## DDL 파일
 
 - `stock-back-service/src/main/resources/db/ddl/stock_all.sql`
-- `stock-back-service/src/main/resources/db/ddl/stock_market_execution_split_alter.sql`
 - `stock-batch-service/src/main/resources/db/ddl/stock_all.sql`
 - `stock-batch-service/src/main/resources/db/ddl/stock_h2.sql`
 - `stock-batch-service/src/main/resources/db/ddl/stock_h2_smoke_data.sql`
-- `stock-batch-service/src/main/resources/db/ddl/stock_market_execution_split_alter.sql`
 
 ## 계좌 복구 정책
 
@@ -44,16 +42,15 @@ stock 원장은 주문, 체결, 계좌, 보유, 가격, 주문장 종목, 기업
 - append-only 이력이 필요한 기능은 기존 row update만으로 끝내지 말고 별도 event table을 먼저 설계한다.
 - 체결, 기업 이벤트, 정산처럼 돈/수량을 바꾸는 기능은 DB constraint와 service validation을 같이 둔다.
 - 기업 이벤트 원장은 타입별 필수 컬럼뿐 아니라 타입별로 의미 없는 컬럼도 DB constraint에서 거부한다.
-- 기존 DB용 alter DDL은 새 constraint를 추가하기 전에 과거 row를 먼저 보정해야 한다.
+- 기존 DB를 유지한 채 제약을 추가해야 하는 경우에는 적용 전 과거 row를 먼저 보정해야 한다.
 - DDL은 seed 데이터를 기본으로 만들지 않는다. smoke data는 별도 파일에만 둔다.
 
 ## 변경 순서
 
 1. 원장 컬럼/테이블이 필요한지 먼저 결정한다.
 2. MySQL full DDL을 수정한다.
-3. 운영 반영용 alter DDL을 수정한다.
-4. H2 DDL과 smoke data를 수정한다.
-5. back entity/repository/DTO를 수정한다.
+3. H2 DDL과 smoke data를 수정한다.
+4. back entity/repository/DTO를 수정한다.
 6. batch SQL row mapper와 service를 수정한다.
 7. front type/API/screen을 수정한다.
 8. DDL contract test를 추가한다.

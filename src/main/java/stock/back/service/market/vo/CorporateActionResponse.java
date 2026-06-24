@@ -20,6 +20,8 @@ public record CorporateActionResponse(
         LocalDate exRightsDate,
         LocalDate paymentDate,
         LocalDate listingDate,
+        LocalDate delistingDate,
+        String delistingTreatment,
         LocalDateTime appliedAt,
         LocalDateTime paidAt,
         LocalDateTime listedAt,

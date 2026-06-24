@@ -7,6 +7,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.ResultSetExtractor;
 import stock.back.service.common.exception.StockException;
 import stock.back.service.database.entity.PortfolioSnapshot;
 import stock.back.service.database.entity.StockAccount;
@@ -22,6 +23,7 @@ import stock.back.service.database.entity.StockAutoParticipant;
 import stock.back.service.database.entity.StockAutoParticipantSymbolConfig;
 import stock.back.service.database.entity.StockInstrumentReportEvent;
 import stock.back.service.database.entity.StockInstrumentReportEventType;
+import stock.back.service.database.entity.StockListingAutoAccountConfig;
 import stock.back.service.database.entity.StockOrderBookInstrument;
 import stock.back.service.database.entity.StockPrice;
 import stock.back.service.database.entity.StockPriceTick;
@@ -36,6 +38,7 @@ import stock.back.service.database.repository.StockCorporateActionRepository;
 import stock.back.service.database.repository.StockExecutionMarketViewRepository;
 import stock.back.service.database.repository.StockInstrumentRepository;
 import stock.back.service.database.repository.StockInstrumentReportEventRepository;
+import stock.back.service.database.repository.StockListingAutoAccountConfigRepository;
 import stock.back.service.database.repository.StockOrderBookInstrumentRepository;
 import stock.back.service.database.repository.StockOrderBookMarketConfigRepository;
 import stock.back.service.database.repository.StockOrderRepository;
@@ -52,6 +55,7 @@ import stock.back.service.market.vo.InstrumentReportRequest;
 import stock.back.service.market.vo.OrderBookInstrumentRequest;
 
 import java.math.BigDecimal;
+import java.sql.ResultSet;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -122,6 +126,9 @@ class MarketServiceTest {
     private StockInstrumentReportEventRepository stockInstrumentReportEventRepository;
 
     @Mock
+    private StockListingAutoAccountConfigRepository stockListingAutoAccountConfigRepository;
+
+    @Mock
     private JdbcTemplate jdbcTemplate;
 
     private MarketService marketService;
@@ -147,6 +154,7 @@ class MarketServiceTest {
                 stockCorporateActionRepository,
                 stockCorporateActionEntitlementRepository,
                 stockInstrumentReportEventRepository,
+                stockListingAutoAccountConfigRepository,
                 jdbcTemplate
         );
     }
@@ -172,12 +180,15 @@ class MarketServiceTest {
                         new BigDecimal("70000.00"),
                         100000L,
                         new BigDecimal("5.00"),
-                        new BigDecimal("30.00")
+                        new BigDecimal("30.00"),
+                        null
                 )
         );
 
         ArgumentCaptor<StockCorporateAction> actionCaptor = ArgumentCaptor.forClass(StockCorporateAction.class);
+        ArgumentCaptor<StockListingAutoAccountConfig> listingConfigCaptor = ArgumentCaptor.forClass(StockListingAutoAccountConfig.class);
         verify(stockCorporateActionRepository).save(actionCaptor.capture());
+        verify(stockListingAutoAccountConfigRepository).save(listingConfigCaptor.capture());
         assertThat(response.symbol()).isEqualTo("ZQ001");
         assertThat(response.issuedShares()).isEqualTo(100000L);
         assertThat(response.tradableShares()).isEqualTo(100000L);
@@ -200,19 +211,17 @@ class MarketServiceTest {
                 org.mockito.ArgumentMatchers.eq(123L),
                 org.mockito.ArgumentMatchers.eq("ZQ001"),
                 org.mockito.ArgumentMatchers.eq(100000L),
-                org.mockito.ArgumentMatchers.eq(100000L),
+                org.mockito.ArgumentMatchers.eq(0L),
                 org.mockito.ArgumentMatchers.eq(new BigDecimal("70000.00")),
                 org.mockito.ArgumentMatchers.any(LocalDateTime.class)
         );
-        verify(jdbcTemplate).update(
+        assertThat(listingConfigCaptor.getValue().getSymbol()).isEqualTo("ZQ001");
+        assertThat(listingConfigCaptor.getValue().getUserKey()).isEqualTo("stock-listing-zq001");
+        assertThat(listingConfigCaptor.getValue().getDisplayName()).isEqualTo("제로큐 주문장 상장주관사");
+        assertThat(listingConfigCaptor.getValue().getMaxOrderQuantity()).isEqualTo(100);
+        verify(jdbcTemplate, never()).update(
                 org.mockito.ArgumentMatchers.contains("insert into stock_order"),
-                org.mockito.ArgumentMatchers.eq("listing-ZQ001"),
-                org.mockito.ArgumentMatchers.eq(123L),
-                org.mockito.ArgumentMatchers.eq("ZQ001"),
-                org.mockito.ArgumentMatchers.eq(new BigDecimal("70000.00")),
-                org.mockito.ArgumentMatchers.eq(100000L),
-                org.mockito.ArgumentMatchers.any(LocalDateTime.class),
-                org.mockito.ArgumentMatchers.any(LocalDateTime.class)
+                org.mockito.ArgumentMatchers.<Object[]>any()
         );
     }
 
@@ -292,6 +301,55 @@ class MarketServiceTest {
     }
 
     @Test
+    void getAutoMarketStatus_listingAutoAccount_includesLedgerSnapshot() throws Exception {
+        StockListingAutoAccountConfig listingConfig = StockListingAutoAccountConfig.defaults(
+                "ZQ001",
+                "stock-listing-zq001",
+                "제로큐 상장주관사",
+                100000L
+        );
+        when(stockAutoMarketConfigRepository.findAll()).thenReturn(List.of());
+        when(stockAutoParticipantRepository.findByWithdrawnAtIsNullOrderByUserKeyAsc()).thenReturn(List.of());
+        when(stockAutoParticipantSymbolConfigRepository.findAllByOrderByUserKeyAscSymbolAsc()).thenReturn(List.of());
+        when(stockListingAutoAccountConfigRepository.findAllByOrderBySymbolAsc()).thenReturn(List.of(listingConfig));
+        when(stockAutoParticipantRepository.countByEnabledTrueAndWithdrawnAtIsNull()).thenReturn(0L);
+        when(stockOrderRepository.countOpenAutoOrders(any(), any())).thenReturn(0L);
+        when(stockExecutionMarketViewRepository.countAutoExecutionsFrom(any())).thenReturn(0L);
+        when(jdbcTemplate.query(
+                org.mockito.ArgumentMatchers.contains("from stock_account a"),
+                org.mockito.ArgumentMatchers.<ResultSetExtractor<?>>any(),
+                org.mockito.ArgumentMatchers.eq("ZQ001"),
+                org.mockito.ArgumentMatchers.eq("ZQ001"),
+                org.mockito.ArgumentMatchers.eq("stock-listing-zq001")
+        )).thenAnswer(invocation -> {
+            @SuppressWarnings("unchecked")
+            ResultSetExtractor<Object> extractor = (ResultSetExtractor<Object>) invocation.getArgument(1);
+            ResultSet resultSet = org.mockito.Mockito.mock(ResultSet.class);
+            when(resultSet.next()).thenReturn(true);
+            when(resultSet.getLong("account_id")).thenReturn(77L);
+            when(resultSet.getLong("holding_quantity")).thenReturn(100000L);
+            when(resultSet.getLong("reserved_quantity")).thenReturn(1200L);
+            when(resultSet.getBigDecimal("cash_balance")).thenReturn(new BigDecimal("350000.00"));
+            when(resultSet.getBigDecimal("average_price")).thenReturn(new BigDecimal("70000.00"));
+            when(resultSet.getBigDecimal("current_price")).thenReturn(new BigDecimal("72000.00"));
+            return extractor.extractData(resultSet);
+        });
+
+        var response = marketService.getAutoMarketStatus();
+
+        assertThat(response.listingAutoAccounts()).hasSize(1);
+        var listingAccount = response.listingAutoAccounts().get(0);
+        assertThat(listingAccount.accountId()).isEqualTo(77L);
+        assertThat(listingAccount.holdingQuantity()).isEqualTo(100000L);
+        assertThat(listingAccount.reservedQuantity()).isEqualTo(1200L);
+        assertThat(listingAccount.availableQuantity()).isEqualTo(98800L);
+        assertThat(listingAccount.cashBalance()).isEqualByComparingTo(new BigDecimal("350000.00"));
+        assertThat(listingAccount.averagePrice()).isEqualByComparingTo(new BigDecimal("70000.00"));
+        assertThat(listingAccount.currentPrice()).isEqualByComparingTo(new BigDecimal("72000.00"));
+        assertThat(listingAccount.marketValue()).isEqualByComparingTo(new BigDecimal("7200000000.00"));
+    }
+
+    @Test
     void upsertAutoParticipant_existingParticipant_updatesProfileOnly() {
         StockAutoParticipant participant = StockAutoParticipant.create(
                 "stock-auto-001",
@@ -306,11 +364,24 @@ class MarketServiceTest {
 
         var response = marketService.upsertAutoParticipant(
                 "stock-auto-001",
-                new AutoParticipantRequest("자동 참여자 수정", false)
+                new AutoParticipantRequest("자동 참여자 수정", false, "NEWS_REACTIVE")
         );
 
         assertThat(response.displayName()).isEqualTo("자동 참여자 수정");
         assertThat(response.enabled()).isFalse();
+        assertThat(response.profileType()).isEqualTo("NEWS_REACTIVE");
+    }
+
+    @Test
+    void upsertAutoParticipant_invalidProfileType_throwsBadRequest() {
+        assertThatThrownBy(() -> marketService.upsertAutoParticipant(
+                "stock-auto-001",
+                new AutoParticipantRequest("자동 참여자 수정", true, "UNKNOWN_PROFILE")
+        ))
+                .isInstanceOf(StockException.class)
+                .hasMessageContaining("Unknown auto participant profile type");
+
+        verify(stockAutoParticipantRepository, never()).save(any());
     }
 
     @Test
@@ -386,6 +457,30 @@ class MarketServiceTest {
         assertThat(response.score()).isEqualTo(8);
         assertThat(eventCaptor.getValue().getRiseReason()).contains("수요 회복");
         assertThat(eventCaptor.getValue().getFallReason()).contains("원가 상승");
+    }
+
+    @Test
+    void publishInstrumentReport_withoutRiseAndFallReasons_recordsOptionalReasonsAsNull() {
+        when(stockOrderBookInstrumentRepository.existsById("ZQ001")).thenReturn(true);
+        when(stockInstrumentReportEventRepository.save(any(StockInstrumentReportEvent.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        marketService.publishInstrumentReport(
+                "zq001",
+                new InstrumentReportRequest(
+                        "점수 보고서",
+                        "점수와 요약만으로 자동장 평가를 반영합니다.",
+                        6,
+                        "",
+                        null
+                ),
+                "admin-user"
+        );
+
+        ArgumentCaptor<StockInstrumentReportEvent> eventCaptor = ArgumentCaptor.forClass(StockInstrumentReportEvent.class);
+        verify(stockInstrumentReportEventRepository).save(eventCaptor.capture());
+        assertThat(eventCaptor.getValue().getRiseReason()).isNull();
+        assertThat(eventCaptor.getValue().getFallReason()).isNull();
     }
 
     @Test
@@ -564,6 +659,46 @@ class MarketServiceTest {
                 .hasMessageContaining("Initial issue is only allowed when creating an instrument");
         verify(stockOrderBookInstrumentRepository, never()).findById(any());
         verify(stockCorporateActionRepository, never()).save(any());
+    }
+
+    @Test
+    void applyCorporateAction_delisting_recordsZeroValueEventWithoutOpenOrderPrecondition() {
+        StockOrderBookInstrument instrument = StockOrderBookInstrument.listed(
+                "ZQ001",
+                "제로큐 주문장",
+                "ORDERBOOK",
+                new BigDecimal("70000.00"),
+                100000L
+        );
+        LocalDate delistingDate = LocalDate.now().plusDays(3);
+        when(stockOrderBookInstrumentRepository.findById("ZQ001")).thenReturn(Optional.of(instrument));
+        when(stockPriceRepository.findById("ZQ001")).thenReturn(Optional.empty());
+
+        var response = marketService.applyCorporateAction(
+                "zq001",
+                new CorporateActionRequest(
+                        StockCorporateActionType.DELISTING,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        delistingDate,
+                        null,
+                        "상장폐지"
+                )
+        );
+
+        ArgumentCaptor<StockCorporateAction> actionCaptor = ArgumentCaptor.forClass(StockCorporateAction.class);
+        verify(stockCorporateActionRepository).save(actionCaptor.capture());
+        verify(jdbcTemplate, never()).queryForObject(any(String.class), org.mockito.ArgumentMatchers.eq(Long.class), any());
+        assertThat(response.enabled()).isTrue();
+        assertThat(actionCaptor.getValue().getActionType()).isEqualTo(StockCorporateActionType.DELISTING);
+        assertThat(actionCaptor.getValue().getStatus().name()).isEqualTo("ANNOUNCED");
+        assertThat(actionCaptor.getValue().getDelistingDate()).isEqualTo(delistingDate);
+        assertThat(actionCaptor.getValue().getDelistingTreatment().name()).isEqualTo("ZERO_VALUE");
     }
 
     @Test

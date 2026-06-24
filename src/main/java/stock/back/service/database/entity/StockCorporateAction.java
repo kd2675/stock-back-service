@@ -61,6 +61,13 @@ public class StockCorporateAction {
     @Column(name = "listing_date")
     private LocalDate listingDate;
 
+    @Column(name = "delisting_date")
+    private LocalDate delistingDate;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "delisting_treatment", length = 30)
+    private StockDelistingTreatment delistingTreatment;
+
     @Column(name = "applied_at")
     private LocalDateTime appliedAt;
 
@@ -182,6 +189,14 @@ public class StockCorporateAction {
         StockCorporateAction action = create(symbol, StockCorporateActionType.STOCK_SPLIT, null, null, splitFrom, splitTo, description);
         action.status = StockCorporateActionStatus.ANNOUNCED;
         action.listingDate = listingDate;
+        return action;
+    }
+
+    public static StockCorporateAction delisting(String symbol, LocalDate delistingDate, String description) {
+        StockCorporateAction action = create(symbol, StockCorporateActionType.DELISTING, null, null, null, null, description);
+        action.status = StockCorporateActionStatus.ANNOUNCED;
+        action.delistingDate = delistingDate;
+        action.delistingTreatment = StockDelistingTreatment.ZERO_VALUE;
         return action;
     }
 

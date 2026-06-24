@@ -13,6 +13,7 @@ public record OrderBookInstrumentRequest(
         @NotNull @Positive BigDecimal initialPrice,
         @NotNull @Positive Long issuedShares,
         @Positive BigDecimal tickSize,
-        @Positive BigDecimal priceLimitRate
+        @Positive BigDecimal priceLimitRate,
+        ListingAutoAccountRequest listingAutoAccount
 ) {
 }

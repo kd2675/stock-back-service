@@ -7,5 +7,6 @@ public enum StockCorporateActionType {
     STOCK_SPLIT,
     CASH_DIVIDEND,
     BONUS_ISSUE,
-    STOCK_DIVIDEND
+    STOCK_DIVIDEND,
+    DELISTING
 }

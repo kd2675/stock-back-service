@@ -19,7 +19,8 @@ class StockMysqlDdlContractTest {
             "STOCK_SPLIT",
             "CASH_DIVIDEND",
             "BONUS_ISSUE",
-            "STOCK_DIVIDEND"
+            "STOCK_DIVIDEND",
+            "DELISTING"
     );
 
     private static final List<String> DEFERRED_CORPORATE_ACTION_SCOPE = List.of(
@@ -28,8 +29,7 @@ class StockMysqlDdlContractTest {
             "REVERSE_SPLIT",
             "RIGHTS_OFFERING",
             "MERGER",
-            "SPIN_OFF",
-            "DELISTING"
+            "SPIN_OFF"
     );
 
     private static final List<String> REQUIRED_CORPORATE_ACTION_CONSTRAINTS = List.of(
@@ -38,6 +38,7 @@ class StockMysqlDdlContractTest {
             "chk_stock_corporate_action_share_quantity",
             "chk_stock_corporate_action_issue_price",
             "chk_stock_corporate_action_dividend_amount",
+            "chk_stock_corporate_action_delisting_treatment",
             "chk_stock_corporate_action_base_price",
             "chk_stock_corporate_action_ex_rights_price",
             "chk_stock_corporate_action_paid_dates",
@@ -50,21 +51,13 @@ class StockMysqlDdlContractTest {
             "chk_stock_corporate_action_split_required",
             "chk_stock_corporate_action_dividend_required",
             "chk_stock_corporate_action_free_share_required",
+            "chk_stock_corporate_action_delisting_required",
             "chk_stock_corporate_action_field_scope",
             "chk_stock_corporate_action_initial_listed"
     );
 
     private static final List<String> CORPORATE_ACTION_DDL_RESOURCES = List.of(
-            "db/ddl/stock_all.sql",
-            "db/ddl/stock_market_execution_split_alter.sql"
-    );
-
-    private static final List<String> REQUIRED_CORPORATE_ACTION_ALTER_MARKERS = List.of(
-            "UPDATE stock_corporate_action",
-            "listed_at = COALESCE(listed_at, created_at)",
-            "applied_at = NULL",
-            "paid_at = NULL",
-            "action_type = 'INITIAL_ISSUE'"
+            "db/ddl/stock_all.sql"
     );
 
     private static final List<String> DEFAULT_SEED_MARKERS = List.of(
@@ -101,9 +94,6 @@ class StockMysqlDdlContractTest {
             assertThat(ddl).as(resourcePath).contains(INITIAL_CORPORATE_ACTION_SCOPE.toArray(String[]::new));
             assertThat(ddl).as(resourcePath).contains(REQUIRED_CORPORATE_ACTION_CONSTRAINTS.toArray(String[]::new));
             assertThat(ddl).as(resourcePath).doesNotContain(DEFERRED_CORPORATE_ACTION_SCOPE.toArray(String[]::new));
-            if (resourcePath.contains("alter")) {
-                assertThat(ddl).as(resourcePath).contains(REQUIRED_CORPORATE_ACTION_ALTER_MARKERS.toArray(String[]::new));
-            }
         }
     }
 

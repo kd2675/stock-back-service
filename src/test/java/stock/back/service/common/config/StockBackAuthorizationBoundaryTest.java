@@ -119,8 +119,8 @@ class StockBackAuthorizationBoundaryTest {
     private void seedAutoParticipant(String userKey) {
         jdbcTemplate.update(
                 """
-                insert into stock_auto_participant(user_key, display_name, enabled, created_at, updated_at)
-                values (?, ?, true, ?, ?)
+                insert into stock_auto_participant(user_key, display_name, enabled, profile_type, created_at, updated_at)
+                values (?, ?, true, 'NOISE_TRADER', ?, ?)
                 """,
                 userKey,
                 userKey + " 참여자",
@@ -278,25 +278,19 @@ class StockBackAuthorizationBoundaryTest {
                  where h.symbol = 'ZQAUTH01'
                    and a.user_key = 'stock-listing-zqauth01'
                    and h.quantity = 100000
-                   and h.reserved_quantity = 100000
+                   and h.reserved_quantity = 0
                    and h.average_price = 70000.00
                 """,
                 Long.class
         );
-        Long listingAskCount = jdbcTemplate.queryForObject(
+        Long listingConfigCount = jdbcTemplate.queryForObject(
                 """
                 select count(*)
-                  from stock_order o
-                  join stock_account a on a.id = o.account_id
-                 where o.symbol = 'ZQAUTH01'
-                   and a.user_key = 'stock-listing-zqauth01'
-                   and o.market_type = 'ORDER_BOOK'
-                   and o.side = 'SELL'
-                   and o.order_type = 'LIMIT'
-                   and o.status = 'PENDING'
-                   and o.limit_price = 70000.00
-                   and o.quantity = 100000
-                   and o.filled_quantity = 0
+                  from stock_listing_auto_account_config
+                 where symbol = 'ZQAUTH01'
+                   and user_key = 'stock-listing-zqauth01'
+                   and enabled = true
+                   and position_side = 'SELL_ONLY'
                 """,
                 Long.class
         );
@@ -315,18 +309,16 @@ class StockBackAuthorizationBoundaryTest {
         assertThat(listedInstrumentCount).isEqualTo(1L);
         assertThat(initialIssueCount).isEqualTo(1L);
         assertThat(listingHoldingCount).isEqualTo(1L);
-        assertThat(listingAskCount).isEqualTo(1L);
-        assertThat(askLevelQuantity).isEqualTo(100000L);
+        assertThat(listingConfigCount).isEqualTo(1L);
+        assertThat(askLevelQuantity).isZero();
 
         String orderBookContent = mockMvc.perform(get("/api/stock/v1/markets/order-books/ZQAUTH01"))
                 .andExpect(status().isOk())
                 .andReturn()
                 .getResponse()
                 .getContentAsString();
-        JsonNode firstAsk = objectMapper.readTree(orderBookContent).path("data").path("asks").path(0);
-        assertThat(firstAsk.path("price").decimalValue()).isEqualByComparingTo(new BigDecimal("70000.00"));
-        assertThat(firstAsk.path("quantity").asLong()).isEqualTo(100000L);
-        assertThat(firstAsk.path("orderCount").asLong()).isEqualTo(1L);
+        JsonNode asks = objectMapper.readTree(orderBookContent).path("data").path("asks");
+        assertThat(asks).isEmpty();
     }
 
     @Test
@@ -409,7 +401,47 @@ class StockBackAuthorizationBoundaryTest {
 	                                }
 	                                """))
 	                .andExpect(status().isOk())
-	                .andExpect(content().string(containsString("\"userKey\":\"stock-auto-auth\"")));
+                .andExpect(content().string(containsString("\"userKey\":\"stock-auto-auth\"")));
+    }
+
+    @Test
+    void getAutoParticipantOverviews_userPrincipalHeaders_returnsForbidden() throws Exception {
+        mockMvc.perform(get("/api/stock/v1/markets/auto-market/participants/overviews")
+                        .header("X-User-Key", "stock-user-key")
+                        .header("X-User-Role", "ROLE_USER"))
+                .andExpect(status().isForbidden())
+                .andExpect(content().string(containsString("Required role: ADMIN")));
+    }
+
+    @Test
+    void getAutoParticipantOverviews_adminPrincipalHeaders_isAllowed() throws Exception {
+        seedAutoParticipant("stock-auto-auth-overview");
+        seedStockAccount("stock-auto-auth-overview");
+        Long accountId = jdbcTemplate.queryForObject(
+                "select id from stock_account where user_key = ?",
+                Long.class,
+                "stock-auto-auth-overview"
+        );
+        jdbcTemplate.update(
+                """
+                insert into stock_account_cash_flow(account_id, flow_type, amount, reason, created_by, created_at)
+                values (?, 'DEPOSIT', 10000000.00, 'OPENING_GRANT', 'SYSTEM', ?)
+                """,
+                accountId,
+                LocalDateTime.now()
+        );
+
+        mockMvc.perform(get("/api/stock/v1/markets/auto-market/participants/overviews")
+                        .header("X-User-Key", "stock-admin-key")
+                        .header("X-User-Role", "ROLE_ADMIN"))
+                .andExpect(status().isOk())
+                .andExpect(content().string(containsString("\"success\":true")))
+                .andExpect(content().string(containsString("\"userKey\":\"stock-auto-auth-overview\"")))
+                .andExpect(content().string(containsString("\"availableCash\":10000000.00")))
+                .andExpect(content().string(containsString("\"estimatedTotalAsset\":10000000.00")))
+                .andExpect(content().string(containsString("\"netCashFlow\":10000000.00")))
+                .andExpect(content().string(containsString("\"totalProfit\":0.00")))
+                .andExpect(content().string(containsString("\"returnRate\":0")));
     }
 
     @Test

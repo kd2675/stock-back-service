@@ -7,6 +7,7 @@ public record AutoParticipantResponse(
         String userKey,
         String displayName,
         boolean enabled,
+        String profileType,
         BigDecimal cashBalance,
         LocalDateTime createdAt,
         LocalDateTime updatedAt,

@@ -58,7 +58,7 @@
 5. `CorporateActionService.applyDueCorporateActions` 상태 전이를 추가한다.
 6. entitlement가 필요하면 생성/지급 로직을 추가한다.
 7. back DTO, front type, 관리자 입력 UI를 수정한다.
-8. MySQL full/alter DDL과 H2 DDL을 모두 갱신한다.
+8. MySQL full DDL과 H2 DDL을 모두 갱신한다.
 
 ## 검증
 

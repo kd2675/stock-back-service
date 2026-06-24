@@ -193,7 +193,7 @@
 3. 관리자 입력 validation을 `MarketService`에 추가한다.
 4. 날짜별 상태 전이를 `CorporateActionService`에 추가한다.
 5. 사용자별 배정/지급이 있으면 entitlement row를 만든다.
-6. full DDL, alter DDL, H2 DDL을 모두 갱신한다.
+6. MySQL full DDL과 H2 DDL을 모두 갱신한다.
 7. 관리자 화면 입력과 이력 표시를 갱신한다.
 
 검증:
@@ -283,16 +283,14 @@
 현재 구현:
 
 - MySQL full DDL은 back/batch에 각각 있다.
-- 운영 반영용 alter DDL도 있다.
 - batch test와 smoke는 H2 DDL을 사용한다.
 
 변경 순서:
 
 1. full DDL을 먼저 수정한다.
-2. 기존 DB용 alter DDL을 만든다.
-3. H2 DDL과 H2 smoke data를 맞춘다.
-4. Java entity/SQL row mapper를 수정한다.
-5. DDL 정합성 테스트를 추가한다.
+2. H2 DDL과 H2 smoke data를 맞춘다.
+3. Java entity/SQL row mapper를 수정한다.
+4. DDL 정합성 테스트를 추가한다.
 
 검증:
 
@@ -303,4 +301,4 @@
 주의:
 
 - back entity만 바꾸고 batch SQL을 안 바꾸면 runtime에서 깨진다.
-- batch H2 test가 통과해도 MySQL alter 누락은 별도 확인해야 한다.
+- batch H2 test가 통과해도 MySQL full DDL 누락은 별도 확인해야 한다.

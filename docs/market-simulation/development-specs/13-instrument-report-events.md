@@ -79,10 +79,8 @@ Front 원칙:
 같이 바꿀 파일:
 
 - `stock-back-service/src/main/resources/db/ddl/stock_all.sql`
-- `stock-back-service/src/main/resources/db/ddl/stock_market_execution_split_alter.sql`
 - `stock-batch-service/src/main/resources/db/ddl/stock_all.sql`
 - `stock-batch-service/src/main/resources/db/ddl/stock_h2.sql`
-- `stock-batch-service/src/main/resources/db/ddl/stock_market_execution_split_alter.sql`
 
 테이블 계약:
 

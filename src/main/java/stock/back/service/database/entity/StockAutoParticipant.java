@@ -2,6 +2,8 @@ package stock.back.service.database.entity;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import lombok.AccessLevel;
@@ -26,6 +28,10 @@ public class StockAutoParticipant {
     @Column(name = "enabled", nullable = false)
     private Boolean enabled;
 
+    @Enumerated(EnumType.STRING)
+    @Column(name = "profile_type", nullable = false, length = 40)
+    private AutoParticipantProfileType profileType;
+
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
 
@@ -36,17 +42,27 @@ public class StockAutoParticipant {
     private LocalDateTime withdrawnAt;
 
     public static StockAutoParticipant create(String userKey, String displayName, boolean enabled) {
+        return create(userKey, displayName, enabled, AutoParticipantProfileType.defaultType());
+    }
+
+    public static StockAutoParticipant create(
+            String userKey,
+            String displayName,
+            boolean enabled,
+            AutoParticipantProfileType profileType
+    ) {
         LocalDateTime now = LocalDateTime.now();
         StockAutoParticipant participant = new StockAutoParticipant();
         participant.userKey = userKey;
         participant.displayName = displayName;
         participant.enabled = enabled;
+        participant.profileType = profileType == null ? AutoParticipantProfileType.defaultType() : profileType;
         participant.createdAt = now;
         participant.updatedAt = now;
         return participant;
     }
 
-    public void update(String displayName, Boolean enabled) {
+    public void update(String displayName, Boolean enabled, AutoParticipantProfileType profileType) {
         if (displayName != null && !displayName.isBlank()) {
             this.displayName = displayName;
         }
@@ -55,6 +71,9 @@ public class StockAutoParticipant {
             if (enabled) {
                 this.withdrawnAt = null;
             }
+        }
+        if (profileType != null) {
+            this.profileType = profileType;
         }
         this.updatedAt = LocalDateTime.now();
     }

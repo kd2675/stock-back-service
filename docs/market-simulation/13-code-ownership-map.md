@@ -159,13 +159,11 @@
 원장 컬럼을 바꾸면 아래 파일을 함께 본다.
 
 - `stock-back-service/src/main/resources/db/ddl/stock_all.sql`
-- `stock-back-service/src/main/resources/db/ddl/stock_market_execution_split_alter.sql`
 - `stock-batch-service/src/main/resources/db/ddl/stock_all.sql`
 - `stock-batch-service/src/main/resources/db/ddl/stock_h2.sql`
 - `stock-batch-service/src/main/resources/db/ddl/stock_h2_smoke_data.sql`
-- `stock-batch-service/src/main/resources/db/ddl/stock_market_execution_split_alter.sql`
 
-back과 batch는 같은 MySQL schema를 보므로 full DDL과 alter DDL을 둘 다 맞춘다. batch 테스트는 H2를 쓰므로 H2 DDL도 같이 갱신한다.
+back과 batch는 같은 MySQL schema를 보므로 MySQL full DDL을 맞춘다. batch 테스트는 H2를 쓰므로 H2 DDL도 같이 갱신한다.
 
 ## 테스트 소유권
 

@@ -56,6 +56,6 @@
 - front local state만으로 체결/잔고/배당을 만든다.
 - back controller에서 batch 로직을 직접 실행한다.
 - DDL 없이 Java entity만 바꾼다.
-- batch H2 DDL만 바꾸고 MySQL full/alter DDL을 놓친다.
+- batch H2 DDL만 바꾸고 MySQL full DDL을 놓친다.
 - 새 기업 이벤트를 enum에만 추가하고 batch 상태 전이를 빼먹는다.
 - 현재가 시장과 주문장 시장의 symbol을 자동으로 공유한다고 가정한다.

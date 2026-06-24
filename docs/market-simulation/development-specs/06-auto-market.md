@@ -21,10 +21,11 @@
 4. 오래된 자동 주문은 TTL 기준으로 취소하고 예약 현금/예약 수량을 해제한다.
 5. 참여자별-종목별 intensity와 최신 활성 평가 보고서 점수로 유효 강도를 계산한다.
 6. 평가 보고서가 없거나 최신 이벤트가 `DELETE`이면 참여자 intensity만 사용한다.
-7. intensity 10은 해당 참여자의 매수 우위/공격적 매수가로 상승 압력을 만들고, intensity 1은 보유가 있는 참여자의 매도 우위/공격적 매도가로 하락 압력을 만든다.
-8. 현재가, 최우선 매수/매도, 종목별 tick size 기준으로 자동 주문 가격을 만든다.
-9. 자동 주문을 `stock_order`에 넣는다.
-10. 같은 job 안에서 `InternalOrderBookExecutionService.executeEligibleOrders()`를 호출해 바로 매칭을 시도한다.
+7. 자동 참여자 `profile_type`에 따라 보고서 민감도, 모멘텀/역추세, 손실회피, 군중추종, 시장조성, 노이즈, 주문 빈도와 호가 공격성을 보정한다.
+8. intensity 10은 해당 참여자의 매수 우위/공격적 매수가로 상승 압력을 만들고, intensity 1은 보유가 있는 참여자의 매도 우위/공격적 매도가로 하락 압력을 만든다.
+9. 현재가, 전일종가, 최우선 매수/매도, 호가 잔량, 평균단가, 종목별 tick size 기준으로 자동 주문 방향과 가격을 만든다.
+10. 자동 주문을 `stock_order`에 넣는다.
+11. 같은 job 안에서 `InternalOrderBookExecutionService.executeEligibleOrders()`를 호출해 바로 매칭을 시도한다.
 
 ## 현재 설정
 
@@ -32,6 +33,7 @@
 - `stock.batch.auto-market.initial-delay-ms`
 - `stock.batch.auto-market.fixed-delay-ms`
 - 자동 참여자 입금/회수 이력: `stock_account_cash_flow`
+- 자동 참여자 심리 프로필: `stock_auto_participant.profile_type`
 - 참여자별-종목별 가동/강도: `stock_auto_participant_symbol_config`
 - 종목별 최신 평가 보고서 점수: `stock_instrument_report_event`
 - 종목별 자동장 가동/기본 강도/최대 수량/TTL: `stock_auto_market_config`
@@ -43,6 +45,7 @@
 - 자동 참여자도 일반 사용자와 같은 계좌/보유/주문 원장을 쓰며, 운용 현금 입금/회수와 종목별 전략은 관리자 API/UI에서 제어한다.
 - 자동 참여자에게 초기 보유 주식은 지급하지 않는다. 보유는 실제 매수 체결로만 생긴다.
 - 자동 참여자 성향은 항상 주된 기준이다. 평가 보고서는 종목별 최신 관리 신호로만 섞이며, 보고서가 없어도 자동장은 동작한다.
+- 자동 참여자 profile type은 실제 회원 식별 구조를 바꾸지 않고, 같은 `user_key` 기반 자동참여자에 심리/행동 정책만 부여한다.
 - 자동 주문은 open order로 남을 수 있고 TTL로 취소된다.
 - 자동장은 수요/공급 시장의 보조 기능이지 현재가 시장 기능이 아니다.
 

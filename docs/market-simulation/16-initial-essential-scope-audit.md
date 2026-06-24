@@ -50,7 +50,6 @@
 - front type: `stock-front-service/app/types/stock.ts`
 - 관리자 이벤트 선택지: `stock-front-service/app/supply-demand/admin/page.tsx`
 - MySQL full DDL: `src/main/resources/db/ddl/stock_all.sql`
-- MySQL alter DDL: `src/main/resources/db/ddl/stock_market_execution_split_alter.sql`
 - batch H2 DDL: `stock-batch-service/src/main/resources/db/ddl/stock_h2.sql`
 - back DDL 계약 테스트: `StockMysqlDdlContractTest`
 - batch DDL 계약 테스트: `StockDdlContractTest`
@@ -70,7 +69,6 @@
 - 합병
 - 분할
 - 스핀오프
-- 상장폐지
 - 청산, 해산, 파산
 - 종목명/코드 변경
 
@@ -90,9 +88,9 @@
 
 기업 이벤트 범위:
 
-- enum은 7개 초기 타입만 갖는다.
-- DDL은 7개 초기 타입만 허용한다.
-- front type과 관리자 선택지는 7개 초기 타입 기준이며, 관리자가 직접 등록할 수 없는 `INITIAL_ISSUE`는 선택지에서 제외한다.
+- enum은 현재 구현된 8개 타입만 갖는다.
+- DDL은 현재 구현된 8개 타입만 허용한다.
+- front type은 현재 구현된 8개 타입 기준이며, 관리자 선택지는 관리자가 직접 등록할 수 없는 `INITIAL_ISSUE`를 제외한다.
 - deferred 타입은 계약 테스트와 검증 스크립트의 금지 목록, 보류 문서에만 남긴다.
 
 시드 데이터:
@@ -131,7 +129,7 @@ API 표면:
 - stock back public/user/admin API는 system, accounts, users, markets, portfolio, orders, executions, holdings 안에서만 유지한다.
 - stock batch API는 `/internal/stock-batch/v1/system`과 `/internal/stock-batch/v1/jobs`만 유지한다.
 - controller annotation 문자열뿐 아니라 Spring이 실제 등록한 route table도 `StockBackApiSurfaceContractTest`, `StockBatchApiSurfaceContractTest`로 고정한다.
-- 관심종목, 알림, 권리행사, 상장폐지, 동시호가, 서킷브레이커 API는 초기 필수 범위에 넣지 않는다.
+- 관심종목, 알림, 권리행사, 동시호가, 서킷브레이커 API는 초기 필수 범위에 넣지 않는다.
 - stock back system status의 `gatewayRequired`는 `false`다. 기본 구동은 direct/local-direct이고 gateway는 명시 선택 모드다.
 
 ## 다음 변경 순서
@@ -140,9 +138,9 @@ API 표면:
 
 1. 변경하려는 기능이 `VIRTUAL_PRICE`인지 `ORDER_BOOK`인지 먼저 정한다.
 2. 돈, 주식 수량, 예약금, 예약수량, 평균단가, 현재가 중 무엇이 바뀌는지 적는다.
-3. 원장을 바꾸면 DDL 3종, entity, DTO, batch SQL, front type을 같이 본다.
-4. corporate action이면 `15-corporate-action-scope.md`에서 초기 7개 타입인지 확인한다.
-5. 초기 7개 밖이면 구현하지 말고 보류 문서에 필요한 정책만 적는다.
+3. 원장을 바꾸면 MySQL/H2 DDL, entity, DTO, batch SQL, front type을 같이 본다.
+4. corporate action이면 `15-corporate-action-scope.md`에서 현재 구현된 8개 타입인지 확인한다.
+5. 현재 구현된 8개 밖이면 구현하지 말고 보류 문서에 필요한 정책만 적는다.
 6. back test, batch test, front contract/lint/build를 실행한다.
 
 ## 검증 명령

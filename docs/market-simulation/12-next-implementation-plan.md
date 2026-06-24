@@ -175,7 +175,7 @@
 - `CorporateActionRequest`
 - `MarketService.applyCorporateAction`
 - `CorporateActionService`
-- DDL 3종: MySQL full, MySQL alter, H2 test
+- DDL 2종: MySQL full, H2 test
 - 관리자 화면
 
 검증:
@@ -203,7 +203,7 @@
 - `ProfitSummaryResponse`
 - `TradingService.getProfitSummary`
 - `TradingController.getMyProfitSummary`
-- DDL 3종: MySQL full, MySQL alter, H2 test
+- DDL 2종: MySQL full, H2 test
 - 프론트 최근 체결 카드와 상단 손익 지표
 
 현재 결정:

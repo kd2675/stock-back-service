@@ -48,9 +48,7 @@
 DDL:
 
 - `stock-back-service/src/main/resources/db/ddl/stock_all.sql`
-- `stock-back-service/src/main/resources/db/ddl/stock_market_execution_split_alter.sql`
 - `stock-batch-service/src/main/resources/db/ddl/stock_all.sql`
-- `stock-batch-service/src/main/resources/db/ddl/stock_market_execution_split_alter.sql`
 - `stock-batch-service/src/main/resources/db/ddl/stock_h2.sql`
 
 ## 데이터 계약

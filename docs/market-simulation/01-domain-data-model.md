@@ -144,15 +144,13 @@
 
 1. `stock_all.sql`에 MySQL DDL을 먼저 반영한다.
 2. `stock-batch-service/src/main/resources/db/ddl/stock_h2.sql`에 테스트 스키마를 맞춘다.
-3. 기존 DB용 alter script도 같은 계약으로 맞춘다.
-4. JPA 엔티티 또는 batch SQL mapper를 수정한다.
-5. back/batch 테스트에서 DDL 제약과 실제 플로우를 검증한다.
-6. front 타입과 관리자 입력이 필요한 경우 `stock-front-service/app/types/stock.ts`, `app/lib/stock.ts`, 화면을 수정한다.
+3. JPA 엔티티 또는 batch SQL mapper를 수정한다.
+4. back/batch 테스트에서 DDL 제약과 실제 플로우를 검증한다.
+5. front 타입과 관리자 입력이 필요한 경우 `stock-front-service/app/types/stock.ts`, `app/lib/stock.ts`, 화면을 수정한다.
 
 ## 주의점
 
-- 새 원장 컬럼을 추가하면 MySQL DDL, H2 DDL, alter script가 모두 맞아야 한다.
+- 새 원장 컬럼을 추가하면 MySQL DDL과 H2 DDL이 모두 맞아야 한다.
 - batch는 JPA가 아니라 `JdbcTemplate` 중심이므로 SQL 컬럼명을 직접 확인해야 한다.
 - status enum을 늘릴 때는 DB CHECK 제약도 같이 바꿔야 한다.
-- `user_key` 직접 참조 원장에서 `account_id` 기준 원장으로 넘어온 기존 DB는 alter script가 레거시 `user_key` 컬럼을 nullable로 풀어야 한다. 그렇지 않으면 새 코드는 `account_id`를 넣어도 기존 `user_key NOT NULL` 제약 때문에 insert가 실패한다.
-- 기존 DB에 부정합 row가 있으면 새 CHECK 제약 추가가 실패할 수 있다. 운영 반영 전 정리 SQL이 필요하다.
+- 기존 DB에 부정합 row가 있으면 새 CHECK 제약을 가진 fresh DDL 재적용 전에 정리 SQL이 필요하다.

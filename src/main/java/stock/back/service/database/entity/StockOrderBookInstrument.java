@@ -104,4 +104,9 @@ public class StockOrderBookInstrument {
         this.tradableShares = tradableShares * multiplier;
         this.updatedAt = LocalDateTime.now();
     }
+
+    public void delist() {
+        this.enabled = false;
+        this.updatedAt = LocalDateTime.now();
+    }
 }

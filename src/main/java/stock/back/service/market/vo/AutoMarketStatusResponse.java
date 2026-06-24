@@ -9,6 +9,7 @@ public record AutoMarketStatusResponse(
         long todayAutoExecutionCount,
         List<AutoMarketConfigResponse> configs,
         List<AutoParticipantResponse> participants,
-        List<AutoParticipantSymbolConfigResponse> participantSymbolConfigs
+        List<AutoParticipantSymbolConfigResponse> participantSymbolConfigs,
+        List<ListingAutoAccountResponse> listingAutoAccounts
 ) {
 }

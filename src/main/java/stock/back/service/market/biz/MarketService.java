@@ -10,7 +10,9 @@ import stock.back.service.database.entity.OrderSide;
 import stock.back.service.database.entity.OrderStatus;
 import stock.back.service.database.entity.OrderType;
 import stock.back.service.database.entity.PortfolioSnapshot;
+import stock.back.service.database.entity.AutoParticipantProfileType;
 import stock.back.service.database.entity.ExecutionSource;
+import stock.back.service.database.entity.ListingAutoPosition;
 import stock.back.service.database.entity.MarketSessionStatus;
 import stock.back.service.database.entity.MarketType;
 import stock.back.service.database.entity.StockAutoMarketConfig;
@@ -26,6 +28,7 @@ import stock.back.service.database.entity.StockCorporateActionType;
 import stock.back.service.database.entity.StockInstrument;
 import stock.back.service.database.entity.StockInstrumentReportEvent;
 import stock.back.service.database.entity.StockInstrumentReportEventType;
+import stock.back.service.database.entity.StockListingAutoAccountConfig;
 import stock.back.service.database.entity.StockOrderBookInstrument;
 import stock.back.service.database.entity.StockOrderBookMarketConfig;
 import stock.back.service.database.entity.StockPrice;
@@ -42,6 +45,7 @@ import stock.back.service.database.repository.StockCorporateActionRepository;
 import stock.back.service.database.repository.StockExecutionMarketViewRepository;
 import stock.back.service.database.repository.StockInstrumentRepository;
 import stock.back.service.database.repository.StockInstrumentReportEventRepository;
+import stock.back.service.database.repository.StockListingAutoAccountConfigRepository;
 import stock.back.service.database.repository.StockOrderBookInstrumentRepository;
 import stock.back.service.database.repository.StockOrderBookMarketConfigRepository;
 import stock.back.service.database.repository.StockOrderRepository;
@@ -53,8 +57,10 @@ import stock.back.service.market.cache.StockPriceCacheService;
 import stock.back.service.market.vo.AutoMarketConfigResponse;
 import stock.back.service.market.vo.AutoMarketConfigUpdateRequest;
 import stock.back.service.market.vo.AutoMarketStatusResponse;
+import stock.back.service.market.vo.AutoParticipantHoldingResponse;
 import stock.back.service.market.vo.AutoParticipantCashAdjustmentRequest;
 import stock.back.service.market.vo.AutoParticipantCashAdjustmentResponse;
+import stock.back.service.market.vo.AutoParticipantOverviewResponse;
 import stock.back.service.market.vo.AutoParticipantRequest;
 import stock.back.service.market.vo.AutoParticipantResponse;
 import stock.back.service.market.vo.AutoParticipantSymbolConfigRequest;
@@ -65,6 +71,8 @@ import stock.back.service.market.vo.CorporateActionResponse;
 import stock.back.service.market.vo.InstrumentResponse;
 import stock.back.service.market.vo.InstrumentReportRequest;
 import stock.back.service.market.vo.InstrumentReportResponse;
+import stock.back.service.market.vo.ListingAutoAccountRequest;
+import stock.back.service.market.vo.ListingAutoAccountResponse;
 import stock.back.service.market.vo.MarketStatusUpdateRequest;
 import stock.back.service.market.vo.OrderBookInstrumentRequest;
 import stock.back.service.market.vo.OrderBookInstrumentResponse;
@@ -84,6 +92,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -93,7 +102,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class MarketService {
 
     private static final String LISTING_SUPPLY_USER_KEY_PREFIX = "stock-listing-";
-    private static final String LISTING_SUPPLY_CLIENT_ORDER_PREFIX = "listing-";
 
     private final StockInstrumentRepository stockInstrumentRepository;
     private final StockPriceRepository stockPriceRepository;
@@ -113,6 +121,7 @@ public class MarketService {
     private final StockCorporateActionRepository stockCorporateActionRepository;
     private final StockCorporateActionEntitlementRepository stockCorporateActionEntitlementRepository;
     private final StockInstrumentReportEventRepository stockInstrumentReportEventRepository;
+    private final StockListingAutoAccountConfigRepository stockListingAutoAccountConfigRepository;
     private final JdbcTemplate jdbcTemplate;
 
     @Transactional(readOnly = true)
@@ -189,13 +198,26 @@ public class MarketService {
         stockOrderBookMarketConfigRepository.save(StockOrderBookMarketConfig.enabled(symbol));
         stockAutoMarketConfigRepository.save(StockAutoMarketConfig.defaults(symbol));
         stockPriceRepository.save(StockPrice.initial(symbol, request.initialPrice()));
-        seedInitialListingSupply(symbol, request.initialPrice(), request.issuedShares());
+        seedListingAutoAccount(symbol, name, request.initialPrice(), request.issuedShares(), request.listingAutoAccount());
         return toOrderBookInstrumentResponse(instrument);
     }
 
-    private void seedInitialListingSupply(String symbol, BigDecimal initialPrice, long tradableShares) {
+    private void seedListingAutoAccount(
+            String symbol,
+            String name,
+            BigDecimal initialPrice,
+            long tradableShares,
+            ListingAutoAccountRequest request
+    ) {
         LocalDateTime now = LocalDateTime.now();
         String listingUserKey = LISTING_SUPPLY_USER_KEY_PREFIX + symbol.toLowerCase(Locale.ROOT);
+        String displayName = normalizeText(request == null ? null : request.displayName());
+        if (displayName.isBlank()) {
+            displayName = name + " 상장주관사";
+        }
+        if (displayName.length() > 80) {
+            throw StockException.badRequest("Listing auto account display name must be 80 characters or less");
+        }
         jdbcTemplate.update(
                 """
                 insert into stock_account(
@@ -225,27 +247,23 @@ public class MarketService {
                 accountId,
                 symbol,
                 tradableShares,
-                tradableShares,
+                0L,
                 initialPrice,
                 now
         );
-        jdbcTemplate.update(
-                """
-                insert into stock_order(
-                    client_order_id, account_id, symbol, market_type, side, order_type, status,
-                    limit_price, quantity, filled_quantity, average_fill_price,
-                    reserved_cash, created_at, updated_at
-                )
-                values (?, ?, ?, 'ORDER_BOOK', 'SELL', 'LIMIT', 'PENDING', ?, ?, 0, null, 0, ?, ?)
-                """,
-                LISTING_SUPPLY_CLIENT_ORDER_PREFIX + symbol,
-                accountId,
-                symbol,
-                initialPrice,
-                tradableShares,
-                now,
-                now
-        );
+        StockListingAutoAccountConfig config = StockListingAutoAccountConfig.defaults(symbol, listingUserKey, displayName, tradableShares);
+        if (request != null) {
+            config.update(
+                    displayName,
+                    request.enabled(),
+                    request.positionSide(),
+                    request.maxOrderQuantity(),
+                    request.orderTtlSeconds(),
+                    request.priceOffsetTicks()
+            );
+            validateListingAutoAccountConfig(config);
+        }
+        stockListingAutoAccountConfigRepository.save(config);
     }
 
     @Transactional
@@ -263,13 +281,16 @@ public class MarketService {
         validateCorporateActionFieldScope(request);
         StockOrderBookInstrument instrument = stockOrderBookInstrumentRepository.findById(normalizedSymbol)
                 .orElseThrow(() -> StockException.notFound("Unknown order book symbol: " + normalizedSymbol));
-        assertNoOpenOrderBookOrders(normalizedSymbol);
+        if (request.actionType() != StockCorporateActionType.DELISTING) {
+            assertNoOpenOrderBookOrders(normalizedSymbol);
+        }
 
         return switch (request.actionType()) {
             case PAID_IN_CAPITAL_INCREASE, ADDITIONAL_ISSUE -> applyShareIssue(instrument, request);
             case BONUS_ISSUE, STOCK_DIVIDEND -> applyFreeShareDistribution(instrument, request);
             case STOCK_SPLIT -> applyStockSplit(instrument, request);
             case CASH_DIVIDEND -> applyCashDividend(instrument, request);
+            case DELISTING -> applyDelisting(instrument, request);
             case INITIAL_ISSUE -> throw StockException.badRequest("Initial issue is only allowed when creating an instrument");
         };
     }
@@ -314,8 +335,8 @@ public class MarketService {
                 normalizeText(request.title()),
                 normalizeText(request.summary()),
                 request.score(),
-                normalizeText(request.riseReason()),
-                normalizeText(request.fallReason()),
+                normalizeOptionalText(request.riseReason()),
+                normalizeOptionalText(request.fallReason()),
                 normalizeText(createdBy)
         );
         return toInstrumentReportResponse(stockInstrumentReportEventRepository.save(event));
@@ -333,8 +354,8 @@ public class MarketService {
                 normalizeText(request.title()),
                 normalizeText(request.summary()),
                 request.score(),
-                normalizeText(request.riseReason()),
-                normalizeText(request.fallReason()),
+                normalizeOptionalText(request.riseReason()),
+                normalizeOptionalText(request.fallReason()),
                 normalizeText(createdBy)
         );
         return toInstrumentReportResponse(stockInstrumentReportEventRepository.save(event));
@@ -515,6 +536,9 @@ public class MarketService {
                                 savedParticipantSymbolConfigs.get(autoParticipantSymbolConfigKey(participant.getUserKey(), config.getSymbol()))
                         )))
                 .toList();
+        List<ListingAutoAccountResponse> listingAutoAccounts = stockListingAutoAccountConfigRepository.findAllByOrderBySymbolAsc().stream()
+                .map(this::toListingAutoAccountResponse)
+                .toList();
         long enabledParticipantCount = stockAutoParticipantRepository.countByEnabledTrueAndWithdrawnAtIsNull();
         List<OrderStatus> openStatuses = List.of(OrderStatus.PENDING, OrderStatus.PARTIALLY_FILLED);
         long openAutoOrderCount = stockOrderRepository.countOpenAutoOrders(openStatuses, MarketType.ORDER_BOOK);
@@ -527,8 +551,342 @@ public class MarketService {
                 todayAutoExecutionCount,
                 configs,
                 participants,
-                participantSymbolConfigs
+                participantSymbolConfigs,
+                listingAutoAccounts
         );
+    }
+
+    @Transactional
+    public ListingAutoAccountResponse updateListingAutoAccountConfig(String symbol, ListingAutoAccountRequest request) {
+        String normalizedSymbol = normalizeSymbol(symbol);
+        if (normalizedSymbol.isBlank()) {
+            throw StockException.badRequest("Symbol is required");
+        }
+        if (request == null) {
+            throw StockException.badRequest("Listing auto account update is required");
+        }
+        StockListingAutoAccountConfig config = stockListingAutoAccountConfigRepository.findById(normalizedSymbol)
+                .orElseThrow(() -> StockException.notFound("Listing auto account not found: " + normalizedSymbol));
+        String displayName = request.displayName() == null ? null : normalizeText(request.displayName());
+        if (displayName != null && displayName.length() > 80) {
+            throw StockException.badRequest("Listing auto account display name must be 80 characters or less");
+        }
+        config.update(
+                displayName,
+                request.enabled(),
+                request.positionSide(),
+                request.maxOrderQuantity(),
+                request.orderTtlSeconds(),
+                request.priceOffsetTicks()
+        );
+        validateListingAutoAccountConfig(config);
+        return toListingAutoAccountResponse(config);
+    }
+
+    @Transactional(readOnly = true)
+    public List<AutoParticipantOverviewResponse> getAutoParticipantOverviews() {
+        LocalDateTime todayStart = LocalDate.now().atStartOfDay();
+        String sql = """
+                select p.user_key,
+                       p.display_name,
+                       p.enabled,
+                       p.profile_type,
+                       p.created_at,
+                       p.updated_at,
+                       p.withdrawn_at,
+                       a.id as account_id,
+                       a.status as account_status,
+                       coalesce(a.cash_balance, 0) as available_cash,
+                       coalesce((
+                           select sum(o.reserved_cash)
+                           from stock_order o
+                           where o.account_id = a.id
+                             and o.market_type = 'ORDER_BOOK'
+                             and o.status in ('PENDING', 'PARTIALLY_FILLED')
+                       ), 0) as reserved_buy_cash,
+                       coalesce((
+                           select sum(h.quantity * sp.current_price)
+                           from stock_holding h
+                           join stock_price sp on sp.symbol = h.symbol
+                           where h.account_id = a.id
+                             and h.quantity > 0
+                       ), 0) as holding_market_value,
+                       coalesce((
+                           select sum(
+                               case f.flow_type
+                                   when 'DEPOSIT' then f.amount
+                                   when 'WITHDRAW' then -f.amount
+                                   else 0
+                               end
+                           )
+                           from stock_account_cash_flow f
+                           where f.account_id = a.id
+                       ), 0) as net_cash_flow,
+                       coalesce((
+                           select count(*)
+                           from stock_holding h
+                           where h.account_id = a.id
+                             and h.quantity > 0
+                       ), 0) as holding_count,
+                       coalesce((
+                           select sum(h.quantity)
+                           from stock_holding h
+                           where h.account_id = a.id
+                       ), 0) as total_holding_quantity,
+                       coalesce((
+                           select sum(h.reserved_quantity)
+                           from stock_holding h
+                           where h.account_id = a.id
+                       ), 0) as reserved_sell_quantity,
+                       coalesce((
+                           select count(*)
+                           from stock_order o
+                           where o.account_id = a.id
+                             and o.market_type = 'ORDER_BOOK'
+                             and o.status in ('PENDING', 'PARTIALLY_FILLED')
+                       ), 0) as open_order_count,
+                       coalesce((
+                           select count(*)
+                           from stock_order o
+                           where o.account_id = a.id
+                             and o.market_type = 'ORDER_BOOK'
+                             and o.side = 'BUY'
+                             and o.status in ('PENDING', 'PARTIALLY_FILLED')
+                       ), 0) as open_buy_order_count,
+                       coalesce((
+                           select count(*)
+                           from stock_order o
+                           where o.account_id = a.id
+                             and o.market_type = 'ORDER_BOOK'
+                             and o.side = 'SELL'
+                             and o.status in ('PENDING', 'PARTIALLY_FILLED')
+                       ), 0) as open_sell_order_count,
+                       coalesce((
+                           select sum(o.quantity - o.filled_quantity)
+                           from stock_order o
+                           where o.account_id = a.id
+                             and o.market_type = 'ORDER_BOOK'
+                             and o.side = 'BUY'
+                             and o.status in ('PENDING', 'PARTIALLY_FILLED')
+                       ), 0) as open_buy_quantity,
+                       coalesce((
+                           select sum(o.quantity - o.filled_quantity)
+                           from stock_order o
+                           where o.account_id = a.id
+                             and o.market_type = 'ORDER_BOOK'
+                             and o.side = 'SELL'
+                             and o.status in ('PENDING', 'PARTIALLY_FILLED')
+                       ), 0) as open_sell_quantity,
+                       coalesce((
+                           select count(*)
+                           from stock_execution e
+                           where e.account_id = a.id
+                             and e.source = 'INTERNAL_ORDER_BOOK'
+                             and e.executed_at >= ?
+                       ), 0) as today_execution_count,
+                       coalesce((
+                           select sum(case when e.side = 'BUY' then e.quantity else 0 end)
+                           from stock_execution e
+                           where e.account_id = a.id
+                             and e.source = 'INTERNAL_ORDER_BOOK'
+                             and e.executed_at >= ?
+                       ), 0) as today_buy_quantity,
+                       coalesce((
+                           select sum(case when e.side = 'SELL' then e.quantity else 0 end)
+                           from stock_execution e
+                           where e.account_id = a.id
+                             and e.source = 'INTERNAL_ORDER_BOOK'
+                             and e.executed_at >= ?
+                       ), 0) as today_sell_quantity,
+                       coalesce((
+                           select sum(e.gross_amount)
+                           from stock_execution e
+                           where e.account_id = a.id
+                             and e.source = 'INTERNAL_ORDER_BOOK'
+                             and e.executed_at >= ?
+                       ), 0) as today_gross_amount,
+                       coalesce((
+                           select count(*)
+                           from stock_auto_participant_symbol_config sc
+                           where sc.user_key = p.user_key
+                       ), 0) as strategy_count,
+                       coalesce((
+                           select count(*)
+                           from stock_auto_participant_symbol_config sc
+                           where sc.user_key = p.user_key
+                             and sc.enabled = true
+                       ), 0) as enabled_strategy_count,
+                       (
+                           select max(o.created_at)
+                           from stock_order o
+                           where o.account_id = a.id
+                             and o.market_type = 'ORDER_BOOK'
+                       ) as last_order_at,
+                       (
+                           select max(e.executed_at)
+                           from stock_execution e
+                           where e.account_id = a.id
+                             and e.source = 'INTERNAL_ORDER_BOOK'
+                       ) as last_execution_at
+                from stock_auto_participant p
+                left join stock_account a on a.user_key = p.user_key
+                where p.withdrawn_at is null
+                order by p.user_key asc
+                """;
+        List<AutoParticipantOverviewResponse> overviews = jdbcTemplate.query(sql, (rs, rowNum) -> {
+            BigDecimal availableCash = nonNullDecimal(rs.getBigDecimal("available_cash"));
+            BigDecimal reservedBuyCash = nonNullDecimal(rs.getBigDecimal("reserved_buy_cash"));
+            BigDecimal holdingMarketValue = nonNullDecimal(rs.getBigDecimal("holding_market_value"));
+            BigDecimal estimatedTotalAsset = availableCash.add(reservedBuyCash).add(holdingMarketValue);
+            BigDecimal netCashFlow = nonNullDecimal(rs.getBigDecimal("net_cash_flow"));
+            BigDecimal totalProfit = BigDecimal.ZERO;
+            BigDecimal returnRate = BigDecimal.ZERO;
+            if (netCashFlow.compareTo(BigDecimal.ZERO) > 0) {
+                totalProfit = estimatedTotalAsset.subtract(netCashFlow);
+                returnRate = totalProfit
+                        .multiply(BigDecimal.valueOf(100))
+                        .divide(netCashFlow, 4, RoundingMode.HALF_UP);
+            }
+            return new AutoParticipantOverviewResponse(
+                    rs.getString("user_key"),
+                    rs.getString("display_name"),
+                    rs.getBoolean("enabled"),
+                    rs.getString("profile_type"),
+                    rs.getObject("account_id", Long.class),
+                    rs.getString("account_status"),
+                    availableCash,
+                    reservedBuyCash,
+                    holdingMarketValue,
+                    estimatedTotalAsset,
+                    netCashFlow,
+                    totalProfit,
+                    returnRate,
+                    rs.getLong("holding_count"),
+                    rs.getLong("total_holding_quantity"),
+                    rs.getLong("reserved_sell_quantity"),
+                    List.of(),
+                    rs.getLong("open_order_count"),
+                    rs.getLong("open_buy_order_count"),
+                    rs.getLong("open_sell_order_count"),
+                    rs.getLong("open_buy_quantity"),
+                    rs.getLong("open_sell_quantity"),
+                    rs.getLong("today_execution_count"),
+                    rs.getLong("today_buy_quantity"),
+                    rs.getLong("today_sell_quantity"),
+                    nonNullDecimal(rs.getBigDecimal("today_gross_amount")),
+                    rs.getLong("strategy_count"),
+                    rs.getLong("enabled_strategy_count"),
+                    rs.getObject("last_order_at", LocalDateTime.class),
+                    rs.getObject("last_execution_at", LocalDateTime.class),
+                    rs.getObject("created_at", LocalDateTime.class),
+                    rs.getObject("updated_at", LocalDateTime.class),
+                    rs.getObject("withdrawn_at", LocalDateTime.class)
+            );
+        }, todayStart, todayStart, todayStart, todayStart);
+        Map<Long, List<AutoParticipantHoldingResponse>> holdingsByAccountId = findAutoParticipantHoldings(overviews.stream()
+                .map(AutoParticipantOverviewResponse::accountId)
+                .filter(accountId -> accountId != null)
+                .distinct()
+                .toList());
+        return overviews.stream()
+                .map(overview -> withAutoParticipantHoldings(
+                        overview,
+                        overview.accountId() == null ? List.of() : holdingsByAccountId.getOrDefault(overview.accountId(), List.of())
+                ))
+                .toList();
+    }
+
+    private Map<Long, List<AutoParticipantHoldingResponse>> findAutoParticipantHoldings(List<Long> accountIds) {
+        if (accountIds.isEmpty()) {
+            return Map.of();
+        }
+        String placeholders = accountIds.stream()
+                .map(accountId -> "?")
+                .collect(Collectors.joining(", "));
+        String sql = """
+                select h.account_id,
+                       h.symbol,
+                       h.quantity,
+                       coalesce(h.reserved_quantity, 0) as reserved_quantity,
+                       case
+                           when h.quantity - coalesce(h.reserved_quantity, 0) > 0 then h.quantity - coalesce(h.reserved_quantity, 0)
+                           else 0
+                       end as available_quantity,
+                       coalesce(h.average_price, 0) as average_price,
+                       coalesce(sp.current_price, h.average_price, 0) as current_price,
+                       coalesce(sp.current_price, h.average_price, 0) * h.quantity as market_value,
+                       (coalesce(sp.current_price, h.average_price, 0) - coalesce(h.average_price, 0)) * h.quantity as unrealized_profit
+                from stock_holding h
+                left join stock_price sp on sp.symbol = h.symbol
+                where h.account_id in (%s)
+                  and (h.quantity > 0 or coalesce(h.reserved_quantity, 0) > 0)
+                order by h.account_id asc, h.symbol asc
+                """.formatted(placeholders);
+        return jdbcTemplate.query(sql, (rs, rowNum) -> new AutoParticipantHoldingLedger(
+                        rs.getLong("account_id"),
+                        new AutoParticipantHoldingResponse(
+                                rs.getString("symbol"),
+                                rs.getLong("quantity"),
+                                rs.getLong("reserved_quantity"),
+                                rs.getLong("available_quantity"),
+                                nonNullDecimal(rs.getBigDecimal("average_price")),
+                                nonNullDecimal(rs.getBigDecimal("current_price")),
+                                nonNullDecimal(rs.getBigDecimal("market_value")),
+                                nonNullDecimal(rs.getBigDecimal("unrealized_profit"))
+                        )
+                ),
+                accountIds.toArray()
+        ).stream().collect(Collectors.groupingBy(
+                AutoParticipantHoldingLedger::accountId,
+                Collectors.mapping(AutoParticipantHoldingLedger::holding, Collectors.toList())
+        ));
+    }
+
+    private AutoParticipantOverviewResponse withAutoParticipantHoldings(
+            AutoParticipantOverviewResponse overview,
+            List<AutoParticipantHoldingResponse> holdings
+    ) {
+        return new AutoParticipantOverviewResponse(
+                overview.userKey(),
+                overview.displayName(),
+                overview.enabled(),
+                overview.profileType(),
+                overview.accountId(),
+                overview.accountStatus(),
+                overview.availableCash(),
+                overview.reservedBuyCash(),
+                overview.holdingMarketValue(),
+                overview.estimatedTotalAsset(),
+                overview.netCashFlow(),
+                overview.totalProfit(),
+                overview.returnRate(),
+                overview.holdingCount(),
+                overview.totalHoldingQuantity(),
+                overview.reservedSellQuantity(),
+                holdings,
+                overview.openOrderCount(),
+                overview.openBuyOrderCount(),
+                overview.openSellOrderCount(),
+                overview.openBuyQuantity(),
+                overview.openSellQuantity(),
+                overview.todayExecutionCount(),
+                overview.todayBuyQuantity(),
+                overview.todaySellQuantity(),
+                overview.todayGrossAmount(),
+                overview.strategyCount(),
+                overview.enabledStrategyCount(),
+                overview.lastOrderAt(),
+                overview.lastExecutionAt(),
+                overview.createdAt(),
+                overview.updatedAt(),
+                overview.withdrawnAt()
+        );
+    }
+
+    private record AutoParticipantHoldingLedger(
+            Long accountId,
+            AutoParticipantHoldingResponse holding
+    ) {
     }
 
     @Transactional
@@ -579,16 +937,18 @@ public class MarketService {
         if (displayName.length() > 80) {
             throw StockException.badRequest("Auto participant display name must be 80 characters or less");
         }
+        AutoParticipantProfileType profileType = parseAutoParticipantProfileType(request == null ? null : request.profileType());
         StockAutoParticipant participant = stockAutoParticipantRepository.findById(normalizedUserKey)
                 .map(existing -> {
-                    existing.update(displayName, request == null ? null : request.enabled());
+                    existing.update(displayName, request == null ? null : request.enabled(), profileType);
                     return existing;
                 })
                 .orElseGet(() -> {
                     return StockAutoParticipant.create(
                         normalizedUserKey,
                         displayName,
-                        request == null || request.enabled() == null || request.enabled()
+                        request == null || request.enabled() == null || request.enabled(),
+                        profileType
                     );
                 });
         return toAutoParticipantResponse(stockAutoParticipantRepository.save(participant));
@@ -702,6 +1062,19 @@ public class MarketService {
         return value.trim();
     }
 
+    private String normalizeOptionalText(String value) {
+        String normalized = normalizeText(value);
+        return normalized.isBlank() ? null : normalized;
+    }
+
+    private AutoParticipantProfileType parseAutoParticipantProfileType(String value) {
+        try {
+            return AutoParticipantProfileType.parseOrDefault(value);
+        } catch (IllegalArgumentException exception) {
+            throw StockException.badRequest("Unknown auto participant profile type");
+        }
+    }
+
     private String requireOrderBookSymbol(String symbol) {
         String normalizedSymbol = normalizeSymbol(symbol);
         if (normalizedSymbol.isBlank()) {
@@ -726,11 +1099,23 @@ public class MarketService {
         if (request.score() == null || request.score() < 1 || request.score() > 10) {
             throw StockException.badRequest("Report score must be between 1 and 10");
         }
-        if (normalizeText(request.riseReason()).isBlank()) {
-            throw StockException.badRequest("Rise reason is required");
+    }
+
+    private void validateListingAutoAccountConfig(StockListingAutoAccountConfig config) {
+        if (config.getPositionSide() == null) {
+            throw StockException.badRequest("Listing auto account position side is required");
         }
-        if (normalizeText(request.fallReason()).isBlank()) {
-            throw StockException.badRequest("Fall reason is required");
+        if (config.getPositionSide() != ListingAutoPosition.SELL_ONLY && config.getPositionSide() != ListingAutoPosition.BUY_ONLY) {
+            throw StockException.badRequest("Listing auto account position side must be SELL_ONLY or BUY_ONLY");
+        }
+        if (config.getMaxOrderQuantity() == null || config.getMaxOrderQuantity() <= 0) {
+            throw StockException.badRequest("Listing auto account max order quantity must be positive");
+        }
+        if (config.getOrderTtlSeconds() == null || config.getOrderTtlSeconds() <= 0) {
+            throw StockException.badRequest("Listing auto account order TTL seconds must be positive");
+        }
+        if (config.getPriceOffsetTicks() == null || config.getPriceOffsetTicks() < 0) {
+            throw StockException.badRequest("Listing auto account price offset ticks must be zero or positive");
         }
     }
 
@@ -816,6 +1201,7 @@ public class MarketService {
                 rejectPresent(request.splitFrom(), "Paid-in capital increase does not use splitFrom");
                 rejectPresent(request.splitTo(), "Paid-in capital increase does not use splitTo");
                 rejectPresent(request.dividendAmount(), "Paid-in capital increase does not use dividendAmount");
+                rejectPresent(request.delistingDate(), "Paid-in capital increase does not use delistingDate");
             }
             case ADDITIONAL_ISSUE -> {
                 rejectPresent(request.splitFrom(), "Additional issue does not use splitFrom");
@@ -823,6 +1209,7 @@ public class MarketService {
                 rejectPresent(request.exRightsDate(), "Additional issue does not use exRightsDate");
                 rejectPresent(request.paymentDate(), "Additional issue does not use paymentDate");
                 rejectPresent(request.dividendAmount(), "Additional issue does not use dividendAmount");
+                rejectPresent(request.delistingDate(), "Additional issue does not use delistingDate");
             }
             case STOCK_SPLIT -> {
                 rejectPresent(request.shareQuantity(), "Stock split does not use shareQuantity");
@@ -830,6 +1217,7 @@ public class MarketService {
                 rejectPresent(request.exRightsDate(), "Stock split does not use exRightsDate");
                 rejectPresent(request.paymentDate(), "Stock split does not use paymentDate");
                 rejectPresent(request.dividendAmount(), "Stock split does not use dividendAmount");
+                rejectPresent(request.delistingDate(), "Stock split does not use delistingDate");
             }
             case CASH_DIVIDEND -> {
                 rejectPresent(request.shareQuantity(), "Cash dividend does not use shareQuantity");
@@ -837,6 +1225,7 @@ public class MarketService {
                 rejectPresent(request.splitFrom(), "Cash dividend does not use splitFrom");
                 rejectPresent(request.splitTo(), "Cash dividend does not use splitTo");
                 rejectPresent(request.listingDate(), "Cash dividend does not use listingDate");
+                rejectPresent(request.delistingDate(), "Cash dividend does not use delistingDate");
             }
             case BONUS_ISSUE, STOCK_DIVIDEND -> {
                 rejectPresent(request.issuePrice(), "Free share distribution does not use issuePrice");
@@ -844,6 +1233,17 @@ public class MarketService {
                 rejectPresent(request.splitTo(), "Free share distribution does not use splitTo");
                 rejectPresent(request.paymentDate(), "Free share distribution does not use paymentDate");
                 rejectPresent(request.dividendAmount(), "Free share distribution does not use dividendAmount");
+                rejectPresent(request.delistingDate(), "Free share distribution does not use delistingDate");
+            }
+            case DELISTING -> {
+                rejectPresent(request.shareQuantity(), "Delisting does not use shareQuantity");
+                rejectPresent(request.issuePrice(), "Delisting does not use issuePrice");
+                rejectPresent(request.splitFrom(), "Delisting does not use splitFrom");
+                rejectPresent(request.splitTo(), "Delisting does not use splitTo");
+                rejectPresent(request.exRightsDate(), "Delisting does not use exRightsDate");
+                rejectPresent(request.paymentDate(), "Delisting does not use paymentDate");
+                rejectPresent(request.listingDate(), "Delisting does not use listingDate");
+                rejectPresent(request.dividendAmount(), "Delisting does not use dividendAmount");
             }
             case INITIAL_ISSUE -> throw StockException.badRequest("Initial issue is only allowed when creating an instrument");
         }
@@ -1054,6 +1454,19 @@ public class MarketService {
         return toOrderBookInstrumentResponse(instrument);
     }
 
+    private OrderBookInstrumentResponse applyDelisting(StockOrderBookInstrument instrument, CorporateActionRequest request) {
+        LocalDate delistingDate = request.delistingDate();
+        if (delistingDate == null) {
+            throw StockException.badRequest("Delisting requires a delisting date");
+        }
+        stockCorporateActionRepository.save(StockCorporateAction.delisting(
+                instrument.getSymbol(),
+                delistingDate,
+                normalizeNullableDescription(request.description())
+        ));
+        return toOrderBookInstrumentResponse(instrument);
+    }
+
     private void assertNoOpenOrderBookOrders(String symbol) {
         Long openOrderCount = jdbcTemplate.queryForObject(
                 """
@@ -1086,6 +1499,119 @@ public class MarketService {
         return new InstrumentResponse(instrument.getSymbol(), instrument.getName(), instrument.getMarket());
     }
 
+    private ListingAutoAccountResponse toListingAutoAccountResponse(StockListingAutoAccountConfig config) {
+        ListingAutoAccountLedger ledger = findListingAutoAccountLedger(config);
+        return new ListingAutoAccountResponse(
+                config.getSymbol(),
+                config.getUserKey(),
+                config.getDisplayName(),
+                Boolean.TRUE.equals(config.getEnabled()),
+                config.getPositionSide(),
+                ledger.accountId(),
+                ledger.cashBalance(),
+                ledger.holdingQuantity(),
+                ledger.reservedQuantity(),
+                ledger.availableQuantity(),
+                ledger.averagePrice(),
+                ledger.currentPrice(),
+                ledger.marketValue(),
+                config.getMaxOrderQuantity(),
+                config.getOrderTtlSeconds(),
+                config.getPriceOffsetTicks(),
+                config.getCreatedAt(),
+                config.getUpdatedAt()
+        );
+    }
+
+    private ListingAutoAccountLedger findListingAutoAccountLedger(StockListingAutoAccountConfig config) {
+        return jdbcTemplate.query(
+                """
+                select a.id as account_id,
+                       coalesce(a.cash_balance, 0) as cash_balance,
+                       coalesce(h.quantity, 0) as holding_quantity,
+                       coalesce(h.reserved_quantity, 0) as reserved_quantity,
+                       coalesce(h.average_price, 0) as average_price,
+                       coalesce(p.current_price, 0) as current_price
+                from stock_account a
+                left join stock_holding h on h.account_id = a.id and h.symbol = ?
+                left join stock_price p on p.symbol = ?
+                where a.user_key = ?
+                """,
+                rs -> {
+                    if (!rs.next()) {
+                        return ListingAutoAccountLedger.empty();
+                    }
+                    long holdingQuantity = Math.max(0L, rs.getLong("holding_quantity"));
+                    long reservedQuantity = Math.max(0L, rs.getLong("reserved_quantity"));
+                    BigDecimal cashBalance = nonNullMoney(rs.getBigDecimal("cash_balance"));
+                    BigDecimal averagePrice = nonNullMoney(rs.getBigDecimal("average_price"));
+                    BigDecimal currentPrice = nonNullMoney(rs.getBigDecimal("current_price"));
+                    return ListingAutoAccountLedger.of(
+                            rs.getLong("account_id"),
+                            cashBalance,
+                            holdingQuantity,
+                            reservedQuantity,
+                            averagePrice,
+                            currentPrice
+                    );
+                },
+                config.getSymbol(),
+                config.getSymbol(),
+                config.getUserKey()
+        );
+    }
+
+    private BigDecimal nonNullMoney(BigDecimal value) {
+        return value == null ? BigDecimal.ZERO : value;
+    }
+
+    private record ListingAutoAccountLedger(
+            Long accountId,
+            BigDecimal cashBalance,
+            long holdingQuantity,
+            long reservedQuantity,
+            long availableQuantity,
+            BigDecimal averagePrice,
+            BigDecimal currentPrice,
+            BigDecimal marketValue
+    ) {
+
+        private static ListingAutoAccountLedger empty() {
+            return new ListingAutoAccountLedger(
+                    null,
+                    BigDecimal.ZERO,
+                    0L,
+                    0L,
+                    0L,
+                    BigDecimal.ZERO,
+                    BigDecimal.ZERO,
+                    BigDecimal.ZERO
+            );
+        }
+
+        private static ListingAutoAccountLedger of(
+                Long accountId,
+                BigDecimal cashBalance,
+                long holdingQuantity,
+                long reservedQuantity,
+                BigDecimal averagePrice,
+                BigDecimal currentPrice
+        ) {
+            long availableQuantity = Math.max(0L, holdingQuantity - reservedQuantity);
+            BigDecimal marketValue = currentPrice.multiply(BigDecimal.valueOf(holdingQuantity));
+            return new ListingAutoAccountLedger(
+                    accountId,
+                    cashBalance,
+                    holdingQuantity,
+                    reservedQuantity,
+                    availableQuantity,
+                    averagePrice,
+                    currentPrice,
+                    marketValue
+            );
+        }
+    }
+
     private OrderBookInstrumentResponse toOrderBookInstrumentResponse(StockOrderBookInstrument instrument) {
         StockPrice price = stockPriceRepository.findById(instrument.getSymbol()).orElse(null);
         BigDecimal currentPrice = price == null ? instrument.getInitialPrice() : price.getCurrentPrice();
@@ -1112,7 +1638,9 @@ public class MarketService {
     }
 
     private PriceResponse toPriceResponse(StockPrice price) {
-        var cachedPrice = stockPriceCacheService.getCachedPrice(price.getSymbol());
+        var cachedPrice = price.getCurrentPrice().compareTo(BigDecimal.ZERO) <= 0
+                ? Optional.<CachedStockPrice>empty()
+                : stockPriceCacheService.getCachedPrice(price.getSymbol());
         BigDecimal currentPrice = cachedPrice
                 .map(CachedStockPrice::currentPrice)
                 .orElse(price.getCurrentPrice());
@@ -1166,6 +1694,8 @@ public class MarketService {
                 action.getExRightsDate(),
                 action.getPaymentDate(),
                 action.getListingDate(),
+                action.getDelistingDate(),
+                action.getDelistingTreatment() == null ? null : action.getDelistingTreatment().name(),
                 action.getAppliedAt(),
                 action.getPaidAt(),
                 action.getListedAt(),
@@ -1239,6 +1769,9 @@ public class MarketService {
                 participant.getUserKey(),
                 participant.getDisplayName(),
                 Boolean.TRUE.equals(participant.getEnabled()),
+                participant.getProfileType() == null
+                        ? AutoParticipantProfileType.defaultType().name()
+                        : participant.getProfileType().name(),
                 findAutoParticipantCashBalance(participant.getUserKey()),
                 participant.getCreatedAt(),
                 participant.getUpdatedAt(),
@@ -1250,6 +1783,10 @@ public class MarketService {
         return stockAccountRepository.findByUserKeyAndStatus(userKey, StockAccountStatus.ACTIVE)
                 .map(stock.back.service.database.entity.StockAccount::getCashBalance)
                 .orElse(null);
+    }
+
+    private BigDecimal nonNullDecimal(BigDecimal value) {
+        return value == null ? BigDecimal.ZERO : value;
     }
 
     private AutoParticipantSymbolConfigResponse toAutoParticipantSymbolConfigResponse(StockAutoParticipantSymbolConfig config) {
