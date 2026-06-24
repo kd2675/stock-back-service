@@ -57,6 +57,9 @@ public class PriceStreamService implements MessageListener {
                         .data(event));
             } catch (IOException | IllegalStateException ex) {
                 emitters.remove(emitter);
+            } catch (RuntimeException ex) {
+                log.debug("SSE price stream emitter removed: reason={}", ex.getMessage());
+                emitters.remove(emitter);
             }
         }
     }
@@ -65,6 +68,9 @@ public class PriceStreamService implements MessageListener {
         try {
             emitter.send(SseEmitter.event().name("connected").data("ok"));
         } catch (IOException | IllegalStateException ex) {
+            emitters.remove(emitter);
+        } catch (RuntimeException ex) {
+            log.debug("SSE price stream connection closed before welcome event: reason={}", ex.getMessage());
             emitters.remove(emitter);
         }
     }

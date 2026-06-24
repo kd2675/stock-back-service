@@ -7,6 +7,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
+import stock.back.service.database.entity.MarketType;
 import stock.back.service.database.entity.OrderSide;
 import stock.back.service.database.entity.OrderStatus;
 import stock.back.service.database.entity.OrderType;
@@ -30,6 +31,7 @@ class StockOrderRepositoryOrderBookTest {
     @BeforeEach
     void setUp() {
         jdbcTemplate.update("delete from stock_order");
+        jdbcTemplate.update("delete from stock_account");
     }
 
     @Test
@@ -43,6 +45,7 @@ class StockOrderRepositoryOrderBookTest {
 
         var levels = stockOrderRepository.findBidLevels(
                 "005930",
+                MarketType.ORDER_BOOK,
                 OrderSide.BUY,
                 OrderType.LIMIT,
                 List.of(OrderStatus.PENDING, OrderStatus.PARTIALLY_FILLED),
@@ -65,6 +68,7 @@ class StockOrderRepositoryOrderBookTest {
 
         var levels = stockOrderRepository.findAskLevels(
                 "005930",
+                MarketType.ORDER_BOOK,
                 OrderSide.SELL,
                 OrderType.LIMIT,
                 List.of(OrderStatus.PENDING, OrderStatus.PARTIALLY_FILLED),
@@ -92,15 +96,16 @@ class StockOrderRepositoryOrderBookTest {
             int secondsOffset
     ) {
         LocalDateTime createdAt = LocalDateTime.now().plusSeconds(secondsOffset);
+        Long accountId = accountIdFor(userKey);
         jdbcTemplate.update(
                 """
                 insert into stock_order(
-                  client_order_id, user_key, symbol, side, order_type, status, limit_price,
+                  client_order_id, account_id, symbol, market_type, side, order_type, status, limit_price,
                   quantity, filled_quantity, reserved_cash, created_at, updated_at
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) values (?, ?, ?, 'ORDER_BOOK', ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 clientOrderId,
-                userKey,
+                accountId,
                 symbol,
                 side,
                 orderType,
@@ -111,6 +116,24 @@ class StockOrderRepositoryOrderBookTest {
                 new BigDecimal(reservedCash),
                 createdAt,
                 createdAt
+        );
+    }
+
+    private Long accountIdFor(String userKey) {
+        jdbcTemplate.update(
+                """
+                merge into stock_account(user_key, cash_balance, created_at, updated_at)
+                key(user_key)
+                values (?, 10000000.00, ?, ?)
+                """,
+                userKey,
+                LocalDateTime.now(),
+                LocalDateTime.now()
+        );
+        return jdbcTemplate.queryForObject(
+                "select id from stock_account where user_key = ?",
+                Long.class,
+                userKey
         );
     }
 }

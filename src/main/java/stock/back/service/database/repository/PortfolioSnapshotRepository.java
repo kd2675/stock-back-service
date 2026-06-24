@@ -10,7 +10,7 @@ import java.util.Optional;
 public interface PortfolioSnapshotRepository extends JpaRepository<PortfolioSnapshot, Long> {
     List<PortfolioSnapshot> findTop20BySnapshotDateOrderByReturnRateDesc(LocalDate snapshotDate);
 
-    List<PortfolioSnapshot> findTop30ByUserKeyOrderBySnapshotDateDesc(String userKey);
+    List<PortfolioSnapshot> findTop30ByAccountIdOrderBySnapshotDateDesc(Long accountId);
 
     Optional<PortfolioSnapshot> findTopByOrderBySnapshotDateDesc();
 }

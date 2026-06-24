@@ -17,8 +17,8 @@ public class StockSystemController {
         return ResponseDataDTO.of(
                 new StockServiceStatus(
                         "stock-back-service",
-                        List.of("accounts", "orders", "executions", "holdings", "rankings"),
-                        true
+                        List.of("accounts", "markets", "orders", "executions", "holdings", "rankings"),
+                        false
                 )
         );
     }

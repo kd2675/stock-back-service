@@ -32,11 +32,15 @@ public class StockOrder {
     @Column(name = "client_order_id", nullable = false, length = 64)
     private String clientOrderId;
 
-    @Column(name = "user_key", nullable = false, length = 64)
-    private String userKey;
+    @Column(name = "account_id", nullable = false)
+    private Long accountId;
 
     @Column(name = "symbol", nullable = false, length = 20)
     private String symbol;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "market_type", nullable = false, length = 30)
+    private MarketType marketType;
 
     @Enumerated(EnumType.STRING)
     @Column(name = "side", nullable = false, length = 10)
@@ -73,8 +77,9 @@ public class StockOrder {
 
     public static StockOrder pending(
             String clientOrderId,
-            String userKey,
+            Long accountId,
             String symbol,
+            MarketType marketType,
             OrderSide side,
             OrderType orderType,
             BigDecimal limitPrice,
@@ -83,8 +88,9 @@ public class StockOrder {
     ) {
         StockOrder order = new StockOrder();
         order.clientOrderId = clientOrderId;
-        order.userKey = userKey;
+        order.accountId = accountId;
         order.symbol = symbol;
+        order.marketType = marketType == null ? MarketType.VIRTUAL_PRICE : marketType;
         order.side = side;
         order.orderType = orderType;
         order.status = OrderStatus.PENDING;
@@ -100,6 +106,19 @@ public class StockOrder {
     public void cancel() {
         this.status = OrderStatus.CANCELLED;
         this.reservedCash = BigDecimal.ZERO;
+        this.updatedAt = LocalDateTime.now();
+    }
+
+    public void amendLimitOrder(long quantity, BigDecimal limitPrice, BigDecimal reservedCash) {
+        this.quantity = quantity;
+        this.limitPrice = limitPrice;
+        this.reservedCash = reservedCash;
+        this.updatedAt = LocalDateTime.now();
+    }
+
+    public void reduceOpenQuantity(long quantityToCancel, BigDecimal reservedCash) {
+        this.quantity = this.quantity - quantityToCancel;
+        this.reservedCash = reservedCash;
         this.updatedAt = LocalDateTime.now();
     }
 }

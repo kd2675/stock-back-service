@@ -11,11 +11,11 @@ import java.util.List;
 import java.util.Optional;
 
 public interface StockHoldingRepository extends JpaRepository<StockHolding, Long> {
-    List<StockHolding> findByUserKeyOrderBySymbolAsc(String userKey);
+    List<StockHolding> findByAccountIdOrderBySymbolAsc(Long accountId);
 
-    Optional<StockHolding> findByUserKeyAndSymbol(String userKey, String symbol);
+    Optional<StockHolding> findByAccountIdAndSymbol(Long accountId, String symbol);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
-    @Query("select h from StockHolding h where h.userKey = :userKey and h.symbol = :symbol")
-    Optional<StockHolding> findByUserKeyAndSymbolForUpdate(@Param("userKey") String userKey, @Param("symbol") String symbol);
+    @Query("select h from StockHolding h where h.accountId = :accountId and h.symbol = :symbol")
+    Optional<StockHolding> findByAccountIdAndSymbolForUpdate(@Param("accountId") Long accountId, @Param("symbol") String symbol);
 }

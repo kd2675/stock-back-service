@@ -18,7 +18,7 @@ import java.time.LocalDateTime;
 @Entity
 @Table(
         name = "stock_holding",
-        uniqueConstraints = @UniqueConstraint(name = "uk_stock_holding_user_symbol", columnNames = {"user_key", "symbol"})
+        uniqueConstraints = @UniqueConstraint(name = "uk_stock_holding_account_symbol", columnNames = {"account_id", "symbol"})
 )
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class StockHolding {
@@ -27,8 +27,8 @@ public class StockHolding {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(name = "user_key", nullable = false, length = 64)
-    private String userKey;
+    @Column(name = "account_id", nullable = false)
+    private Long accountId;
 
     @Column(name = "symbol", nullable = false, length = 20)
     private String symbol;

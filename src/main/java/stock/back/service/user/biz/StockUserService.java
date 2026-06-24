@@ -20,7 +20,9 @@ public class StockUserService {
     private final AccountService accountService;
 
     public StockUserProfileResponse getMyProfile(UserContext userContext) {
-        AccountResponse account = accountService.toResponse(accountService.getOrOpenAccount(userContext.getUserKey()));
+        AccountResponse account = accountService.findAccount(userContext.getUserKey())
+                .map(accountService::toResponse)
+                .orElse(null);
         UserDto user = findUser(userContext);
         return new StockUserProfileResponse(
                 user.getUserKey(),

@@ -19,7 +19,7 @@ import java.time.LocalDateTime;
 @Entity
 @Table(
         name = "portfolio_snapshot",
-        uniqueConstraints = @UniqueConstraint(name = "uk_portfolio_snapshot_user_date", columnNames = {"user_key", "snapshot_date"})
+        uniqueConstraints = @UniqueConstraint(name = "uk_portfolio_snapshot_account_date", columnNames = {"account_id", "snapshot_date"})
 )
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class PortfolioSnapshot {
@@ -28,8 +28,8 @@ public class PortfolioSnapshot {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(name = "user_key", nullable = false, length = 64)
-    private String userKey;
+    @Column(name = "account_id", nullable = false)
+    private Long accountId;
 
     @Column(name = "snapshot_date", nullable = false)
     private LocalDate snapshotDate;

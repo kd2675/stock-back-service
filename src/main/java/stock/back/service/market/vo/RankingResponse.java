@@ -5,6 +5,7 @@ import java.time.LocalDate;
 
 public record RankingResponse(
         int rank,
+        Long accountId,
         String userKey,
         String displayName,
         BigDecimal totalAsset,

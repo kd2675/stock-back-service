@@ -28,8 +28,8 @@ public class StockExecution {
     @Column(name = "order_id", nullable = false)
     private Long orderId;
 
-    @Column(name = "user_key", nullable = false, length = 64)
-    private String userKey;
+    @Column(name = "account_id", nullable = false)
+    private Long accountId;
 
     @Column(name = "symbol", nullable = false, length = 20)
     private String symbol;
@@ -43,6 +43,21 @@ public class StockExecution {
 
     @Column(name = "price", nullable = false, precision = 19, scale = 2)
     private BigDecimal price;
+
+    @Column(name = "gross_amount", nullable = false, precision = 19, scale = 2)
+    private BigDecimal grossAmount;
+
+    @Column(name = "fee_amount", nullable = false, precision = 19, scale = 2)
+    private BigDecimal feeAmount;
+
+    @Column(name = "tax_amount", nullable = false, precision = 19, scale = 2)
+    private BigDecimal taxAmount;
+
+    @Column(name = "net_amount", nullable = false, precision = 19, scale = 2)
+    private BigDecimal netAmount;
+
+    @Column(name = "realized_profit", precision = 19, scale = 2)
+    private BigDecimal realizedProfit;
 
     @Enumerated(EnumType.STRING)
     @Column(name = "source", nullable = false, length = 30)

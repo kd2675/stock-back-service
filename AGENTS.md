@@ -19,8 +19,13 @@
 - `/api/stock/v1/markets/**`
 - `/api/stock/v1/markets/prices/{symbol}/ticks`
 - `/api/stock/v1/markets/order-books/{symbol}`
+- `/api/stock/v1/markets/virtual-market`
+- `/api/stock/v1/markets/order-book-market`
+- `/api/stock/v1/markets/auto-market`
 - `/api/stock/v1/users/me`
 - `/api/stock/v1/accounts/me`
+- `/api/stock/v1/accounts/me/status`
+- `POST /api/stock/v1/accounts/me`
 - `/api/stock/v1/portfolio/me`
 - `/api/stock/v1/portfolio/me/snapshots`
 - `/api/stock/v1/orders`
@@ -30,6 +35,7 @@
 
 ```bash
 ./gradlew :stock-back-service:bootRun
+./gradlew :stock-back-service:bootRun --args='--spring.profiles.active=local-direct'
 ./gradlew :stock-back-service:compileJava
 ./gradlew :stock-back-service:test
 ```
@@ -37,13 +43,19 @@
 ## Operational Notes
 
 - 포트: `local/dev 20480`, `prod 10480`, `test 30480`
+- 기본 로컬 개발은 `local-direct` profile이며 Eureka/Discovery를 끄고 auth-back-server를 `STOCK_AUTH_BASE_URL`로 직접 호출합니다.
+- Gateway/Eureka 경유로 되돌릴 때는 기존 `local` profile을 사용합니다.
 - 공통 응답은 `web-common-core`의 `ResponseDataDTO`, `ResponseErrorDTO`를 사용합니다.
 - 인증/사용자 식별은 Gateway가 주입한 헤더와 `auth-common-core`를 기준으로 붙입니다.
+- 주문장 종목 생성과 기업 이벤트 적용 POST API는 `ADMIN` principal만 허용합니다.
 - 사용자 프로필은 `auth-common-core`의 `UserServiceClient`를 사용하되, Feign 호출에는 현재 `X-User-*` 헤더를 relay합니다.
 - 주문, 체결, 잔고는 DB 원장에 저장하고 최신 시세 조회는 Redis `stock:price:{symbol}` 캐시 후 DB fallback 순서로 처리합니다.
+- `stock_order.market_type`은 현재가 체결용 `VIRTUAL_PRICE`와 주문장 체결용 `ORDER_BOOK`을 분리하는 핵심 계약입니다.
 - 주문장 API는 미체결/부분체결 LIMIT 주문만 가격대별로 집계합니다. 시장가 주문은 가격 레벨이 없으므로 호가에 넣지 않습니다.
+- 자동장 API는 `stock_auto_participant`, `stock_auto_market_config`, 자동 주문/체결 원장을 읽는 조회 API입니다. 주문 생성과 체결은 batch 서버 책임입니다.
 - `portfolio_snapshot`은 batch 정산 결과의 원장이며 사용자 화면에서는 최근 정산 기록/랭킹 근거로만 읽습니다.
 - DDL은 `src/main/resources/db/ddl/stock_all.sql`입니다.
+- 기능별 현재 구현과 다음 개발 순서는 `docs/market-simulation/00-overview.md`, 코드 파일별 책임은 `docs/market-simulation/13-code-ownership-map.md`, 기능별 변경 절차는 `docs/market-simulation/14-feature-change-playbooks.md`를 기준으로 확인합니다.
 
 ## For AI Agents
 

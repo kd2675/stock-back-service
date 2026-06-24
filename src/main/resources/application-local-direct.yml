@@ -1,0 +1,25 @@
+spring:
+  config:
+    activate:
+      on-profile: local-direct
+  cloud:
+    discovery:
+      enabled: false
+    service-registry:
+      auto-registration:
+        enabled: false
+    openfeign:
+      client:
+        config:
+          auth-back-server:
+            url: ${STOCK_AUTH_BASE_URL:http://localhost:9000}
+
+eureka:
+  client:
+    enabled: false
+    registerWithEureka: false
+    fetchRegistry: false
+
+stock:
+  cors:
+    allowed-origins: ${STOCK_CORS_ALLOWED_ORIGINS:http://localhost:3005,http://127.0.0.1:3005}

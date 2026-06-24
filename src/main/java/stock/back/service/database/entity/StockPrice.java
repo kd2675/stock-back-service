@@ -39,7 +39,7 @@ public class StockPrice {
         stockPrice.currentPrice = price;
         stockPrice.previousClose = price;
         stockPrice.priceTime = LocalDateTime.now();
-        stockPrice.provider = "seed";
+        stockPrice.provider = "initial-listing";
         return stockPrice;
     }
 
