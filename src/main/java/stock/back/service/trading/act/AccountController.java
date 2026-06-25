@@ -1,15 +1,19 @@
 package stock.back.service.trading.act;
 
+import auth.common.core.constant.UserRole;
 import auth.common.core.context.RequirePrincipalRole;
 import auth.common.core.context.UserContext;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import stock.back.service.trading.biz.AccountService;
+import stock.back.service.trading.vo.AccountCashAdjustmentRequest;
+import stock.back.service.trading.vo.AccountCashAdjustmentResponse;
 import stock.back.service.trading.vo.AccountReconnectRequest;
 import stock.back.service.trading.vo.AccountResponse;
 import stock.back.service.trading.vo.AccountStatusResponse;
@@ -51,5 +55,15 @@ public class AccountController {
             @RequestBody AccountReconnectRequest request
     ) {
         return ResponseDataDTO.of(accountService.reconnectAccount(userContext.getUserKey(), request));
+    }
+
+    @PostMapping("/admin/users/{userKey}/cash-adjustments")
+    @RequirePrincipalRole(anyOf = {UserRole.ADMIN})
+    public ResponseDataDTO<AccountCashAdjustmentResponse> adjustUserAccountCash(
+            @PathVariable String userKey,
+            @RequestBody AccountCashAdjustmentRequest request,
+            UserContext userContext
+    ) {
+        return ResponseDataDTO.of(accountService.adjustUserAccountCash(userKey, request, userContext.getUserKey()));
     }
 }

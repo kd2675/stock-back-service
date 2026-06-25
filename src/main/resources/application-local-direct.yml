@@ -21,5 +21,8 @@ eureka:
     fetchRegistry: false
 
 stock:
+  batch-client:
+    base-url: ${STOCK_BATCH_API_BASE_URL:http://localhost:20481}
+    internal-token: ${STOCK_BATCH_INTERNAL_TOKEN:local-stock-batch-internal-token}
   cors:
     allowed-origins: ${STOCK_CORS_ALLOWED_ORIGINS:http://localhost:3005,http://127.0.0.1:3005}

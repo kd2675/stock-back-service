@@ -56,6 +56,11 @@ database:
 stock:
   trading:
     opening-grant-amount: ${STOCK_OPENING_GRANT_AMOUNT:10000000}
+  batch-client:
+    base-url: ${STOCK_BATCH_API_BASE_URL:http://localhost:20481}
+    internal-token: ${STOCK_BATCH_INTERNAL_TOKEN:local-stock-batch-internal-token}
+    connect-timeout-ms: ${STOCK_BATCH_CLIENT_CONNECT_TIMEOUT_MS:3000}
+    read-timeout-ms: ${STOCK_BATCH_CLIENT_READ_TIMEOUT_MS:10000}
 
 eureka:
   client:

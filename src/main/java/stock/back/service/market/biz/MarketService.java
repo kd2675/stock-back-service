@@ -10,6 +10,7 @@ import stock.back.service.database.entity.OrderSide;
 import stock.back.service.database.entity.OrderStatus;
 import stock.back.service.database.entity.OrderType;
 import stock.back.service.database.entity.PortfolioSnapshot;
+import stock.back.service.database.entity.RecurringCashIntervalUnit;
 import stock.back.service.database.entity.AutoParticipantProfileType;
 import stock.back.service.database.entity.ExecutionSource;
 import stock.back.service.database.entity.ListingAutoPosition;
@@ -22,6 +23,7 @@ import stock.back.service.database.entity.StockAutoParticipantSymbolConfigId;
 import stock.back.service.database.entity.StockAccount;
 import stock.back.service.database.entity.StockAccountCashFlow;
 import stock.back.service.database.entity.StockAccountStatus;
+import stock.back.service.database.entity.StockAutoParticipantProfileConfig;
 import stock.back.service.database.entity.StockCorporateAction;
 import stock.back.service.database.entity.StockCorporateActionEntitlement;
 import stock.back.service.database.entity.StockCorporateActionType;
@@ -38,6 +40,7 @@ import stock.back.service.database.repository.PortfolioSnapshotRepository;
 import stock.back.service.database.repository.StockAccountCashFlowRepository;
 import stock.back.service.database.repository.StockAccountRepository;
 import stock.back.service.database.repository.StockAutoMarketConfigRepository;
+import stock.back.service.database.repository.StockAutoParticipantProfileConfigRepository;
 import stock.back.service.database.repository.StockAutoParticipantRepository;
 import stock.back.service.database.repository.StockAutoParticipantSymbolConfigRepository;
 import stock.back.service.database.repository.StockCorporateActionEntitlementRepository;
@@ -61,6 +64,8 @@ import stock.back.service.market.vo.AutoParticipantHoldingResponse;
 import stock.back.service.market.vo.AutoParticipantCashAdjustmentRequest;
 import stock.back.service.market.vo.AutoParticipantCashAdjustmentResponse;
 import stock.back.service.market.vo.AutoParticipantOverviewResponse;
+import stock.back.service.market.vo.AutoParticipantProfileConfigRequest;
+import stock.back.service.market.vo.AutoParticipantProfileConfigResponse;
 import stock.back.service.market.vo.AutoParticipantRequest;
 import stock.back.service.market.vo.AutoParticipantResponse;
 import stock.back.service.market.vo.AutoParticipantSymbolConfigRequest;
@@ -89,6 +94,8 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.Arrays;
+import java.util.EnumMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -102,6 +109,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class MarketService {
 
     private static final String LISTING_SUPPLY_USER_KEY_PREFIX = "stock-listing-";
+    private static final int DEFAULT_RECURRING_DEPOSIT_INTERVAL_DAYS = 30;
+    private static final Map<AutoParticipantProfileType, ProfileConfigDefaults> PROFILE_CONFIG_DEFAULTS = createProfileConfigDefaults();
 
     private final StockInstrumentRepository stockInstrumentRepository;
     private final StockPriceRepository stockPriceRepository;
@@ -112,6 +121,7 @@ public class MarketService {
     private final StockAccountRepository stockAccountRepository;
     private final StockPriceCacheService stockPriceCacheService;
     private final StockAutoMarketConfigRepository stockAutoMarketConfigRepository;
+    private final StockAutoParticipantProfileConfigRepository stockAutoParticipantProfileConfigRepository;
     private final StockAutoParticipantRepository stockAutoParticipantRepository;
     private final StockAutoParticipantSymbolConfigRepository stockAutoParticipantSymbolConfigRepository;
     private final StockVirtualMarketConfigRepository stockVirtualMarketConfigRepository;
@@ -536,6 +546,7 @@ public class MarketService {
                                 savedParticipantSymbolConfigs.get(autoParticipantSymbolConfigKey(participant.getUserKey(), config.getSymbol()))
                         )))
                 .toList();
+        List<AutoParticipantProfileConfigResponse> participantProfileConfigs = getAutoParticipantProfileConfigs();
         List<ListingAutoAccountResponse> listingAutoAccounts = stockListingAutoAccountConfigRepository.findAllByOrderBySymbolAsc().stream()
                 .map(this::toListingAutoAccountResponse)
                 .toList();
@@ -552,8 +563,115 @@ public class MarketService {
                 configs,
                 participants,
                 participantSymbolConfigs,
+                participantProfileConfigs,
                 listingAutoAccounts
         );
+    }
+
+    @Transactional(readOnly = true)
+    public List<AutoParticipantProfileConfigResponse> getAutoParticipantProfileConfigs() {
+        Map<AutoParticipantProfileType, StockAutoParticipantProfileConfig> savedConfigs = stockAutoParticipantProfileConfigRepository.findAllByOrderByProfileTypeAsc()
+                .stream()
+                .collect(Collectors.toMap(StockAutoParticipantProfileConfig::getProfileType, Function.identity()));
+        return Arrays.stream(AutoParticipantProfileType.values())
+                .map(profileType -> toAutoParticipantProfileConfigResponse(profileType, savedConfigs.get(profileType)))
+                .toList();
+    }
+
+    @Transactional
+    public AutoParticipantProfileConfigResponse updateAutoParticipantProfileConfig(
+            String profileTypeValue,
+            AutoParticipantProfileConfigRequest request
+    ) {
+        AutoParticipantProfileType profileType = parseAutoParticipantProfileType(profileTypeValue);
+        if (request == null) {
+            throw StockException.badRequest("Auto participant profile config update is required");
+        }
+        BigDecimal newsWeight = requireRatioValue(request.newsWeight(), "News weight", BigDecimal.ZERO, BigDecimal.ONE);
+        BigDecimal momentumWeight = requireRatioValue(request.momentumWeight(), "Momentum weight", BigDecimal.ZERO, BigDecimal.ONE);
+        BigDecimal contrarianWeight = requireRatioValue(request.contrarianWeight(), "Contrarian weight", BigDecimal.ZERO, BigDecimal.ONE);
+        BigDecimal lossAversionWeight = requireRatioValue(request.lossAversionWeight(), "Loss aversion weight", BigDecimal.ZERO, BigDecimal.ONE);
+        BigDecimal herdingWeight = requireRatioValue(request.herdingWeight(), "Herding weight", BigDecimal.ZERO, BigDecimal.ONE);
+        BigDecimal marketMakingWeight = requireRatioValue(request.marketMakingWeight(), "Market making weight", BigDecimal.ZERO, BigDecimal.ONE);
+        BigDecimal overconfidenceWeight = requireRatioValue(request.overconfidenceWeight(), "Overconfidence weight", BigDecimal.ZERO, BigDecimal.ONE);
+        BigDecimal noiseWeight = requireRatioValue(request.noiseWeight(), "Noise weight", BigDecimal.ZERO, BigDecimal.ONE);
+        BigDecimal panicSellWeight = requireRatioValue(request.panicSellWeight(), "Panic sell weight", BigDecimal.ZERO, BigDecimal.ONE);
+        BigDecimal dipBuyWeight = requireRatioValue(request.dipBuyWeight(), "Dip buy weight", BigDecimal.ZERO, BigDecimal.ONE);
+        BigDecimal orderMultiplier = requireRatioValue(request.orderMultiplier(), "Order multiplier", BigDecimal.ZERO, BigDecimal.valueOf(5));
+        BigDecimal aggressionMultiplier = requireRatioValue(request.aggressionMultiplier(), "Aggression multiplier", BigDecimal.ZERO, BigDecimal.valueOf(5));
+        BigDecimal orderTtlMultiplier = requireRatioValue(request.orderTtlMultiplier(), "Order TTL multiplier", new BigDecimal("0.1"), BigDecimal.TEN);
+        BigDecimal quantityMultiplier = requireRatioValue(request.quantityMultiplier(), "Quantity multiplier", BigDecimal.ZERO, BigDecimal.valueOf(5));
+        BigDecimal holdingPatienceWeight = requireRatioValue(request.holdingPatienceWeight(), "Holding patience weight", BigDecimal.ZERO, BigDecimal.ONE);
+        BigDecimal deepLossHoldWeight = requireRatioValue(request.deepLossHoldWeight(), "Deep loss hold weight", BigDecimal.ZERO, BigDecimal.ONE);
+        BigDecimal profitTakingWeight = requireRatioValue(request.profitTakingWeight(), "Profit taking weight", BigDecimal.ZERO, BigDecimal.ONE);
+        BigDecimal recurringDepositAmount = requireRatioValue(request.recurringDepositAmount(), "Recurring deposit amount", BigDecimal.ZERO, new BigDecimal("1000000000000"));
+        BigDecimal recurringDepositIntervalValue = normalizeRecurringCashIntervalValue(
+                request.recurringDepositIntervalValue() == null && request.recurringDepositIntervalDays() != null
+                        ? BigDecimal.valueOf(request.recurringDepositIntervalDays())
+                        : request.recurringDepositIntervalValue(),
+                recurringDepositAmount
+        );
+        RecurringCashIntervalUnit recurringDepositIntervalUnit = normalizeRecurringCashIntervalUnit(
+                request.recurringDepositIntervalUnit() == null && request.recurringDepositIntervalDays() != null
+                        ? RecurringCashIntervalUnit.DAY.name()
+                        : request.recurringDepositIntervalUnit(),
+                recurringDepositAmount
+        );
+        if (recurringDepositIntervalValue == null) {
+            recurringDepositIntervalValue = BigDecimal.ZERO;
+        }
+        if (recurringDepositIntervalUnit == null) {
+            recurringDepositIntervalUnit = RecurringCashIntervalUnit.DAY;
+        }
+        BigDecimal finalRecurringDepositIntervalValue = recurringDepositIntervalValue;
+        RecurringCashIntervalUnit finalRecurringDepositIntervalUnit = recurringDepositIntervalUnit;
+        StockAutoParticipantProfileConfig config = stockAutoParticipantProfileConfigRepository.findById(profileType)
+                .orElseGet(() -> StockAutoParticipantProfileConfig.create(
+                        profileType,
+                        newsWeight,
+                        momentumWeight,
+                        contrarianWeight,
+                        lossAversionWeight,
+                        herdingWeight,
+                        marketMakingWeight,
+                        overconfidenceWeight,
+                        noiseWeight,
+                        panicSellWeight,
+                        dipBuyWeight,
+                        orderMultiplier,
+                        aggressionMultiplier,
+                        orderTtlMultiplier,
+                        quantityMultiplier,
+                        holdingPatienceWeight,
+                        deepLossHoldWeight,
+                        profitTakingWeight,
+                        recurringDepositAmount,
+                        finalRecurringDepositIntervalValue,
+                        finalRecurringDepositIntervalUnit
+                ));
+        config.update(
+                newsWeight,
+                momentumWeight,
+                contrarianWeight,
+                lossAversionWeight,
+                herdingWeight,
+                marketMakingWeight,
+                overconfidenceWeight,
+                noiseWeight,
+                panicSellWeight,
+                dipBuyWeight,
+                orderMultiplier,
+                aggressionMultiplier,
+                orderTtlMultiplier,
+                quantityMultiplier,
+                holdingPatienceWeight,
+                deepLossHoldWeight,
+                profitTakingWeight,
+                recurringDepositAmount,
+                recurringDepositIntervalValue,
+                recurringDepositIntervalUnit
+        );
+        return toAutoParticipantProfileConfigResponse(profileType, stockAutoParticipantProfileConfigRepository.save(config));
     }
 
     @Transactional
@@ -613,11 +731,11 @@ public class MarketService {
                        ), 0) as holding_market_value,
                        coalesce((
                            select sum(
-                               case f.flow_type
-                                   when 'DEPOSIT' then f.amount
-                                   when 'WITHDRAW' then -f.amount
-                                   else 0
-                               end
+	                               case
+	                                   when f.flow_type = 'DEPOSIT' and f.reason <> 'DIVIDEND_PAYMENT' then f.amount
+	                                   when f.flow_type = 'WITHDRAW' then -f.amount
+	                                   else 0
+	                               end
                            )
                            from stock_account_cash_flow f
                            where f.account_id = a.id
@@ -938,9 +1056,25 @@ public class MarketService {
             throw StockException.badRequest("Auto participant display name must be 80 characters or less");
         }
         AutoParticipantProfileType profileType = parseAutoParticipantProfileType(request == null ? null : request.profileType());
+        BigDecimal recurringCashAmount = normalizeRecurringCashAmount(request == null ? null : request.recurringCashAmount());
+        BigDecimal recurringCashIntervalValue = normalizeRecurringCashIntervalValue(
+                request == null ? null : request.recurringCashIntervalValue(),
+                recurringCashAmount
+        );
+        RecurringCashIntervalUnit recurringCashIntervalUnit = normalizeRecurringCashIntervalUnit(
+                request == null ? null : request.recurringCashIntervalUnit(),
+                recurringCashAmount
+        );
         StockAutoParticipant participant = stockAutoParticipantRepository.findById(normalizedUserKey)
                 .map(existing -> {
-                    existing.update(displayName, request == null ? null : request.enabled(), profileType);
+                    existing.update(
+                            displayName,
+                            request == null ? null : request.enabled(),
+                            profileType,
+                            recurringCashAmount,
+                            recurringCashIntervalValue,
+                            recurringCashIntervalUnit
+                    );
                     return existing;
                 })
                 .orElseGet(() -> {
@@ -948,7 +1082,10 @@ public class MarketService {
                         normalizedUserKey,
                         displayName,
                         request == null || request.enabled() == null || request.enabled(),
-                        profileType
+                        profileType,
+                        recurringCashAmount,
+                        recurringCashIntervalValue,
+                        recurringCashIntervalUnit
                     );
                 });
         return toAutoParticipantResponse(stockAutoParticipantRepository.save(participant));
@@ -1065,6 +1202,78 @@ public class MarketService {
     private String normalizeOptionalText(String value) {
         String normalized = normalizeText(value);
         return normalized.isBlank() ? null : normalized;
+    }
+
+    private BigDecimal requireRatioValue(BigDecimal value, String fieldName, BigDecimal min, BigDecimal max) {
+        if (value == null) {
+            throw StockException.badRequest(fieldName + " is required");
+        }
+        if (value.compareTo(min) < 0 || value.compareTo(max) > 0) {
+            throw StockException.badRequest(fieldName + " must be between " + min + " and " + max);
+        }
+        return value;
+    }
+
+    private Integer requireIntValue(Integer value, String fieldName, int min, int max) {
+        if (value == null) {
+            throw StockException.badRequest(fieldName + " is required");
+        }
+        if (value < min || value > max) {
+            throw StockException.badRequest(fieldName + " must be between " + min + " and " + max);
+        }
+        return value;
+    }
+
+    private BigDecimal normalizeRecurringCashAmount(BigDecimal value) {
+        if (value == null) {
+            return null;
+        }
+        if (value.compareTo(BigDecimal.ZERO) < 0 || value.compareTo(new BigDecimal("1000000000000")) > 0) {
+            throw StockException.badRequest("Recurring cash amount must be between 0 and 1000000000000");
+        }
+        return value;
+    }
+
+    private BigDecimal normalizeRecurringCashIntervalValue(BigDecimal value, BigDecimal amount) {
+        if (amount == null) {
+            return value == null ? null : requireRecurringCashIntervalValue(value);
+        }
+        if (amount.compareTo(BigDecimal.ZERO) == 0) {
+            return value == null ? BigDecimal.ZERO : requireRecurringCashIntervalValue(value);
+        }
+        if (value == null) {
+            throw StockException.badRequest("Recurring cash interval value is required when recurring cash amount is positive");
+        }
+        BigDecimal interval = requireRecurringCashIntervalValue(value);
+        if (interval.compareTo(BigDecimal.ZERO) <= 0) {
+            throw StockException.badRequest("Recurring cash interval value must be greater than 0 when recurring cash amount is positive");
+        }
+        return interval;
+    }
+
+    private BigDecimal requireRecurringCashIntervalValue(BigDecimal value) {
+        if (value.compareTo(BigDecimal.ZERO) < 0 || value.compareTo(new BigDecimal("1000")) > 0) {
+            throw StockException.badRequest("Recurring cash interval value must be between 0 and 1000");
+        }
+        return value;
+    }
+
+    private RecurringCashIntervalUnit normalizeRecurringCashIntervalUnit(String value, BigDecimal amount) {
+        String normalized = normalizeText(value);
+        if (amount == null && normalized.isBlank()) {
+            return null;
+        }
+        if (amount != null && amount.compareTo(BigDecimal.ZERO) == 0 && normalized.isBlank()) {
+            return null;
+        }
+        if (amount != null && amount.compareTo(BigDecimal.ZERO) > 0 && normalized.isBlank()) {
+            throw StockException.badRequest("Recurring cash interval unit is required when recurring cash amount is positive");
+        }
+        try {
+            return RecurringCashIntervalUnit.parseOrDefault(normalized);
+        } catch (IllegalArgumentException exception) {
+            throw StockException.badRequest("Unknown recurring cash interval unit");
+        }
     }
 
     private AutoParticipantProfileType parseAutoParticipantProfileType(String value) {
@@ -1772,6 +1981,9 @@ public class MarketService {
                 participant.getProfileType() == null
                         ? AutoParticipantProfileType.defaultType().name()
                         : participant.getProfileType().name(),
+                participant.getRecurringCashAmount(),
+                participant.getRecurringCashIntervalValue(),
+                participant.getRecurringCashIntervalUnit() == null ? null : participant.getRecurringCashIntervalUnit().name(),
                 findAutoParticipantCashBalance(participant.getUserKey()),
                 participant.getCreatedAt(),
                 participant.getUpdatedAt(),
@@ -1787,6 +1999,197 @@ public class MarketService {
 
     private BigDecimal nonNullDecimal(BigDecimal value) {
         return value == null ? BigDecimal.ZERO : value;
+    }
+
+    private static Map<AutoParticipantProfileType, ProfileConfigDefaults> createProfileConfigDefaults() {
+        Map<AutoParticipantProfileType, ProfileConfigDefaults> defaults = new EnumMap<>(AutoParticipantProfileType.class);
+        defaults.put(AutoParticipantProfileType.NEWS_REACTIVE, profileDefaults(0.85, 0.15, 0.00, 0.25, 0.20, 0.00, 0.10, 0.10, 0.00, 0.05, 1.10, 1.15, 1.00, 1.00, 0.15, 0.10, 0.20, "0.00"));
+        defaults.put(AutoParticipantProfileType.MOMENTUM_FOLLOWER, profileDefaults(0.25, 0.85, 0.00, 0.20, 0.35, 0.00, 0.15, 0.15, 0.05, 0.00, 1.20, 1.25, 0.80, 1.00, 0.10, 0.05, 0.25, "0.00"));
+        defaults.put(AutoParticipantProfileType.CONTRARIAN, profileDefaults(0.20, 0.00, 0.85, 0.25, 0.00, 0.10, 0.05, 0.12, 0.00, 0.35, 1.00, 0.90, 1.20, 1.00, 0.20, 0.15, 0.35, "0.00"));
+        defaults.put(AutoParticipantProfileType.LOSS_AVERSE, profileDefaults(0.25, 0.10, 0.00, 0.95, 0.10, 0.00, 0.05, 0.08, 0.05, 0.00, 0.85, 0.80, 1.80, 0.80, 0.75, 0.60, 0.05, "0.00"));
+        defaults.put(AutoParticipantProfileType.OVERCONFIDENT, profileDefaults(0.35, 0.45, 0.00, 0.20, 0.25, 0.00, 0.95, 0.20, 0.05, 0.05, 1.60, 1.35, 0.70, 1.25, 0.10, 0.05, 0.10, "0.00"));
+        defaults.put(AutoParticipantProfileType.HERD_FOLLOWER, profileDefaults(0.25, 0.25, 0.00, 0.15, 0.90, 0.00, 0.15, 0.15, 0.15, 0.00, 1.25, 1.20, 0.80, 1.00, 0.05, 0.00, 0.20, "0.00"));
+        defaults.put(AutoParticipantProfileType.MARKET_MAKER, profileDefaults(0.15, 0.05, 0.00, 0.10, 0.10, 0.95, 0.00, 0.08, 0.00, 0.00, 1.25, 0.65, 0.60, 1.00, 0.00, 0.00, 0.45, "0.00"));
+        defaults.put(AutoParticipantProfileType.NOISE_TRADER, profileDefaults(0.35, 0.20, 0.10, 0.20, 0.15, 0.00, 0.10, 0.45, 0.05, 0.05, 1.00, 1.00, 1.00, 1.00, 0.10, 0.05, 0.20, "0.00"));
+        defaults.put(AutoParticipantProfileType.VALUE_ANCHOR, profileDefaults(0.20, 0.00, 0.45, 0.55, 0.00, 0.10, 0.00, 0.08, 0.00, 0.25, 0.80, 0.75, 1.60, 0.80, 0.50, 0.35, 0.15, "0.00"));
+        defaults.put(AutoParticipantProfileType.SCALPER, profileDefaults(0.25, 0.60, 0.00, 0.10, 0.40, 0.00, 0.25, 0.35, 0.10, 0.00, 2.00, 1.50, 0.25, 0.70, 0.00, 0.00, 0.90, "0.00"));
+        defaults.put(AutoParticipantProfileType.DAY_TRADER, profileDefaults(0.25, 0.70, 0.00, 0.08, 0.35, 0.00, 0.25, 0.30, 0.15, 0.00, 2.30, 1.60, 0.35, 0.90, 0.00, 0.00, 0.85, "0.00"));
+        defaults.put(AutoParticipantProfileType.SWING_TRADER, profileDefaults(0.30, 0.45, 0.25, 0.25, 0.15, 0.00, 0.15, 0.12, 0.05, 0.20, 0.95, 1.05, 1.10, 1.05, 0.20, 0.15, 0.45, "0.00"));
+        defaults.put(AutoParticipantProfileType.LONG_TERM_HOLDER, profileDefaults(0.20, 0.05, 0.20, 0.85, 0.00, 0.00, 0.00, 0.05, 0.00, 0.45, 0.45, 0.50, 2.50, 0.55, 0.95, 0.75, 0.05, "0.00"));
+        defaults.put(AutoParticipantProfileType.PAYDAY_ACCUMULATOR, profileDefaults(0.20, 0.10, 0.15, 0.65, 0.05, 0.00, 0.00, 0.06, 0.00, 0.55, 0.90, 0.80, 2.00, 0.70, 0.90, 0.55, 0.05, "300000.00"));
+        defaults.put(AutoParticipantProfileType.DIVIDEND_REINVESTOR, profileDefaults(0.20, 0.08, 0.20, 0.70, 0.05, 0.00, 0.00, 0.05, 0.00, 0.50, 0.80, 0.75, 2.20, 0.65, 0.90, 0.65, 0.08, "120000.00"));
+        defaults.put(AutoParticipantProfileType.LIMIT_DOWN_TRAPPED, profileDefaults(0.20, 0.00, 0.20, 1.00, 0.05, 0.00, 0.00, 0.08, 0.00, 0.25, 0.55, 0.55, 2.50, 0.50, 1.00, 1.00, 0.00, "0.00"));
+        defaults.put(AutoParticipantProfileType.AVERAGE_DOWN_BUYER, profileDefaults(0.20, 0.00, 0.55, 0.80, 0.05, 0.00, 0.00, 0.08, 0.00, 0.95, 1.05, 0.90, 1.80, 1.20, 0.75, 0.35, 0.05, "0.00"));
+        defaults.put(AutoParticipantProfileType.STOP_LOSS_TRADER, profileDefaults(0.25, 0.35, 0.00, 0.00, 0.20, 0.00, 0.05, 0.18, 0.80, 0.00, 1.20, 1.25, 0.55, 0.95, 0.00, 0.10, 0.65, "0.00"));
+        defaults.put(AutoParticipantProfileType.FOMO_BUYER, profileDefaults(0.35, 0.95, 0.00, 0.05, 0.75, 0.00, 0.45, 0.28, 0.05, 0.00, 1.65, 1.55, 0.45, 1.15, 0.05, 0.00, 0.30, "0.00"));
+        defaults.put(AutoParticipantProfileType.PANIC_SELLER, profileDefaults(0.25, 0.25, 0.00, 0.20, 0.45, 0.00, 0.10, 0.25, 0.90, 0.00, 1.40, 1.40, 0.45, 1.10, 0.00, 0.00, 0.70, "0.00"));
+        defaults.put(AutoParticipantProfileType.DIP_BUYER, profileDefaults(0.25, 0.00, 0.65, 0.35, 0.10, 0.00, 0.05, 0.15, 0.00, 0.90, 1.15, 1.05, 0.80, 1.00, 0.25, 0.25, 0.20, "0.00"));
+        defaults.put(AutoParticipantProfileType.PROFIT_LOCKER, profileDefaults(0.20, 0.35, 0.00, 0.10, 0.15, 0.00, 0.05, 0.20, 0.05, 0.00, 1.35, 1.25, 0.55, 0.85, 0.00, 0.95, 1.00, "0.00"));
+        defaults.put(AutoParticipantProfileType.LIQUIDITY_AVOIDANT, profileDefaults(0.20, 0.10, 0.00, 0.35, 0.00, 0.00, 0.00, 0.05, 0.10, 0.00, 0.55, 0.55, 1.80, 0.60, 0.25, 0.10, 0.35, "0.00"));
+        defaults.put(AutoParticipantProfileType.CASH_DEFENSIVE, profileDefaults(0.15, 0.05, 0.15, 0.50, 0.00, 0.00, 0.00, 0.04, 0.10, 0.10, 0.35, 0.45, 2.20, 0.35, 0.70, 0.20, 0.20, "0.00"));
+        defaults.put(AutoParticipantProfileType.WHALE, profileDefaults(0.30, 0.35, 0.00, 0.20, 0.25, 0.00, 0.20, 0.10, 0.05, 0.00, 1.20, 0.85, 1.20, 1.80, 0.05, 0.00, 0.30, "0.00"));
+        defaults.put(AutoParticipantProfileType.SMALL_DIVERSIFIER, profileDefaults(0.25, 0.20, 0.10, 0.30, 0.10, 0.00, 0.05, 0.12, 0.00, 0.05, 1.45, 0.70, 1.00, 0.45, 0.25, 0.15, 0.25, "0.00"));
+        defaults.put(AutoParticipantProfileType.OBSERVER, profileDefaults(0.15, 0.10, 0.00, 0.20, 0.00, 0.00, 0.00, 0.03, 0.00, 0.00, 0.30, 0.40, 2.20, 0.40, 0.10, 0.00, 0.10, "0.00"));
+        return Map.copyOf(defaults);
+    }
+
+    private static ProfileConfigDefaults profileDefaults(
+            double newsWeight,
+            double momentumWeight,
+            double contrarianWeight,
+            double lossAversionWeight,
+            double herdingWeight,
+            double marketMakingWeight,
+            double overconfidenceWeight,
+            double noiseWeight,
+            double panicSellWeight,
+            double dipBuyWeight,
+            double orderMultiplier,
+            double aggressionMultiplier,
+            double orderTtlMultiplier,
+            double quantityMultiplier,
+            double holdingPatienceWeight,
+            double deepLossHoldWeight,
+            double profitTakingWeight,
+            String recurringDepositAmount
+    ) {
+        return profileDefaults(
+                newsWeight,
+                momentumWeight,
+                contrarianWeight,
+                lossAversionWeight,
+                herdingWeight,
+                marketMakingWeight,
+                overconfidenceWeight,
+                noiseWeight,
+                panicSellWeight,
+                dipBuyWeight,
+                orderMultiplier,
+                aggressionMultiplier,
+                orderTtlMultiplier,
+                quantityMultiplier,
+                holdingPatienceWeight,
+                deepLossHoldWeight,
+                profitTakingWeight,
+                recurringDepositAmount,
+                BigDecimal.valueOf(DEFAULT_RECURRING_DEPOSIT_INTERVAL_DAYS),
+                RecurringCashIntervalUnit.DAY
+        );
+    }
+
+    private static ProfileConfigDefaults profileDefaults(
+            double newsWeight,
+            double momentumWeight,
+            double contrarianWeight,
+            double lossAversionWeight,
+            double herdingWeight,
+            double marketMakingWeight,
+            double overconfidenceWeight,
+            double noiseWeight,
+            double panicSellWeight,
+            double dipBuyWeight,
+            double orderMultiplier,
+            double aggressionMultiplier,
+            double orderTtlMultiplier,
+            double quantityMultiplier,
+            double holdingPatienceWeight,
+            double deepLossHoldWeight,
+            double profitTakingWeight,
+            String recurringDepositAmount,
+            Integer recurringDepositIntervalDays
+    ) {
+        return profileDefaults(
+                newsWeight,
+                momentumWeight,
+                contrarianWeight,
+                lossAversionWeight,
+                herdingWeight,
+                marketMakingWeight,
+                overconfidenceWeight,
+                noiseWeight,
+                panicSellWeight,
+                dipBuyWeight,
+                orderMultiplier,
+                aggressionMultiplier,
+                orderTtlMultiplier,
+                quantityMultiplier,
+                holdingPatienceWeight,
+                deepLossHoldWeight,
+                profitTakingWeight,
+                recurringDepositAmount,
+                BigDecimal.valueOf(recurringDepositIntervalDays),
+                RecurringCashIntervalUnit.DAY
+        );
+    }
+
+    private static ProfileConfigDefaults profileDefaults(
+            double newsWeight,
+            double momentumWeight,
+            double contrarianWeight,
+            double lossAversionWeight,
+            double herdingWeight,
+            double marketMakingWeight,
+            double overconfidenceWeight,
+            double noiseWeight,
+            double panicSellWeight,
+            double dipBuyWeight,
+            double orderMultiplier,
+            double aggressionMultiplier,
+            double orderTtlMultiplier,
+            double quantityMultiplier,
+            double holdingPatienceWeight,
+            double deepLossHoldWeight,
+            double profitTakingWeight,
+            String recurringDepositAmount,
+            BigDecimal recurringDepositIntervalValue,
+            RecurringCashIntervalUnit recurringDepositIntervalUnit
+    ) {
+        return new ProfileConfigDefaults(
+                BigDecimal.valueOf(newsWeight),
+                BigDecimal.valueOf(momentumWeight),
+                BigDecimal.valueOf(contrarianWeight),
+                BigDecimal.valueOf(lossAversionWeight),
+                BigDecimal.valueOf(herdingWeight),
+                BigDecimal.valueOf(marketMakingWeight),
+                BigDecimal.valueOf(overconfidenceWeight),
+                BigDecimal.valueOf(noiseWeight),
+                BigDecimal.valueOf(panicSellWeight),
+                BigDecimal.valueOf(dipBuyWeight),
+                BigDecimal.valueOf(orderMultiplier),
+                BigDecimal.valueOf(aggressionMultiplier),
+                BigDecimal.valueOf(orderTtlMultiplier),
+                BigDecimal.valueOf(quantityMultiplier),
+                BigDecimal.valueOf(holdingPatienceWeight),
+                BigDecimal.valueOf(deepLossHoldWeight),
+                BigDecimal.valueOf(profitTakingWeight),
+                new BigDecimal(recurringDepositAmount),
+                recurringDepositIntervalValue,
+                recurringDepositIntervalUnit
+        );
+    }
+
+    private record ProfileConfigDefaults(
+            BigDecimal newsWeight,
+            BigDecimal momentumWeight,
+            BigDecimal contrarianWeight,
+            BigDecimal lossAversionWeight,
+            BigDecimal herdingWeight,
+            BigDecimal marketMakingWeight,
+            BigDecimal overconfidenceWeight,
+            BigDecimal noiseWeight,
+            BigDecimal panicSellWeight,
+            BigDecimal dipBuyWeight,
+            BigDecimal orderMultiplier,
+            BigDecimal aggressionMultiplier,
+            BigDecimal orderTtlMultiplier,
+            BigDecimal quantityMultiplier,
+            BigDecimal holdingPatienceWeight,
+            BigDecimal deepLossHoldWeight,
+            BigDecimal profitTakingWeight,
+            BigDecimal recurringDepositAmount,
+            BigDecimal recurringDepositIntervalValue,
+            RecurringCashIntervalUnit recurringDepositIntervalUnit
+    ) {
     }
 
     private AutoParticipantSymbolConfigResponse toAutoParticipantSymbolConfigResponse(StockAutoParticipantSymbolConfig config) {
@@ -1814,6 +2217,85 @@ public class MarketService {
                 marketConfig.getIntensity() == null ? 5 : marketConfig.getIntensity(),
                 participant.getUpdatedAt() == null ? marketConfig.getUpdatedAt() : participant.getUpdatedAt()
         );
+    }
+
+    private AutoParticipantProfileConfigResponse toAutoParticipantProfileConfigResponse(
+            AutoParticipantProfileType profileType,
+            StockAutoParticipantProfileConfig savedConfig
+    ) {
+        ProfileConfigDefaults defaults = PROFILE_CONFIG_DEFAULTS.getOrDefault(profileType, PROFILE_CONFIG_DEFAULTS.get(AutoParticipantProfileType.defaultType()));
+        if (savedConfig == null) {
+            return new AutoParticipantProfileConfigResponse(
+                    profileType.name(),
+                    defaults.newsWeight(),
+                    defaults.momentumWeight(),
+                    defaults.contrarianWeight(),
+                    defaults.lossAversionWeight(),
+                    defaults.herdingWeight(),
+                    defaults.marketMakingWeight(),
+                    defaults.overconfidenceWeight(),
+                    defaults.noiseWeight(),
+                    defaults.panicSellWeight(),
+                    defaults.dipBuyWeight(),
+                    defaults.orderMultiplier(),
+                    defaults.aggressionMultiplier(),
+                    defaults.orderTtlMultiplier(),
+                    defaults.quantityMultiplier(),
+                    defaults.holdingPatienceWeight(),
+                    defaults.deepLossHoldWeight(),
+                    defaults.profitTakingWeight(),
+                    defaults.recurringDepositAmount(),
+                    defaults.recurringDepositIntervalValue(),
+                    defaults.recurringDepositIntervalUnit().name(),
+                    recurringIntervalDays(defaults.recurringDepositIntervalValue(), defaults.recurringDepositIntervalUnit()),
+                    false,
+                    null
+            );
+        }
+        BigDecimal recurringDepositIntervalValue = valueOrDefault(
+                savedConfig.getRecurringDepositIntervalValue(),
+                defaults.recurringDepositIntervalValue()
+        );
+        RecurringCashIntervalUnit recurringDepositIntervalUnit = savedConfig.getRecurringDepositIntervalUnit() == null
+                ? defaults.recurringDepositIntervalUnit()
+                : savedConfig.getRecurringDepositIntervalUnit();
+        return new AutoParticipantProfileConfigResponse(
+                profileType.name(),
+                valueOrDefault(savedConfig.getNewsWeight(), defaults.newsWeight()),
+                valueOrDefault(savedConfig.getMomentumWeight(), defaults.momentumWeight()),
+                valueOrDefault(savedConfig.getContrarianWeight(), defaults.contrarianWeight()),
+                valueOrDefault(savedConfig.getLossAversionWeight(), defaults.lossAversionWeight()),
+                valueOrDefault(savedConfig.getHerdingWeight(), defaults.herdingWeight()),
+                valueOrDefault(savedConfig.getMarketMakingWeight(), defaults.marketMakingWeight()),
+                valueOrDefault(savedConfig.getOverconfidenceWeight(), defaults.overconfidenceWeight()),
+                valueOrDefault(savedConfig.getNoiseWeight(), defaults.noiseWeight()),
+                valueOrDefault(savedConfig.getPanicSellWeight(), defaults.panicSellWeight()),
+                valueOrDefault(savedConfig.getDipBuyWeight(), defaults.dipBuyWeight()),
+                savedConfig.getOrderMultiplier(),
+                savedConfig.getAggressionMultiplier(),
+                savedConfig.getOrderTtlMultiplier(),
+                savedConfig.getQuantityMultiplier(),
+                savedConfig.getHoldingPatienceWeight(),
+                savedConfig.getDeepLossHoldWeight(),
+                savedConfig.getProfitTakingWeight(),
+                savedConfig.getRecurringDepositAmount(),
+                recurringDepositIntervalValue,
+                recurringDepositIntervalUnit.name(),
+                savedConfig.getRecurringDepositIntervalDays(),
+                true,
+                savedConfig.getUpdatedAt()
+        );
+    }
+
+    private BigDecimal valueOrDefault(BigDecimal value, BigDecimal defaultValue) {
+        return value == null ? defaultValue : value;
+    }
+
+    private Integer recurringIntervalDays(BigDecimal value, RecurringCashIntervalUnit unit) {
+        if (!RecurringCashIntervalUnit.DAY.equals(unit)) {
+            return 1;
+        }
+        return value.setScale(0, RoundingMode.CEILING).intValue();
     }
 
     private String autoParticipantSymbolConfigKey(String userKey, String symbol) {

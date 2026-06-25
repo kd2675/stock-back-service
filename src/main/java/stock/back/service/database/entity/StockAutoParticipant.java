@@ -10,6 +10,7 @@ import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 @Getter
@@ -32,6 +33,16 @@ public class StockAutoParticipant {
     @Column(name = "profile_type", nullable = false, length = 40)
     private AutoParticipantProfileType profileType;
 
+    @Column(name = "recurring_cash_amount", precision = 19, scale = 2)
+    private BigDecimal recurringCashAmount;
+
+    @Column(name = "recurring_cash_interval_value", precision = 12, scale = 4)
+    private BigDecimal recurringCashIntervalValue;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "recurring_cash_interval_unit", length = 20)
+    private RecurringCashIntervalUnit recurringCashIntervalUnit;
+
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
 
@@ -42,7 +53,7 @@ public class StockAutoParticipant {
     private LocalDateTime withdrawnAt;
 
     public static StockAutoParticipant create(String userKey, String displayName, boolean enabled) {
-        return create(userKey, displayName, enabled, AutoParticipantProfileType.defaultType());
+        return create(userKey, displayName, enabled, AutoParticipantProfileType.defaultType(), null, null, null);
     }
 
     public static StockAutoParticipant create(
@@ -51,18 +62,40 @@ public class StockAutoParticipant {
             boolean enabled,
             AutoParticipantProfileType profileType
     ) {
+        return create(userKey, displayName, enabled, profileType, null, null, null);
+    }
+
+    public static StockAutoParticipant create(
+            String userKey,
+            String displayName,
+            boolean enabled,
+            AutoParticipantProfileType profileType,
+            BigDecimal recurringCashAmount,
+            BigDecimal recurringCashIntervalValue,
+            RecurringCashIntervalUnit recurringCashIntervalUnit
+    ) {
         LocalDateTime now = LocalDateTime.now();
         StockAutoParticipant participant = new StockAutoParticipant();
         participant.userKey = userKey;
         participant.displayName = displayName;
         participant.enabled = enabled;
         participant.profileType = profileType == null ? AutoParticipantProfileType.defaultType() : profileType;
+        participant.recurringCashAmount = recurringCashAmount;
+        participant.recurringCashIntervalValue = recurringCashIntervalValue;
+        participant.recurringCashIntervalUnit = recurringCashIntervalUnit;
         participant.createdAt = now;
         participant.updatedAt = now;
         return participant;
     }
 
-    public void update(String displayName, Boolean enabled, AutoParticipantProfileType profileType) {
+    public void update(
+            String displayName,
+            Boolean enabled,
+            AutoParticipantProfileType profileType,
+            BigDecimal recurringCashAmount,
+            BigDecimal recurringCashIntervalValue,
+            RecurringCashIntervalUnit recurringCashIntervalUnit
+    ) {
         if (displayName != null && !displayName.isBlank()) {
             this.displayName = displayName;
         }
@@ -75,6 +108,9 @@ public class StockAutoParticipant {
         if (profileType != null) {
             this.profileType = profileType;
         }
+        this.recurringCashAmount = recurringCashAmount;
+        this.recurringCashIntervalValue = recurringCashIntervalValue;
+        this.recurringCashIntervalUnit = recurringCashIntervalUnit;
         this.updatedAt = LocalDateTime.now();
     }
 

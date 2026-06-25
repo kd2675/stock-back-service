@@ -65,7 +65,18 @@ class StockBackAuthorizationBoundaryTest {
         jdbcTemplate.update("delete from stock_auto_participant_symbol_config where symbol like 'ZQAUTH%' or user_key like 'stock-auto-auth%'");
         jdbcTemplate.update("delete from stock_auto_market_config where symbol like 'ZQAUTH%'");
         jdbcTemplate.update("delete from stock_auto_participant where user_key like 'stock-auto-auth%'");
+        jdbcTemplate.update("delete from stock_auto_participant_profile_config where profile_type in ('NOISE_TRADER', 'MOMENTUM_FOLLOWER')");
+        jdbcTemplate.update("""
+                delete from stock_account_cash_flow
+                 where account_id in (
+                       select id
+                         from stock_account
+                        where user_key like 'stock-auto-auth%'
+                           or user_key like 'stock-user-auth%'
+                 )
+                """);
         jdbcTemplate.update("delete from stock_account where user_key like 'stock-auto-auth%'");
+        jdbcTemplate.update("delete from stock_account where user_key like 'stock-user-auth%'");
         jdbcTemplate.update("delete from stock_order_book_market_config where symbol like 'ZQAUTH%'");
         jdbcTemplate.update("delete from stock_order_book_instrument where symbol like 'ZQAUTH%'");
     }
@@ -180,6 +191,33 @@ class StockBackAuthorizationBoundaryTest {
                   "listingDate": "%s"
                 }
                 """.formatted(LocalDate.now().plusDays(1));
+    }
+
+    private String autoParticipantProfileConfigBody() {
+        return """
+                {
+                  "newsWeight": 0.2,
+                  "momentumWeight": 0.3,
+                  "contrarianWeight": 0.1,
+                  "lossAversionWeight": 0.4,
+                  "herdingWeight": 0.2,
+                  "marketMakingWeight": 0.1,
+                  "overconfidenceWeight": 0.3,
+                  "noiseWeight": 0.2,
+                  "panicSellWeight": 0.1,
+                  "dipBuyWeight": 0.2,
+                  "orderMultiplier": 1.2,
+                  "aggressionMultiplier": 1.1,
+                  "orderTtlMultiplier": 0.9,
+                  "quantityMultiplier": 1.3,
+                  "holdingPatienceWeight": 0.2,
+                  "deepLossHoldWeight": 0.1,
+                  "profitTakingWeight": 0.4,
+                  "recurringDepositAmount": 500000,
+                  "recurringDepositIntervalValue": 30,
+                  "recurringDepositIntervalUnit": "DAY"
+                }
+                """;
     }
 
     @Test
@@ -389,6 +427,30 @@ class StockBackAuthorizationBoundaryTest {
     }
 
     @Test
+    void updateAutoParticipantProfileConfig_userPrincipalHeaders_returnsForbidden() throws Exception {
+        mockMvc.perform(patch("/api/stock/v1/markets/auto-market/profile-configs/NOISE_TRADER")
+                        .header("X-User-Key", "stock-user-key")
+                        .header("X-User-Role", "ROLE_USER")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(autoParticipantProfileConfigBody()))
+                .andExpect(status().isForbidden())
+                .andExpect(content().string(containsString("Required role: ADMIN")));
+    }
+
+    @Test
+    void updateAutoParticipantProfileConfig_adminPrincipalHeaders_isAllowed() throws Exception {
+        mockMvc.perform(patch("/api/stock/v1/markets/auto-market/profile-configs/MOMENTUM_FOLLOWER")
+                        .header("X-User-Key", "stock-admin-key")
+                        .header("X-User-Role", "ROLE_ADMIN")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(autoParticipantProfileConfigBody()))
+                .andExpect(status().isOk())
+                .andExpect(content().string(containsString("\"profileType\":\"MOMENTUM_FOLLOWER\"")))
+                .andExpect(content().string(containsString("\"orderMultiplier\":1.2")))
+                .andExpect(content().string(containsString("\"customized\":true")));
+    }
+
+    @Test
     void upsertAutoParticipant_adminPrincipalHeaders_isAllowed() throws Exception {
         mockMvc.perform(patch("/api/stock/v1/markets/auto-market/participants/stock-auto-auth")
                         .header("X-User-Key", "stock-admin-key")
@@ -411,6 +473,108 @@ class StockBackAuthorizationBoundaryTest {
                         .header("X-User-Role", "ROLE_USER"))
                 .andExpect(status().isForbidden())
                 .andExpect(content().string(containsString("Required role: ADMIN")));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "GET /api/stock/v1/markets/auto-market/cash-flow",
+            "PATCH /api/stock/v1/markets/auto-market/cash-flow",
+            "POST /api/stock/v1/markets/auto-market/cash-flow/run",
+            "GET /api/stock/v1/markets/batch-jobs/runtime-controls",
+            "PATCH /api/stock/v1/markets/batch-jobs/runtime-controls/auto-market"
+    })
+    void autoParticipantCashFlowAdminEndpoints_withoutPrincipalHeaders_returnUnauthorized(String requestLine) throws Exception {
+        String[] parts = requestLine.split(" ", 2);
+        String method = parts[0];
+        String path = parts[1];
+
+        switch (method) {
+            case "GET" -> mockMvc.perform(get(path))
+                    .andExpect(status().isUnauthorized())
+                    .andExpect(content().string(containsString("Login required")));
+            case "PATCH" -> mockMvc.perform(patch(path)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("""
+                                    {
+                                      "runtimeEnabled": false
+                                    }
+                                    """))
+                    .andExpect(status().isUnauthorized())
+                    .andExpect(content().string(containsString("Login required")));
+            case "POST" -> mockMvc.perform(post(path))
+                    .andExpect(status().isUnauthorized())
+                    .andExpect(content().string(containsString("Login required")));
+            default -> throw new IllegalArgumentException("Unknown method: " + method);
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "GET /api/stock/v1/markets/auto-market/cash-flow",
+            "PATCH /api/stock/v1/markets/auto-market/cash-flow",
+            "POST /api/stock/v1/markets/auto-market/cash-flow/run",
+            "GET /api/stock/v1/markets/batch-jobs/runtime-controls",
+            "PATCH /api/stock/v1/markets/batch-jobs/runtime-controls/auto-market"
+    })
+    void autoParticipantCashFlowAdminEndpoints_userPrincipalHeaders_returnForbidden(String requestLine) throws Exception {
+        String[] parts = requestLine.split(" ", 2);
+        String method = parts[0];
+        String path = parts[1];
+
+        switch (method) {
+            case "GET" -> mockMvc.perform(get(path)
+                            .header("X-User-Key", "stock-user-key")
+                            .header("X-User-Role", "ROLE_USER"))
+                    .andExpect(status().isForbidden())
+                    .andExpect(content().string(containsString("Required role: ADMIN")));
+            case "PATCH" -> mockMvc.perform(patch(path)
+                            .header("X-User-Key", "stock-user-key")
+                            .header("X-User-Role", "ROLE_USER")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("""
+                                    {
+                                      "runtimeEnabled": false
+                                    }
+                                    """))
+                    .andExpect(status().isForbidden())
+                    .andExpect(content().string(containsString("Required role: ADMIN")));
+            case "POST" -> mockMvc.perform(post(path)
+                            .header("X-User-Key", "stock-user-key")
+                            .header("X-User-Role", "ROLE_USER"))
+                    .andExpect(status().isForbidden())
+                    .andExpect(content().string(containsString("Required role: ADMIN")));
+            default -> throw new IllegalArgumentException("Unknown method: " + method);
+        }
+    }
+
+    @Test
+    void updateAutoParticipantCashFlowStatus_missingRuntimeEnabled_returnsBadRequestBeforeBatchCall() throws Exception {
+        mockMvc.perform(patch("/api/stock/v1/markets/auto-market/cash-flow")
+                        .header("X-User-Key", "stock-admin-key")
+                        .header("X-User-Role", "ROLE_ADMIN")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "updatedBy": "ignored-client-value"
+                                }
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().string(containsString("runtimeEnabled is required")));
+    }
+
+    @Test
+    void updateBatchJobRuntimeControl_missingRuntimeEnabled_returnsBadRequestBeforeBatchCall() throws Exception {
+        mockMvc.perform(patch("/api/stock/v1/markets/batch-jobs/runtime-controls/auto-market")
+                        .header("X-User-Key", "stock-admin-key")
+                        .header("X-User-Role", "ROLE_ADMIN")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "updatedBy": "ignored-client-value"
+                                }
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().string(containsString("runtimeEnabled is required")));
     }
 
     @Test
@@ -507,6 +671,58 @@ class StockBackAuthorizationBoundaryTest {
                 "select cash_balance from stock_account where user_key = ?",
                 BigDecimal.class,
                 "stock-auto-auth-cash-user"
+        );
+        assertThat(cashBalance).isEqualByComparingTo(new BigDecimal("10000000.00"));
+    }
+
+    @Test
+    void adjustUserAccountCash_adminPrincipalHeaders_isAllowed() throws Exception {
+        seedStockAccount("stock-user-auth-cash");
+
+        mockMvc.perform(post("/api/stock/v1/accounts/admin/users/stock-user-auth-cash/cash-adjustments")
+                        .header("X-User-Key", "stock-admin-key")
+                        .header("X-User-Role", "ROLE_ADMIN")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "adjustmentType": "DEPOSIT",
+                                  "amount": 1000000
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(content().string(containsString("\"userKey\":\"stock-user-auth-cash\"")))
+                .andExpect(content().string(containsString("\"adjustmentType\":\"DEPOSIT\"")))
+                .andExpect(content().string(containsString("\"cashBalance\":11000000")));
+
+        BigDecimal cashBalance = jdbcTemplate.queryForObject(
+                "select cash_balance from stock_account where user_key = ?",
+                BigDecimal.class,
+                "stock-user-auth-cash"
+        );
+        assertThat(cashBalance).isEqualByComparingTo(new BigDecimal("11000000.00"));
+    }
+
+    @Test
+    void adjustUserAccountCash_userPrincipalHeaders_returnsForbidden() throws Exception {
+        seedStockAccount("stock-user-auth-cash-user");
+
+        mockMvc.perform(post("/api/stock/v1/accounts/admin/users/stock-user-auth-cash-user/cash-adjustments")
+                        .header("X-User-Key", "stock-user-key")
+                        .header("X-User-Role", "ROLE_USER")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "adjustmentType": "DEPOSIT",
+                                  "amount": 1000000
+                                }
+                                """))
+                .andExpect(status().isForbidden())
+                .andExpect(content().string(containsString("Required role: ADMIN")));
+
+        BigDecimal cashBalance = jdbcTemplate.queryForObject(
+                "select cash_balance from stock_account where user_key = ?",
+                BigDecimal.class,
+                "stock-user-auth-cash-user"
         );
         assertThat(cashBalance).isEqualByComparingTo(new BigDecimal("10000000.00"));
     }

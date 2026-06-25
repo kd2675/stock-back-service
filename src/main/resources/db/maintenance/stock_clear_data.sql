@@ -15,6 +15,7 @@ TRUNCATE TABLE stock_order;
 TRUNCATE TABLE stock_instrument_report_event;
 TRUNCATE TABLE stock_auto_participant_symbol_config;
 TRUNCATE TABLE stock_auto_market_config;
+TRUNCATE TABLE stock_auto_participant_profile_config;
 TRUNCATE TABLE stock_auto_participant;
 
 TRUNCATE TABLE stock_price_tick;

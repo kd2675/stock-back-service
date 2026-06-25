@@ -32,6 +32,16 @@ class LocalDirectConfigurationTest {
                 .isEqualTo("${STOCK_CORS_ALLOWED_ORIGINS:http://localhost:3005,http://127.0.0.1:3005}");
     }
 
+    @Test
+    void localDirectProfile_usesDirectStockBatchHttpBoundary() throws IOException {
+        PropertySource<?> properties = loadLocalDirectProperties();
+
+        assertThat(properties.getProperty("stock.batch-client.base-url"))
+                .isEqualTo("${STOCK_BATCH_API_BASE_URL:http://localhost:20481}");
+        assertThat(properties.getProperty("stock.batch-client.internal-token"))
+                .isEqualTo("${STOCK_BATCH_INTERNAL_TOKEN:local-stock-batch-internal-token}");
+    }
+
     private PropertySource<?> loadLocalDirectProperties() throws IOException {
         return new YamlPropertySourceLoader()
                 .load("local-direct", new ClassPathResource("application-local-direct.yml"))

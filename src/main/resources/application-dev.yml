@@ -33,3 +33,8 @@ database:
           connection-timeout: 30000
           max-lifetime: 540000
           keepalive-time: 300000
+
+stock:
+  batch-client:
+    base-url: ${STOCK_BATCH_API_BASE_URL}
+    internal-token: ${STOCK_BATCH_INTERNAL_TOKEN}

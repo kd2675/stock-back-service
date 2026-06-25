@@ -94,6 +94,11 @@ scripts/stock-smoke.sh
 - `@Transactional(readOnly = true)` 트랜잭션은 `RoutingDataSource`에서 slave로 라우팅됩니다. 현재 local/dev는 master와 slave가 같은 `STOCK_SERVICE` 접속값을 봅니다.
 - Hikari 풀은 local/dev 기본 8개이며, prod는 `STOCK_DB_MAX_POOL_SIZE`, `STOCK_DB_CONNECTION_TIMEOUT`, `STOCK_DB_MAX_LIFETIME`, `STOCK_DB_KEEPALIVE_TIME`로 조정합니다.
 - DDL은 schema와 제약만 생성합니다. 기본 종목, 최초 가격, 자동 참여자는 seed하지 않으며 관리자 API 또는 smoke/test 데이터에서 명시적으로 등록합니다.
+- stock-back과 stock-batch는 물리적으로 분리된 서버로 본다. stock-back은 batch 내부 구현을 직접 호출하지 않고 `stock.batch-client.base-url`의 내부 HTTP API만 호출한다.
+- `local-direct`에서 stock-back의 batch client는 기본적으로 `http://localhost:20481`의 stock-batch 내부 API를 호출하며, 로컬 기본 내부 토큰은 `local-stock-batch-internal-token`이다.
+- `dev`/`prod`에서는 `STOCK_BATCH_API_BASE_URL`, `STOCK_BATCH_INTERNAL_TOKEN`을 반드시 명시한다. 값이 없을 때 `localhost`나 빈 token으로 조용히 기동하지 않도록 dev/prod profile에는 기본값을 두지 않는다.
+- stock-back의 batch client timeout은 `STOCK_BATCH_CLIENT_CONNECT_TIMEOUT_MS`, `STOCK_BATCH_CLIENT_READ_TIMEOUT_MS`로 조정한다. 기본값은 connect 3000ms, read 10000ms다.
+- batch 스케줄러 runtime 제어와 중복 실행 잠금은 `STOCK_SERVICE`의 `stock_batch_job_control`, `stock_batch_job_lock` 테이블을 기준으로 공유한다.
 
 주요 테이블:
 

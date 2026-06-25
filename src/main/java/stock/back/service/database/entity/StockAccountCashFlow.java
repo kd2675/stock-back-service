@@ -57,6 +57,10 @@ public class StockAccountCashFlow {
         return create(accountId, StockAccountCashFlowType.WITHDRAW, amount, StockAccountCashFlowReason.ADMIN_WITHDRAW, createdBy);
     }
 
+    public static StockAccountCashFlow dividendPayment(Long accountId, BigDecimal amount) {
+        return create(accountId, StockAccountCashFlowType.DEPOSIT, amount, StockAccountCashFlowReason.DIVIDEND_PAYMENT, "CORPORATE_ACTION");
+    }
+
     private static StockAccountCashFlow create(
             Long accountId,
             StockAccountCashFlowType flowType,

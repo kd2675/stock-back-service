@@ -12,11 +12,11 @@ public interface StockAccountCashFlowRepository extends JpaRepository<StockAccou
     @Query(
             value = """
                     select coalesce(sum(
-                        case flow_type
-                            when 'DEPOSIT' then amount
-                            when 'WITHDRAW' then -amount
-                            else 0
-                        end
+	                        case
+	                            when flow_type = 'DEPOSIT' and reason <> 'DIVIDEND_PAYMENT' then amount
+	                            when flow_type = 'WITHDRAW' then -amount
+	                            else 0
+	                        end
                     ), 0)
                     from stock_account_cash_flow
                     where account_id = :accountId

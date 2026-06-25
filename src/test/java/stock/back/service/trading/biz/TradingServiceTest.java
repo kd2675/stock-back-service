@@ -216,6 +216,17 @@ class TradingServiceTest {
     }
 
     @Test
+    void getPortfolio_dividendPaymentImprovesReturnWithoutIncreasingPrincipal() {
+        insertAccount("user-dividend-return", "10100000.00", "10000000.00");
+        insertCashFlow("user-dividend-return", "100000.00", "DIVIDEND_PAYMENT");
+
+        var portfolio = tradingService.getPortfolio("user-dividend-return");
+
+        assertThat(portfolio.totalAsset()).isEqualByComparingTo(new BigDecimal("10100000.00"));
+        assertThat(portfolio.returnRate()).isEqualByComparingTo(new BigDecimal("1.0000"));
+    }
+
+    @Test
     void getHoldings_returnsHoldingsWithCurrentValuation() {
         insertHolding("user-holdings-api", "123456", 3, 1, "50000.00");
 
@@ -892,14 +903,19 @@ class TradingServiceTest {
                 LocalDateTime.now(),
                 LocalDateTime.now()
         );
+        insertCashFlow(userKey, openingGrantAmount, "OPENING_GRANT");
+    }
+
+    private void insertCashFlow(String userKey, String amount, String reason) {
         jdbcTemplate.update(
                 """
                 insert into stock_account_cash_flow(account_id, flow_type, amount, reason, created_by, created_at)
-                select id, 'DEPOSIT', ?, 'OPENING_GRANT', 'SYSTEM', ?
+                select id, 'DEPOSIT', ?, ?, 'SYSTEM', ?
                 from stock_account
                 where user_key = ?
                 """,
-                new BigDecimal(openingGrantAmount),
+                new BigDecimal(amount),
+                reason,
                 LocalDateTime.now(),
                 userKey
         );

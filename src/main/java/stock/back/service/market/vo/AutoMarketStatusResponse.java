@@ -10,6 +10,7 @@ public record AutoMarketStatusResponse(
         List<AutoMarketConfigResponse> configs,
         List<AutoParticipantResponse> participants,
         List<AutoParticipantSymbolConfigResponse> participantSymbolConfigs,
+        List<AutoParticipantProfileConfigResponse> participantProfileConfigs,
         List<ListingAutoAccountResponse> listingAutoAccounts
 ) {
 }

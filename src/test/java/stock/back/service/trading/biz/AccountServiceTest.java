@@ -5,16 +5,19 @@ import org.junit.jupiter.api.Test;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.util.ReflectionTestUtils;
+import stock.back.service.common.exception.StockException;
 import stock.back.service.database.entity.StockAccount;
 import stock.back.service.database.entity.StockAccountStatus;
 import stock.back.service.database.repository.StockAccountCashFlowRepository;
 import stock.back.service.database.repository.StockHoldingRepository;
 import stock.back.service.database.repository.StockAccountRepository;
+import stock.back.service.trading.vo.AccountCashAdjustmentRequest;
 
 import java.math.BigDecimal;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -118,5 +121,39 @@ class AccountServiceTest {
 
         assertThat(account).isEmpty();
         verify(stockAccountRepository).findByUserKeyAndStatus("new-user", StockAccountStatus.ACTIVE);
+    }
+
+    @Test
+    void adjustUserAccountCash_deposit_addsCashAndWritesLedger() {
+        StockAccount account = StockAccount.open("user-1");
+        when(stockAccountRepository.findByUserKeyAndStatusForUpdate("user-1", StockAccountStatus.ACTIVE))
+                .thenReturn(Optional.of(account));
+
+        var response = accountService.adjustUserAccountCash(
+                "user-1",
+                new AccountCashAdjustmentRequest("deposit", new BigDecimal("250000.00")),
+                "admin-1"
+        );
+
+        assertThat(response.userKey()).isEqualTo("user-1");
+        assertThat(response.adjustmentType()).isEqualTo("DEPOSIT");
+        assertThat(response.cashBalance()).isEqualByComparingTo("250000.00");
+        verify(stockAccountCashFlowRepository).save(any());
+    }
+
+    @Test
+    void adjustUserAccountCash_withdrawOverBalance_throwsBadRequest() {
+        StockAccount account = StockAccount.open("user-2");
+        when(stockAccountRepository.findByUserKeyAndStatusForUpdate("user-2", StockAccountStatus.ACTIVE))
+                .thenReturn(Optional.of(account));
+
+        assertThatThrownBy(() -> accountService.adjustUserAccountCash(
+                "user-2",
+                new AccountCashAdjustmentRequest("WITHDRAW", new BigDecimal("1.00")),
+                "admin-1"
+        )).isInstanceOf(StockException.class)
+                .hasMessageContaining("Insufficient user cash balance");
+
+        verify(stockAccountCashFlowRepository, never()).save(any());
     }
 }

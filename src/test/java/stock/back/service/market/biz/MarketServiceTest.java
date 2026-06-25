@@ -10,9 +10,11 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.ResultSetExtractor;
 import stock.back.service.common.exception.StockException;
 import stock.back.service.database.entity.PortfolioSnapshot;
+import stock.back.service.database.entity.AutoParticipantProfileType;
 import stock.back.service.database.entity.StockAccount;
 import stock.back.service.database.entity.StockAccountCashFlow;
 import stock.back.service.database.entity.StockAccountStatus;
+import stock.back.service.database.entity.StockAutoParticipantProfileConfig;
 import stock.back.service.database.entity.StockCorporateAction;
 import stock.back.service.database.entity.StockCorporateActionEntitlement;
 import stock.back.service.database.entity.StockCorporateActionEntitlementStatus;
@@ -31,6 +33,7 @@ import stock.back.service.database.repository.PortfolioSnapshotRepository;
 import stock.back.service.database.repository.StockAccountCashFlowRepository;
 import stock.back.service.database.repository.StockAccountRepository;
 import stock.back.service.database.repository.StockAutoMarketConfigRepository;
+import stock.back.service.database.repository.StockAutoParticipantProfileConfigRepository;
 import stock.back.service.database.repository.StockAutoParticipantRepository;
 import stock.back.service.database.repository.StockAutoParticipantSymbolConfigRepository;
 import stock.back.service.database.repository.StockCorporateActionEntitlementRepository;
@@ -99,6 +102,9 @@ class MarketServiceTest {
     private StockAutoMarketConfigRepository stockAutoMarketConfigRepository;
 
     @Mock
+    private StockAutoParticipantProfileConfigRepository stockAutoParticipantProfileConfigRepository;
+
+    @Mock
     private StockAutoParticipantRepository stockAutoParticipantRepository;
 
     @Mock
@@ -145,6 +151,7 @@ class MarketServiceTest {
                 stockAccountRepository,
                 stockPriceCacheService,
                 stockAutoMarketConfigRepository,
+                stockAutoParticipantProfileConfigRepository,
                 stockAutoParticipantRepository,
                 stockAutoParticipantSymbolConfigRepository,
                 stockVirtualMarketConfigRepository,
@@ -298,6 +305,46 @@ class MarketServiceTest {
         assertThat(response.participantSymbolConfigs().get(0).userKey()).isEqualTo("stock-auto-001");
         assertThat(response.participantSymbolConfigs().get(0).symbol()).isEqualTo("ZQ001");
         assertThat(response.participantSymbolConfigs().get(0).intensity()).isEqualTo(7);
+    }
+
+    @Test
+    void getAutoMarketStatus_profileConfigWithNullBehaviorWeights_returnsDefaultBehaviorWeights() {
+        StockAutoParticipantProfileConfig config = StockAutoParticipantProfileConfig.create(
+                AutoParticipantProfileType.MOMENTUM_FOLLOWER,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                new BigDecimal("1.20"),
+                BigDecimal.ONE,
+                BigDecimal.ONE,
+                BigDecimal.ONE,
+                new BigDecimal("0.10"),
+                new BigDecimal("0.05"),
+                new BigDecimal("0.20"),
+                BigDecimal.ZERO,
+                30
+        );
+        when(stockAutoParticipantProfileConfigRepository.findAllByOrderByProfileTypeAsc()).thenReturn(List.of(config));
+        when(stockAutoMarketConfigRepository.findAll()).thenReturn(List.of());
+        when(stockAutoParticipantRepository.findByWithdrawnAtIsNullOrderByUserKeyAsc()).thenReturn(List.of());
+        when(stockAutoParticipantSymbolConfigRepository.findAllByOrderByUserKeyAscSymbolAsc()).thenReturn(List.of());
+
+        var response = marketService.getAutoMarketStatus();
+
+        var profileConfig = response.participantProfileConfigs().stream()
+                .filter(item -> item.profileType().equals("MOMENTUM_FOLLOWER"))
+                .findFirst()
+                .orElseThrow();
+        assertThat(profileConfig.customized()).isTrue();
+        assertThat(profileConfig.momentumWeight()).isEqualByComparingTo(new BigDecimal("0.85"));
+        assertThat(profileConfig.orderMultiplier()).isEqualByComparingTo(new BigDecimal("1.20"));
     }
 
     @Test

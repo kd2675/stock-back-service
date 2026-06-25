@@ -578,15 +578,13 @@ public class TradingService {
     }
 
     private java.util.Optional<BigDecimal> resolveCurrentPrice(String symbol) {
+        Optional<BigDecimal> cachedPrice = stockPriceCacheService.getCachedPrice(symbol)
+                .map(CachedStockPrice::currentPrice);
+        if (cachedPrice.isPresent()) {
+            return cachedPrice;
+        }
         return stockPriceRepository.findById(symbol)
-                .map(price -> {
-                    if (price.getCurrentPrice().compareTo(BigDecimal.ZERO) <= 0) {
-                        return price.getCurrentPrice();
-                    }
-                    return stockPriceCacheService.getCachedPrice(symbol)
-                            .map(CachedStockPrice::currentPrice)
-                            .orElse(price.getCurrentPrice());
-                });
+                .map(StockPrice::getCurrentPrice);
     }
 
     private OrderResponse toOrderResponse(StockOrder order) {

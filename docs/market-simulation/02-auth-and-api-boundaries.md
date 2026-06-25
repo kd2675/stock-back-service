@@ -60,12 +60,19 @@ Admin protected API:
 - `PATCH /api/stock/v1/markets/auto-market/configs/{symbol}`
 - `PATCH /api/stock/v1/markets/auto-market/participants/{userKey}`
 - `PATCH /api/stock/v1/markets/auto-market/participants/{userKey}/symbols/{symbol}`
+- `GET /api/stock/v1/markets/batch-jobs/runtime-controls`
+- `PATCH /api/stock/v1/markets/batch-jobs/runtime-controls/{jobName}`
 
 Batch internal API:
 
 - `POST /internal/stock-batch/v1/jobs/market-data/refresh`
 - `POST /internal/stock-batch/v1/jobs/virtual-price-execution/run`
 - `POST /internal/stock-batch/v1/jobs/order-book-execution/run`
+- `POST /internal/stock-batch/v1/jobs/auto-participant-cash-flow/run`
+- `GET /internal/stock-batch/v1/jobs/auto-participant-cash-flow/status`
+- `PATCH /internal/stock-batch/v1/jobs/auto-participant-cash-flow/status`
+- `GET /internal/stock-batch/v1/jobs/runtime-controls`
+- `PATCH /internal/stock-batch/v1/jobs/runtime-controls/{jobName}`
 - `POST /internal/stock-batch/v1/jobs/auto-market/run`
 - `POST /internal/stock-batch/v1/jobs/portfolio-settlement/run`
 - `POST /internal/stock-batch/v1/jobs/market-close/rollover`

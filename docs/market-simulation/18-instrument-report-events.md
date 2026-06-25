@@ -25,7 +25,8 @@
   - `InstrumentReportResponse`
 - batch:
   - `AutoMarketReader`
-  - `AutoMarketService.effectiveIntensity`
+  - `AutoProfileBehavior.effectiveIntensity`
+  - `stock-batch-service/src/main/java/stock/batch/service/automarket/profile/*Behavior.java`
 - front:
   - `stock-front-service/app/lib/stock.ts`
   - `stock-front-service/app/types/stock.ts`
@@ -62,7 +63,7 @@
 
 ## 자동장 반영
 
-자동장은 참여자별 1~10 성향을 기본으로 한다. 최신 활성 평가 보고서 점수가 있으면 자동 참여자 심리 프로필의 뉴스 민감도에 따라 참여자 성향과 보고서 점수를 섞어 유효 강도를 만든다.
+자동장은 참여자별 1~10 성향을 기본으로 한다. 최신 활성 평가 보고서 점수가 있으면 자동 참여자 심리 프로필의 뉴스 민감도에 따라 참여자 성향과 보고서 점수를 섞어 유효 강도를 만든다. 유효 강도 계산은 `AutoProfileBehavior.effectiveIntensity`에서 시작하고, 프로필별 주문 방향과 주문 수 판단은 각 `*Behavior` 클래스가 담당한다.
 
 현재 반영 방식:
 
@@ -88,7 +89,7 @@
 2. `stock_instrument_report_event` MySQL DDL과 H2 DDL을 함께 바꾼다.
 3. `StockInstrumentReportEvent`, request/response DTO를 바꾼다.
 4. `MarketService` validation과 최신 보고서 조회 규칙을 바꾼다.
-5. 자동장 영향이 있으면 `AutoMarketReader`와 `AutoMarketService.effectiveIntensity`를 함께 바꾼다.
+5. 자동장 영향이 있으면 `AutoMarketReader`, `AutoProfileBehavior.effectiveIntensity`, 관련 `*Behavior` 클래스를 함께 바꾼다.
 6. `stock-front-service` type, API client, admin 화면을 바꾼다.
 7. back, batch, front 계약 검증을 실행한다.
 

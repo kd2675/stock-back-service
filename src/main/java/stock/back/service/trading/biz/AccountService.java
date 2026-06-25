@@ -15,6 +15,8 @@ import stock.back.service.database.entity.StockAccountStatus;
 import stock.back.service.database.repository.StockAccountCashFlowRepository;
 import stock.back.service.database.repository.StockHoldingRepository;
 import stock.back.service.database.repository.StockAccountRepository;
+import stock.back.service.trading.vo.AccountCashAdjustmentRequest;
+import stock.back.service.trading.vo.AccountCashAdjustmentResponse;
 import stock.back.service.trading.vo.AccountReconnectRequest;
 import stock.back.service.trading.vo.AccountResponse;
 
@@ -150,10 +152,51 @@ public class AccountService {
         return toResponse(account);
     }
 
+    @Transactional
+    public AccountCashAdjustmentResponse adjustUserAccountCash(
+            String userKey,
+            AccountCashAdjustmentRequest request,
+            String adminUserKey
+    ) {
+        validateUserKey(userKey);
+        BigDecimal amount = request == null ? null : request.amount();
+        if (amount == null || amount.compareTo(BigDecimal.ZERO) <= 0) {
+            throw StockException.badRequest("Adjustment amount must be positive");
+        }
+        String adjustmentType = normalizeText(request.adjustmentType()).toUpperCase(Locale.ROOT);
+        if (!"DEPOSIT".equals(adjustmentType) && !"WITHDRAW".equals(adjustmentType)) {
+            throw StockException.badRequest("Adjustment type must be DEPOSIT or WITHDRAW");
+        }
+
+        StockAccount account = stockAccountRepository.findByUserKeyAndStatusForUpdate(userKey, StockAccountStatus.ACTIVE)
+                .orElseThrow(() -> StockException.notFound("User account is not opened yet: " + userKey));
+        if ("DEPOSIT".equals(adjustmentType)) {
+            account.depositCash(amount);
+            stockAccountCashFlowRepository.save(StockAccountCashFlow.adminDeposit(account.getId(), amount, normalizeText(adminUserKey)));
+        } else if (!account.withdrawCash(amount)) {
+            throw StockException.badRequest("Insufficient user cash balance");
+        } else {
+            stockAccountCashFlowRepository.save(StockAccountCashFlow.adminWithdraw(account.getId(), amount, normalizeText(adminUserKey)));
+        }
+
+        return new AccountCashAdjustmentResponse(
+                account.getId(),
+                account.getUserKey(),
+                adjustmentType,
+                amount,
+                account.getCashBalance(),
+                account.getUpdatedAt()
+        );
+    }
+
     private void validateUserKey(String userKey) {
         if (userKey == null || userKey.isBlank()) {
             throw StockException.unauthorized("Login required");
         }
+    }
+
+    private String normalizeText(String value) {
+        return value == null ? "" : value.trim();
     }
 
     public AccountResponse toResponse(StockAccount account) {

@@ -15,19 +15,27 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
+import stock.back.service.common.exception.StockException;
 import stock.back.service.database.entity.MarketType;
 import stock.back.service.market.biz.MarketService;
+import stock.back.service.market.client.StockBatchAdminClient;
 import stock.back.service.market.stream.PriceStreamService;
+import stock.back.service.market.vo.AutoParticipantCashFlowControlRequest;
+import stock.back.service.market.vo.AutoParticipantCashFlowStatusResponse;
 import stock.back.service.market.vo.AutoMarketStatusResponse;
 import stock.back.service.market.vo.AutoMarketConfigResponse;
 import stock.back.service.market.vo.AutoMarketConfigUpdateRequest;
 import stock.back.service.market.vo.AutoParticipantCashAdjustmentRequest;
 import stock.back.service.market.vo.AutoParticipantCashAdjustmentResponse;
 import stock.back.service.market.vo.AutoParticipantOverviewResponse;
+import stock.back.service.market.vo.AutoParticipantProfileConfigRequest;
+import stock.back.service.market.vo.AutoParticipantProfileConfigResponse;
 import stock.back.service.market.vo.AutoParticipantRequest;
 import stock.back.service.market.vo.AutoParticipantResponse;
 import stock.back.service.market.vo.AutoParticipantSymbolConfigRequest;
 import stock.back.service.market.vo.AutoParticipantSymbolConfigResponse;
+import stock.back.service.market.vo.BatchJobRuntimeControlRequest;
+import stock.back.service.market.vo.BatchJobRuntimeStatusResponse;
 import stock.back.service.market.vo.CorporateActionEntitlementResponse;
 import stock.back.service.market.vo.CorporateActionRequest;
 import stock.back.service.market.vo.CorporateActionResponse;
@@ -46,6 +54,7 @@ import stock.back.service.market.vo.PriceTickResponse;
 import stock.back.service.market.vo.RankingResponse;
 import stock.back.service.market.vo.SymbolMarketConfigResponse;
 import stock.back.service.market.vo.VirtualMarketStatusResponse;
+import stock.back.service.market.vo.StockBatchJobRunResponse;
 import web.common.core.response.base.dto.ResponseDataDTO;
 
 import java.util.List;
@@ -57,6 +66,7 @@ public class MarketController {
 
     private final MarketService marketService;
     private final PriceStreamService priceStreamService;
+    private final StockBatchAdminClient stockBatchAdminClient;
 
     @GetMapping("/instruments")
     public ResponseDataDTO<List<InstrumentResponse>> getInstruments() {
@@ -189,6 +199,66 @@ public class MarketController {
     @RequirePrincipalRole(anyOf = {UserRole.ADMIN})
     public ResponseDataDTO<List<AutoParticipantOverviewResponse>> getAutoParticipantOverviews() {
         return ResponseDataDTO.of(marketService.getAutoParticipantOverviews());
+    }
+
+    @GetMapping("/auto-market/cash-flow")
+    @RequirePrincipalRole(anyOf = {UserRole.ADMIN})
+    public ResponseDataDTO<AutoParticipantCashFlowStatusResponse> getAutoParticipantCashFlowStatus() {
+        return ResponseDataDTO.of(stockBatchAdminClient.getAutoParticipantCashFlowStatus());
+    }
+
+    @PatchMapping("/auto-market/cash-flow")
+    @RequirePrincipalRole(anyOf = {UserRole.ADMIN})
+    public ResponseDataDTO<AutoParticipantCashFlowStatusResponse> updateAutoParticipantCashFlowStatus(
+            @RequestBody AutoParticipantCashFlowControlRequest request,
+            UserContext userContext
+    ) {
+        if (request == null || request.runtimeEnabled() == null) {
+            throw StockException.badRequest("runtimeEnabled is required");
+        }
+        AutoParticipantCashFlowControlRequest command = new AutoParticipantCashFlowControlRequest(
+                request.runtimeEnabled(),
+                userContext.getUserKey()
+        );
+        return ResponseDataDTO.of(stockBatchAdminClient.updateAutoParticipantCashFlowStatus(command));
+    }
+
+    @PostMapping("/auto-market/cash-flow/run")
+    @RequirePrincipalRole(anyOf = {UserRole.ADMIN})
+    public ResponseDataDTO<StockBatchJobRunResponse> runAutoParticipantCashFlow() {
+        return ResponseDataDTO.of(stockBatchAdminClient.runAutoParticipantCashFlow());
+    }
+
+    @GetMapping("/batch-jobs/runtime-controls")
+    @RequirePrincipalRole(anyOf = {UserRole.ADMIN})
+    public ResponseDataDTO<List<BatchJobRuntimeStatusResponse>> getBatchJobRuntimeControls() {
+        return ResponseDataDTO.of(stockBatchAdminClient.getBatchJobRuntimeControls());
+    }
+
+    @PatchMapping("/batch-jobs/runtime-controls/{jobName}")
+    @RequirePrincipalRole(anyOf = {UserRole.ADMIN})
+    public ResponseDataDTO<BatchJobRuntimeStatusResponse> updateBatchJobRuntimeControl(
+            @PathVariable String jobName,
+            @RequestBody BatchJobRuntimeControlRequest request,
+            UserContext userContext
+    ) {
+        if (request == null || request.runtimeEnabled() == null) {
+            throw StockException.badRequest("runtimeEnabled is required");
+        }
+        BatchJobRuntimeControlRequest command = new BatchJobRuntimeControlRequest(
+                request.runtimeEnabled(),
+                userContext.getUserKey()
+        );
+        return ResponseDataDTO.of(stockBatchAdminClient.updateBatchJobRuntimeControl(jobName, command));
+    }
+
+    @PatchMapping("/auto-market/profile-configs/{profileType}")
+    @RequirePrincipalRole(anyOf = {UserRole.ADMIN})
+    public ResponseDataDTO<AutoParticipantProfileConfigResponse> updateAutoParticipantProfileConfig(
+            @PathVariable String profileType,
+            @RequestBody AutoParticipantProfileConfigRequest request
+    ) {
+        return ResponseDataDTO.of(marketService.updateAutoParticipantProfileConfig(profileType, request));
     }
 
     @PatchMapping("/auto-market/listing-accounts/{symbol}")
