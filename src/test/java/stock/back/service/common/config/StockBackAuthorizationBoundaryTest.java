@@ -480,6 +480,7 @@ class StockBackAuthorizationBoundaryTest {
             "GET /api/stock/v1/markets/auto-market/cash-flow",
             "PATCH /api/stock/v1/markets/auto-market/cash-flow",
             "POST /api/stock/v1/markets/auto-market/cash-flow/run",
+            "POST /api/stock/v1/markets/batch-jobs/market-close/rollover",
             "GET /api/stock/v1/markets/batch-jobs/runtime-controls",
             "PATCH /api/stock/v1/markets/batch-jobs/runtime-controls/auto-market"
     })
@@ -513,6 +514,7 @@ class StockBackAuthorizationBoundaryTest {
             "GET /api/stock/v1/markets/auto-market/cash-flow",
             "PATCH /api/stock/v1/markets/auto-market/cash-flow",
             "POST /api/stock/v1/markets/auto-market/cash-flow/run",
+            "POST /api/stock/v1/markets/batch-jobs/market-close/rollover",
             "GET /api/stock/v1/markets/batch-jobs/runtime-controls",
             "PATCH /api/stock/v1/markets/batch-jobs/runtime-controls/auto-market"
     })
@@ -725,6 +727,49 @@ class StockBackAuthorizationBoundaryTest {
                 "stock-user-auth-cash-user"
         );
         assertThat(cashBalance).isEqualByComparingTo(new BigDecimal("10000000.00"));
+    }
+
+    @Test
+    void getUserFundFlow_adminPrincipalHeaders_isAllowed() throws Exception {
+        seedStockAccount("stock-user-auth-fund-flow");
+
+        mockMvc.perform(get("/api/stock/v1/accounts/admin/users/stock-user-auth-fund-flow/fund-flow")
+                        .header("X-User-Key", "stock-admin-key")
+                        .header("X-User-Role", "ROLE_ADMIN"))
+                .andExpect(status().isOk())
+                .andExpect(content().string(containsString("\"cashBalance\":10000000")))
+                .andExpect(content().string(containsString("\"recentCashFlows\"")));
+    }
+
+    @Test
+    void getUserFundFlow_userPrincipalHeaders_returnsForbidden() throws Exception {
+        seedStockAccount("stock-user-auth-fund-flow-user");
+
+        mockMvc.perform(get("/api/stock/v1/accounts/admin/users/stock-user-auth-fund-flow-user/fund-flow")
+                        .header("X-User-Key", "stock-user-key")
+                        .header("X-User-Role", "ROLE_USER"))
+                .andExpect(status().isForbidden())
+                .andExpect(content().string(containsString("Required role: ADMIN")));
+    }
+
+    @Test
+    void getAdminFlowOverview_adminPrincipalHeaders_isAllowed() throws Exception {
+        mockMvc.perform(get("/api/stock/v1/markets/admin/flow-overview")
+                        .header("X-User-Key", "stock-admin-key")
+                        .header("X-User-Role", "ROLE_ADMIN"))
+                .andExpect(status().isOk())
+                .andExpect(content().string(containsString("\"fundFlow\"")))
+                .andExpect(content().string(containsString("\"symbolFlows\"")))
+                .andExpect(content().string(containsString("\"recentCashFlows\"")));
+    }
+
+    @Test
+    void getAdminFlowOverview_userPrincipalHeaders_returnsForbidden() throws Exception {
+        mockMvc.perform(get("/api/stock/v1/markets/admin/flow-overview")
+                        .header("X-User-Key", "stock-user-key")
+                        .header("X-User-Role", "ROLE_USER"))
+                .andExpect(status().isForbidden())
+                .andExpect(content().string(containsString("Required role: ADMIN")));
     }
 
     @Test

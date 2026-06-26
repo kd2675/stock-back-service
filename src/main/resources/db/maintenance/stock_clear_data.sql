@@ -8,6 +8,8 @@ SET FOREIGN_KEY_CHECKS = 0;
 
 TRUNCATE TABLE stock_corporate_action_entitlement;
 TRUNCATE TABLE stock_execution;
+TRUNCATE TABLE stock_holding_snapshot;
+TRUNCATE TABLE stock_market_close_run;
 TRUNCATE TABLE stock_holding;
 TRUNCATE TABLE portfolio_snapshot;
 TRUNCATE TABLE stock_order;

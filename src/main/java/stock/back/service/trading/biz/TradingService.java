@@ -12,6 +12,7 @@ import stock.back.service.database.entity.OrderStatus;
 import stock.back.service.database.entity.OrderType;
 import stock.back.service.database.entity.PortfolioSnapshot;
 import stock.back.service.database.entity.StockAccount;
+import stock.back.service.database.entity.StockAccountCashFlow;
 import stock.back.service.database.entity.StockExecution;
 import stock.back.service.database.entity.StockHolding;
 import stock.back.service.database.entity.StockOrder;
@@ -20,6 +21,7 @@ import stock.back.service.database.entity.StockOrderBookMarketConfig;
 import stock.back.service.database.entity.StockPrice;
 import stock.back.service.database.entity.StockVirtualMarketConfig;
 import stock.back.service.database.repository.PortfolioSnapshotRepository;
+import stock.back.service.database.repository.StockAccountCashFlowRepository;
 import stock.back.service.database.repository.StockExecutionRepository;
 import stock.back.service.database.repository.StockHoldingRepository;
 import stock.back.service.database.repository.StockInstrumentRepository;
@@ -30,7 +32,9 @@ import stock.back.service.database.repository.StockPriceRepository;
 import stock.back.service.database.repository.StockVirtualMarketConfigRepository;
 import stock.back.service.market.cache.CachedStockPrice;
 import stock.back.service.market.cache.StockPriceCacheService;
+import stock.back.service.trading.vo.AccountCashFlowResponse;
 import stock.back.service.trading.vo.ExecutionResponse;
+import stock.back.service.trading.vo.FundFlowResponse;
 import stock.back.service.trading.vo.HoldingResponse;
 import stock.back.service.trading.vo.OrderAmendRequest;
 import stock.back.service.trading.vo.OrderCancelRequest;
@@ -68,6 +72,7 @@ public class TradingService {
     private final StockOrderRepository stockOrderRepository;
     private final StockHoldingRepository stockHoldingRepository;
     private final StockExecutionRepository stockExecutionRepository;
+    private final StockAccountCashFlowRepository stockAccountCashFlowRepository;
     private final PortfolioSnapshotRepository portfolioSnapshotRepository;
     private final StockPriceCacheService stockPriceCacheService;
 
@@ -323,6 +328,60 @@ public class TradingService {
                 sellNetAmount,
                 sellNetAmount.subtract(buyNetAmount),
                 summary.getExecutionCount()
+        );
+    }
+
+    @Transactional(readOnly = true)
+    public FundFlowResponse getFundFlow(String userKey) {
+        StockAccount account = accountService.requireAccount(userKey);
+        List<HoldingResponse> holdings = buildHoldingResponses(account.getId());
+        BigDecimal marketValue = holdings.stream()
+                .map(HoldingResponse::marketValue)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal unrealizedProfit = holdings.stream()
+                .map(HoldingResponse::unrealizedProfit)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        List<OrderStatus> activeOrderStatuses = List.of(OrderStatus.PENDING, OrderStatus.PARTIALLY_FILLED);
+        BigDecimal reservedBuyCash = stockOrderRepository.sumReservedCashByAccountIdAndSideAndStatusIn(
+                account.getId(),
+                OrderSide.BUY,
+                activeOrderStatuses
+        );
+        BigDecimal totalAsset = account.getCashBalance().add(reservedBuyCash).add(marketValue);
+        StockAccountCashFlowRepository.CashFlowSummaryProjection cashFlowSummary =
+                stockAccountCashFlowRepository.summarizeCashFlowsByAccountId(account.getId());
+        StockExecutionRepository.ProfitSummaryProjection profitSummary =
+                stockExecutionRepository.summarizeProfitByAccountId(account.getId());
+        BigDecimal externalDepositAmount = zeroIfNull(cashFlowSummary.getExternalDepositAmount());
+        BigDecimal externalWithdrawAmount = zeroIfNull(cashFlowSummary.getExternalWithdrawAmount());
+        BigDecimal dividendIncomeAmount = zeroIfNull(cashFlowSummary.getDividendIncomeAmount());
+        BigDecimal buyNetAmount = zeroIfNull(profitSummary.getBuyNetAmount());
+        BigDecimal sellNetAmount = zeroIfNull(profitSummary.getSellNetAmount());
+        BigDecimal realizedProfit = zeroIfNull(profitSummary.getRealizedProfit());
+        List<AccountCashFlowResponse> recentCashFlows = stockAccountCashFlowRepository
+                .findTop30ByAccountIdOrderByCreatedAtDescIdDesc(account.getId()).stream()
+                .map(this::toAccountCashFlowResponse)
+                .toList();
+
+        return new FundFlowResponse(
+                account.getCashBalance(),
+                reservedBuyCash,
+                marketValue,
+                totalAsset,
+                externalDepositAmount,
+                externalWithdrawAmount,
+                externalDepositAmount.subtract(externalWithdrawAmount),
+                dividendIncomeAmount,
+                buyNetAmount,
+                sellNetAmount,
+                sellNetAmount.subtract(buyNetAmount),
+                zeroIfNull(profitSummary.getTotalFeeAmount()),
+                zeroIfNull(profitSummary.getTotalTaxAmount()),
+                realizedProfit,
+                unrealizedProfit,
+                realizedProfit.add(unrealizedProfit),
+                profitSummary.getExecutionCount(),
+                recentCashFlows
         );
     }
 
@@ -632,6 +691,17 @@ public class TradingService {
                 snapshot.getCashBalance(),
                 snapshot.getMarketValue(),
                 snapshot.getReturnRate()
+        );
+    }
+
+    private AccountCashFlowResponse toAccountCashFlowResponse(StockAccountCashFlow cashFlow) {
+        return new AccountCashFlowResponse(
+                cashFlow.getId(),
+                cashFlow.getFlowType().name(),
+                cashFlow.getAmount(),
+                cashFlow.getReason().name(),
+                cashFlow.getCreatedBy(),
+                cashFlow.getCreatedAt()
         );
     }
 

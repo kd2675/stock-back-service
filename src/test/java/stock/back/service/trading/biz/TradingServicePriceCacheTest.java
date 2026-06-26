@@ -14,6 +14,7 @@ import stock.back.service.database.entity.StockHolding;
 import stock.back.service.database.entity.StockOrder;
 import stock.back.service.database.entity.StockVirtualMarketConfig;
 import stock.back.service.database.repository.PortfolioSnapshotRepository;
+import stock.back.service.database.repository.StockAccountCashFlowRepository;
 import stock.back.service.database.repository.StockExecutionRepository;
 import stock.back.service.database.repository.StockHoldingRepository;
 import stock.back.service.database.repository.StockInstrumentRepository;
@@ -70,6 +71,9 @@ class TradingServicePriceCacheTest {
     private StockExecutionRepository stockExecutionRepository;
 
     @Mock
+    private StockAccountCashFlowRepository stockAccountCashFlowRepository;
+
+    @Mock
     private PortfolioSnapshotRepository portfolioSnapshotRepository;
 
     @Mock
@@ -89,6 +93,7 @@ class TradingServicePriceCacheTest {
                 stockOrderRepository,
                 stockHoldingRepository,
                 stockExecutionRepository,
+                stockAccountCashFlowRepository,
                 portfolioSnapshotRepository,
                 stockPriceCacheService
         );

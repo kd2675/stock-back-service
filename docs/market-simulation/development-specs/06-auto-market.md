@@ -67,7 +67,7 @@
 | `SWING_TRADER` | 추세추종과 역추세를 섞어 며칠 단위 가격 흐름처럼 움직인다. |
 | `LONG_TERM_HOLDER` | 중립 신호에서는 주문을 쉬고, 큰 손실과 큰 수익 모두에서 성급한 매도 회피가 강하다. |
 | `PAYDAY_ACCUMULATOR` | 설정한 입금 주기마다 자동 현금 유입 후 매수 편향을 가진다. |
-| `DIVIDEND_REINVESTOR` | 작은 정기 현금 유입을 다시 매수에 쓰며, 장기 보유와 저가 매수 성향을 함께 가진다. |
+| `DIVIDEND_REINVESTOR` | 월급 지급 대상이 아니며, 배당 이벤트로 들어온 현금을 다시 매수에 쓰고 장기 보유 성향을 함께 가진다. |
 | `LIMIT_DOWN_TRAPPED` | 깊은 손실 구간에서 현금이 부족해도 강제 손절 매도를 하지 않는다. |
 | `AVERAGE_DOWN_BUYER` | 손실 구간과 급락 구간에서 평균단가를 낮추기 위해 추가 매수한다. |
 | `STOP_LOSS_TRADER` | 손실 구간과 하락 모멘텀에서 빠르게 매도해 손절을 우선한다. |
@@ -92,7 +92,7 @@
 - 프로필 설정의 `order_multiplier`, `quantity_multiplier`, `profit_taking_weight`는 실제 자동 주문 수, 주문 수량 상한, 보유 수익 구간의 매도 전환에 반영된다.
 - 프로필 설정의 핵심 행동 가중치가 저장되어 있지 않으면 해당 프로필의 기본 심리 성향을 유지한다. 기존 커스텀 설정 행이 있어도 새 행동 가중치가 비어 있으면 기본 성향을 0으로 덮어쓰지 않는다.
 - `PAYDAY_ACCUMULATOR`는 프로필 설정의 `recurring_deposit_amount`, `recurring_deposit_interval_value`, `recurring_deposit_interval_unit` 기준으로 `AUTO_PROFILE_RECURRING_DEPOSIT` 현금 유입을 만들고, 설정 주기 안의 원장 기록으로 중복 입금을 막는다. `recurring_deposit_interval_days`는 기존 일 단위 설정 호환용으로만 유지한다.
-- `DIVIDEND_REINVESTOR`는 월급매수형보다 작은 정기 현금 유입을 쓰되, 장기 보유와 저가 매수 성향으로 현금을 다시 주문장에 투입한다.
+- `DIVIDEND_REINVESTOR`는 `AUTO_PROFILE_RECURRING_DEPOSIT` 월급/정기 현금 유입을 쓰지 않는다. 배당 지급 기능이 만든 `DIVIDEND_PAYMENT` 현금 흐름이 있을 때 장기 보유와 재매수 성향으로 현금을 다시 주문장에 투입한다.
 - `LONG_TERM_HOLDER`는 주문 빈도와 호가 공격성이 낮고 보유 인내도가 높아 매도를 늦춘다.
 - `LIMIT_DOWN_TRAPPED`는 큰 손실 구간에서 매도 회피가 강해 하락 중에도 쉽게 손절하지 않는다.
 - `AVERAGE_DOWN_BUYER`는 손실 구간에서 보유를 줄이기보다 추가 매수와 수량 확대를 통해 평균단가를 낮추려 한다.

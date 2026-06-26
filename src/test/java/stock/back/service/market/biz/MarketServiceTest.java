@@ -51,6 +51,7 @@ import stock.back.service.database.repository.StockVirtualMarketConfigRepository
 import stock.back.service.market.cache.CachedStockPrice;
 import stock.back.service.market.cache.StockPriceCacheService;
 import stock.back.service.market.vo.AutoParticipantCashAdjustmentRequest;
+import stock.back.service.market.vo.AutoParticipantProfileConfigRequest;
 import stock.back.service.market.vo.AutoParticipantRequest;
 import stock.back.service.market.vo.AutoParticipantSymbolConfigRequest;
 import stock.back.service.market.vo.CorporateActionRequest;
@@ -345,6 +346,45 @@ class MarketServiceTest {
         assertThat(profileConfig.customized()).isTrue();
         assertThat(profileConfig.momentumWeight()).isEqualByComparingTo(new BigDecimal("0.85"));
         assertThat(profileConfig.orderMultiplier()).isEqualByComparingTo(new BigDecimal("1.20"));
+    }
+
+    @Test
+    void updateAutoParticipantProfileConfig_dividendReinvestorClearsRecurringDeposit() {
+        when(stockAutoParticipantProfileConfigRepository.findById(AutoParticipantProfileType.DIVIDEND_REINVESTOR))
+                .thenReturn(Optional.empty());
+        when(stockAutoParticipantProfileConfigRepository.save(any(StockAutoParticipantProfileConfig.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        var response = marketService.updateAutoParticipantProfileConfig(
+                "DIVIDEND_REINVESTOR",
+                new AutoParticipantProfileConfigRequest(
+                        new BigDecimal("0.70"),
+                        new BigDecimal("0.45"),
+                        new BigDecimal("0.20"),
+                        new BigDecimal("0.30"),
+                        new BigDecimal("0.30"),
+                        new BigDecimal("0.10"),
+                        new BigDecimal("0.20"),
+                        new BigDecimal("0.10"),
+                        new BigDecimal("0.05"),
+                        new BigDecimal("0.35"),
+                        new BigDecimal("1.10"),
+                        BigDecimal.ONE,
+                        BigDecimal.ONE,
+                        BigDecimal.ONE,
+                        new BigDecimal("0.60"),
+                        new BigDecimal("0.40"),
+                        new BigDecimal("0.20"),
+                        new BigDecimal("50000.00"),
+                        new BigDecimal("30"),
+                        "MINUTE",
+                        null
+                )
+        );
+
+        assertThat(response.recurringDepositAmount()).isEqualByComparingTo(BigDecimal.ZERO);
+        assertThat(response.recurringDepositIntervalValue()).isEqualByComparingTo(BigDecimal.ZERO);
+        assertThat(response.recurringDepositIntervalUnit()).isEqualTo("DAY");
     }
 
     @Test
@@ -927,7 +967,7 @@ class MarketServiceTest {
         assertThat(actionCaptor.getValue().getActionType()).isEqualTo(StockCorporateActionType.CASH_DIVIDEND);
         assertThat(actionCaptor.getValue().getDividendAmount()).isEqualByComparingTo(new BigDecimal("1000.00"));
         assertThat(actionCaptor.getValue().getBasePrice()).isEqualByComparingTo(new BigDecimal("70000.00"));
-        assertThat(actionCaptor.getValue().getTheoreticalExRightsPrice()).isEqualByComparingTo(new BigDecimal("69000.00"));
+        assertThat(actionCaptor.getValue().getTheoreticalExRightsPrice()).isEqualByComparingTo(new BigDecimal("70000.00"));
     }
 
     @Test

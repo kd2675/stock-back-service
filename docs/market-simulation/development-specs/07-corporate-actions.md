@@ -8,7 +8,7 @@
 - `PAID_IN_CAPITAL_INCREASE`: 유상증자. 권리락 가격 계산, 납입 상태, 신주 상장.
 - `ADDITIONAL_ISSUE`: 추가발행. 신주 상장 시 발행주식수와 유통주식수 증가.
 - `STOCK_SPLIT`: 액면분할. 주식수 증가, 보유수량 증가, 평균단가/가격 하향 조정.
-- `CASH_DIVIDEND`: 현금배당. 배당락 가격 조정, 보유자별 현금 지급.
+- `CASH_DIVIDEND`: 현금배당. 보유자별 현금 지급.
 - `BONUS_ISSUE`: 무상증자. 권리락 가격 조정, 신주 entitlement 지급.
 - `STOCK_DIVIDEND`: 주식배당. 무상증자와 같은 지급 구조.
 
@@ -65,7 +65,7 @@ front:
 현금배당:
 
 1. admin이 1주당 배당금, 배당락일, 지급일을 등록한다.
-2. batch가 배당락일에 가격을 하향 조정하고 entitlement를 만든다.
+2. batch가 배당락일에 entitlement를 만든다.
 3. batch가 지급일에 사용자 계좌 현금을 늘리고 entitlement를 `PAID`로 바꾼다.
 
 무상증자/주식배당:

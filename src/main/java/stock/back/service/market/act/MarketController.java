@@ -16,6 +16,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import stock.back.service.common.exception.StockException;
+import stock.back.service.database.entity.MarketSessionStatus;
 import stock.back.service.database.entity.MarketType;
 import stock.back.service.market.biz.MarketService;
 import stock.back.service.market.client.StockBatchAdminClient;
@@ -23,6 +24,7 @@ import stock.back.service.market.stream.PriceStreamService;
 import stock.back.service.market.vo.AutoParticipantCashFlowControlRequest;
 import stock.back.service.market.vo.AutoParticipantCashFlowStatusResponse;
 import stock.back.service.market.vo.AutoMarketStatusResponse;
+import stock.back.service.market.vo.AdminFlowOverviewResponse;
 import stock.back.service.market.vo.AutoMarketConfigResponse;
 import stock.back.service.market.vo.AutoMarketConfigUpdateRequest;
 import stock.back.service.market.vo.AutoParticipantCashAdjustmentRequest;
@@ -152,7 +154,13 @@ public class MarketController {
             @PathVariable String symbol,
             @RequestBody MarketStatusUpdateRequest request
     ) {
-        return ResponseDataDTO.of(marketService.updateMarketStatus(marketType, symbol, request));
+        SymbolMarketConfigResponse response = marketService.updateMarketStatus(marketType, symbol, request);
+        if (marketType == MarketType.ORDER_BOOK
+                && request != null
+                && request.marketStatus() == MarketSessionStatus.CLOSED) {
+            stockBatchAdminClient.runMarketCloseRollover(response.symbol());
+        }
+        return ResponseDataDTO.of(response);
     }
 
     @GetMapping("/prices")
@@ -195,6 +203,12 @@ public class MarketController {
         return ResponseDataDTO.of(marketService.getAutoMarketStatus());
     }
 
+    @GetMapping("/admin/flow-overview")
+    @RequirePrincipalRole(anyOf = {UserRole.ADMIN})
+    public ResponseDataDTO<AdminFlowOverviewResponse> getAdminFlowOverview() {
+        return ResponseDataDTO.of(marketService.getAdminFlowOverview());
+    }
+
     @GetMapping("/auto-market/participants/overviews")
     @RequirePrincipalRole(anyOf = {UserRole.ADMIN})
     public ResponseDataDTO<List<AutoParticipantOverviewResponse>> getAutoParticipantOverviews() {
@@ -227,6 +241,12 @@ public class MarketController {
     @RequirePrincipalRole(anyOf = {UserRole.ADMIN})
     public ResponseDataDTO<StockBatchJobRunResponse> runAutoParticipantCashFlow() {
         return ResponseDataDTO.of(stockBatchAdminClient.runAutoParticipantCashFlow());
+    }
+
+    @PostMapping("/batch-jobs/market-close/rollover")
+    @RequirePrincipalRole(anyOf = {UserRole.ADMIN})
+    public ResponseDataDTO<StockBatchJobRunResponse> runMarketCloseRollover() {
+        return ResponseDataDTO.of(stockBatchAdminClient.runMarketCloseRollover());
     }
 
     @GetMapping("/batch-jobs/runtime-controls")

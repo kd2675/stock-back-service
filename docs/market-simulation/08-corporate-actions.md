@@ -121,15 +121,14 @@ batch 처리:
 
 back 처리:
 
-- 배당금이 현재가보다 작아야 한다.
-- `theoretical_ex_rights_price = current_price - dividendAmount`로 저장한다.
+- 현재가를 `base_price`로 기록한다.
+- 현금배당은 현재가를 강제로 낮추지 않는다.
 
 batch 처리:
 
-1. 배당락일에 가격을 배당락 가격으로 조정한다.
-2. 배당락일 현재 `stock_holding.quantity > 0`인 보유자 기준으로 `stock_corporate_action_entitlement`를 만든다.
-3. 지급일에 entitlement별 `cash_amount`를 `stock_account.cash_balance`에 더한다.
-4. entitlement와 corporate action을 `PAID`로 전이한다.
+1. 배당락일 현재 `stock_holding.quantity > 0`인 보유자 기준으로 `stock_corporate_action_entitlement`를 만든다.
+2. 지급일에 entitlement별 `cash_amount`를 `stock_account.cash_balance`에 더한다.
+3. entitlement와 corporate action을 `PAID`로 전이한다.
 
 ## 무상증자와 주식배당
 

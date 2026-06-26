@@ -77,6 +77,12 @@ class StockMysqlDdlContractTest {
             "stock_batch_job_lock"
     );
 
+    private static final List<String> MARKET_CLOSE_SNAPSHOT_TABLE_MARKERS = List.of(
+            "stock_market_close_run",
+            "stock_holding_snapshot",
+            "holding_snapshot_run_id"
+    );
+
     @Test
     void stockAllSql_createsSchemaWithoutDefaultMarketSeed() throws IOException {
         String ddl = readStockAllSql();
@@ -84,6 +90,7 @@ class StockMysqlDdlContractTest {
         assertThat(ddl).contains("KEY idx_stock_price_tick_symbol_time (symbol, price_time)");
         assertThat(ddl).contains("KEY idx_stock_order_order_book_match (symbol, side, order_type, status, limit_price, created_at)");
         assertThat(ddl).contains(BATCH_OPERATION_TABLE_MARKERS.toArray(String[]::new));
+        assertThat(ddl).contains(MARKET_CLOSE_SNAPSHOT_TABLE_MARKERS.toArray(String[]::new));
         assertThat(ddl).doesNotContain(
                 DEFAULT_SEED_MARKERS.toArray(String[]::new)
         );

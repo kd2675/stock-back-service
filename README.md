@@ -133,7 +133,7 @@ scripts/stock-smoke.sh
 - 자동장 상태 조회는 `stock_auto_participant`, `stock_auto_market_config`, 자동 참여자 주문/체결 원장을 읽어 현재 활성 상태와 종목별 설정을 반환합니다.
 - 유상증자는 API 호출 시점에 주식 수를 즉시 늘리지 않고, `stock_corporate_action`에 권리락일/납입일/신주상장일을 기록합니다. 권리락 가격 조정과 신주상장일 주식 수 반영은 `stock-batch-service`가 처리합니다.
 - 추가발행은 API 호출 시점에 주식 수를 즉시 늘리지 않고, 신주상장일에 `stock-batch-service`가 주식 수를 반영합니다. 액면분할도 효력일에 batch가 주식 수, 보유수량, 가격을 비례 조정합니다.
-- 현금배당은 배당금, 배당락일, 지급일을 `stock_corporate_action`에 기록합니다. 배당락 가격 조정과 보유자별 지급 원장 생성, 지급일 현금 반영은 `stock-batch-service`가 처리합니다.
+- 현금배당은 배당금, 배당락일, 지급일을 `stock_corporate_action`에 기록합니다. 배당락일 보유자별 지급 원장 생성과 지급일 현금 반영은 `stock-batch-service`가 처리하며, 현금배당 자체는 현재가를 강제로 조정하지 않습니다.
 - 무상증자와 주식배당은 권리락일, 신주상장일, 배정 주식수를 `stock_corporate_action`에 기록합니다. 권리락 가격 조정, 보유자별 신주 entitlement 생성, 상장일 보유수량/평균단가 반영은 `stock-batch-service`가 처리합니다.
 - 기업 이벤트 이력은 종목별로 조회할 수 있고, 사용자별 배당/신주 배정 내역은 최근 50건을 조회합니다.
 - 체결 이력 응답은 체결가/수량뿐 아니라 `grossAmount`, `feeAmount`, `taxAmount`, `netAmount`, `realizedProfit`을 포함합니다.

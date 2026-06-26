@@ -94,6 +94,47 @@ class StockBatchAdminClientTest {
     }
 
     @Test
+    void runMarketCloseRollover_sendsInternalTokenAndReturnsJobResponse() {
+        RestClient.Builder restClientBuilder = RestClient.builder().baseUrl("http://stock-batch-test");
+        MockRestServiceServer server = MockRestServiceServer.bindTo(restClientBuilder).build();
+        StockBatchAdminClient client = new StockBatchAdminClient(restClientBuilder.build(), "secret-token");
+
+        server.expect(requestTo("http://stock-batch-test/internal/stock-batch/v1/jobs/market-close/rollover"))
+                .andExpect(method(org.springframework.http.HttpMethod.POST))
+                .andExpect(header("X-Internal-Token", "secret-token"))
+                .andRespond(withSuccess("""
+                        {"success":true,"data":{"job":"market-close-rollover","status":"COMPLETED","executionMode":"price-limit-base","processedCount":5,"message":"Job completed","startedAt":"2026-06-25T15:30:00","completedAt":"2026-06-25T15:30:01"}}
+                        """, MediaType.APPLICATION_JSON));
+
+        var response = client.runMarketCloseRollover();
+
+        assertThat(response.job()).isEqualTo("market-close-rollover");
+        assertThat(response.processedCount()).isEqualTo(5);
+        server.verify();
+    }
+
+    @Test
+    void runMarketCloseRollover_withSymbol_sendsSymbolInternalTokenAndReturnsJobResponse() {
+        RestClient.Builder restClientBuilder = RestClient.builder().baseUrl("http://stock-batch-test");
+        MockRestServiceServer server = MockRestServiceServer.bindTo(restClientBuilder).build();
+        StockBatchAdminClient client = new StockBatchAdminClient(restClientBuilder.build(), "secret-token");
+
+        server.expect(requestTo("http://stock-batch-test/internal/stock-batch/v1/jobs/market-close/rollover/MC001"))
+                .andExpect(method(org.springframework.http.HttpMethod.POST))
+                .andExpect(header("X-Internal-Token", "secret-token"))
+                .andRespond(withSuccess("""
+                        {"success":true,"data":{"job":"market-close-rollover","status":"COMPLETED","executionMode":"price-limit-base:MC001","processedCount":4,"message":"Job completed","startedAt":"2026-06-25T15:30:00","completedAt":"2026-06-25T15:30:01"}}
+                        """, MediaType.APPLICATION_JSON));
+
+        var response = client.runMarketCloseRollover("MC001");
+
+        assertThat(response.job()).isEqualTo("market-close-rollover");
+        assertThat(response.executionMode()).isEqualTo("price-limit-base:MC001");
+        assertThat(response.processedCount()).isEqualTo(4);
+        server.verify();
+    }
+
+    @Test
     void getBatchJobRuntimeControls_sendsInternalTokenAndReturnsRuntimeList() {
         RestClient.Builder restClientBuilder = RestClient.builder().baseUrl("http://stock-batch-test");
         MockRestServiceServer server = MockRestServiceServer.bindTo(restClientBuilder).build();

@@ -60,6 +60,12 @@ import stock.back.service.market.cache.StockPriceCacheService;
 import stock.back.service.market.vo.AutoMarketConfigResponse;
 import stock.back.service.market.vo.AutoMarketConfigUpdateRequest;
 import stock.back.service.market.vo.AutoMarketStatusResponse;
+import stock.back.service.market.vo.AdminCorporateActionFlowSummaryResponse;
+import stock.back.service.market.vo.AdminFlowOverviewResponse;
+import stock.back.service.market.vo.AdminFundFlowSummaryResponse;
+import stock.back.service.market.vo.AdminOrderFlowSummaryResponse;
+import stock.back.service.market.vo.AdminRecentCashFlowResponse;
+import stock.back.service.market.vo.AdminSymbolFlowResponse;
 import stock.back.service.market.vo.AutoParticipantHoldingResponse;
 import stock.back.service.market.vo.AutoParticipantCashAdjustmentRequest;
 import stock.back.service.market.vo.AutoParticipantCashAdjustmentResponse;
@@ -520,6 +526,18 @@ public class MarketService {
     }
 
     @Transactional(readOnly = true)
+    public AdminFlowOverviewResponse getAdminFlowOverview() {
+        return new AdminFlowOverviewResponse(
+                loadAdminFundFlowSummary(),
+                loadAdminOrderFlowSummary(),
+                loadAdminCorporateActionFlowSummary(),
+                loadAdminSymbolFlows(),
+                loadAdminRecentCashFlows(),
+                LocalDateTime.now()
+        );
+    }
+
+    @Transactional(readOnly = true)
     public AutoMarketStatusResponse getAutoMarketStatus() {
         List<StockAutoMarketConfig> configEntities = stockAutoMarketConfigRepository.findAll().stream()
                 .sorted((left, right) -> left.getSymbol().compareTo(right.getSymbol()))
@@ -623,6 +641,12 @@ public class MarketService {
         if (recurringDepositIntervalUnit == null) {
             recurringDepositIntervalUnit = RecurringCashIntervalUnit.DAY;
         }
+        if (AutoParticipantProfileType.DIVIDEND_REINVESTOR.equals(profileType)) {
+            recurringDepositAmount = BigDecimal.ZERO;
+            recurringDepositIntervalValue = BigDecimal.ZERO;
+            recurringDepositIntervalUnit = RecurringCashIntervalUnit.DAY;
+        }
+        BigDecimal finalRecurringDepositAmount = recurringDepositAmount;
         BigDecimal finalRecurringDepositIntervalValue = recurringDepositIntervalValue;
         RecurringCashIntervalUnit finalRecurringDepositIntervalUnit = recurringDepositIntervalUnit;
         StockAutoParticipantProfileConfig config = stockAutoParticipantProfileConfigRepository.findById(profileType)
@@ -645,7 +669,7 @@ public class MarketService {
                         holdingPatienceWeight,
                         deepLossHoldWeight,
                         profitTakingWeight,
-                        recurringDepositAmount,
+                        finalRecurringDepositAmount,
                         finalRecurringDepositIntervalValue,
                         finalRecurringDepositIntervalUnit
                 ));
@@ -1387,6 +1411,273 @@ public class MarketService {
         }
     }
 
+    private AdminFundFlowSummaryResponse loadAdminFundFlowSummary() {
+        String sql = """
+                select
+                  coalesce((select count(*) from stock_account where status = 'ACTIVE'), 0) as active_account_count,
+                  coalesce((select sum(cash_balance) from stock_account where status = 'ACTIVE'), 0) as total_cash_balance,
+                  coalesce((select sum(reserved_cash)
+                              from stock_order
+                             where side = 'BUY'
+                               and status in ('PENDING', 'PARTIALLY_FILLED')), 0) as total_reserved_buy_cash,
+                  coalesce((select sum(h.quantity * coalesce(p.current_price, h.average_price))
+                              from stock_holding h
+                              join stock_account a on a.id = h.account_id and a.status = 'ACTIVE'
+                              left join stock_price p on p.symbol = h.symbol), 0) as total_holding_market_value,
+                  coalesce((select sum(case when f.flow_type = 'DEPOSIT' and f.reason <> 'DIVIDEND_PAYMENT' then f.amount else 0 end)
+                              from stock_account_cash_flow f
+                              join stock_account a on a.id = f.account_id and a.status = 'ACTIVE'), 0) as external_deposit_amount,
+                  coalesce((select sum(case when f.flow_type = 'WITHDRAW' then f.amount else 0 end)
+                              from stock_account_cash_flow f
+                              join stock_account a on a.id = f.account_id and a.status = 'ACTIVE'), 0) as external_withdraw_amount,
+                  coalesce((select sum(case when f.flow_type = 'DEPOSIT' and f.reason = 'DIVIDEND_PAYMENT' then f.amount else 0 end)
+                              from stock_account_cash_flow f
+                              join stock_account a on a.id = f.account_id and a.status = 'ACTIVE'), 0) as dividend_income_amount,
+                  coalesce((select sum(case when e.side = 'BUY' then e.net_amount else 0 end)
+                              from stock_execution e
+                              join stock_account a on a.id = e.account_id and a.status = 'ACTIVE'), 0) as buy_net_amount,
+                  coalesce((select sum(case when e.side = 'SELL' then e.net_amount else 0 end)
+                              from stock_execution e
+                              join stock_account a on a.id = e.account_id and a.status = 'ACTIVE'), 0) as sell_net_amount,
+                  coalesce((select sum(e.fee_amount)
+                              from stock_execution e
+                              join stock_account a on a.id = e.account_id and a.status = 'ACTIVE'), 0) as total_fee_amount,
+                  coalesce((select sum(e.tax_amount)
+                              from stock_execution e
+                              join stock_account a on a.id = e.account_id and a.status = 'ACTIVE'), 0) as total_tax_amount,
+                  coalesce((select sum(e.realized_profit)
+                              from stock_execution e
+                              join stock_account a on a.id = e.account_id and a.status = 'ACTIVE'), 0) as realized_profit,
+                  coalesce((select count(*)
+                              from stock_execution e
+                              join stock_account a on a.id = e.account_id and a.status = 'ACTIVE'), 0) as execution_count
+                """;
+        return jdbcTemplate.queryForObject(sql, (rs, rowNum) -> {
+            BigDecimal totalCashBalance = rs.getBigDecimal("total_cash_balance");
+            BigDecimal totalReservedBuyCash = rs.getBigDecimal("total_reserved_buy_cash");
+            BigDecimal totalHoldingMarketValue = rs.getBigDecimal("total_holding_market_value");
+            BigDecimal externalDepositAmount = rs.getBigDecimal("external_deposit_amount");
+            BigDecimal externalWithdrawAmount = rs.getBigDecimal("external_withdraw_amount");
+            BigDecimal dividendIncomeAmount = rs.getBigDecimal("dividend_income_amount");
+            BigDecimal buyNetAmount = rs.getBigDecimal("buy_net_amount");
+            BigDecimal sellNetAmount = rs.getBigDecimal("sell_net_amount");
+            return new AdminFundFlowSummaryResponse(
+                    rs.getLong("active_account_count"),
+                    totalCashBalance,
+                    totalReservedBuyCash,
+                    totalHoldingMarketValue,
+                    totalCashBalance.add(totalReservedBuyCash).add(totalHoldingMarketValue),
+                    externalDepositAmount,
+                    externalWithdrawAmount,
+                    externalDepositAmount.subtract(externalWithdrawAmount),
+                    dividendIncomeAmount,
+                    buyNetAmount,
+                    sellNetAmount,
+                    sellNetAmount.subtract(buyNetAmount),
+                    rs.getBigDecimal("total_fee_amount"),
+                    rs.getBigDecimal("total_tax_amount"),
+                    rs.getBigDecimal("realized_profit"),
+                    rs.getLong("execution_count")
+            );
+        });
+    }
+
+    private AdminOrderFlowSummaryResponse loadAdminOrderFlowSummary() {
+        LocalDateTime todayStart = LocalDate.now().atStartOfDay();
+        String sql = """
+                select
+                  coalesce(sum(case when status in ('PENDING', 'PARTIALLY_FILLED') then 1 else 0 end), 0) as open_order_count,
+                  coalesce(sum(case when status in ('PENDING', 'PARTIALLY_FILLED') and side = 'BUY' then 1 else 0 end), 0) as open_buy_order_count,
+                  coalesce(sum(case when status in ('PENDING', 'PARTIALLY_FILLED') and side = 'SELL' then 1 else 0 end), 0) as open_sell_order_count,
+                  coalesce(sum(case when status = 'PARTIALLY_FILLED' then 1 else 0 end), 0) as partially_filled_order_count,
+                  coalesce(sum(case when status in ('PENDING', 'PARTIALLY_FILLED') and side = 'BUY' then reserved_cash else 0 end), 0) as reserved_buy_cash,
+                  coalesce(sum(case when status in ('PENDING', 'PARTIALLY_FILLED') and side = 'SELL' then quantity - filled_quantity else 0 end), 0) as reserved_sell_quantity,
+                  coalesce(sum(case when created_at >= ? then 1 else 0 end), 0) as today_order_count,
+                  coalesce(sum(case when created_at >= ? and status = 'FILLED' then 1 else 0 end), 0) as today_filled_order_count,
+                  coalesce(sum(case when created_at >= ? and status = 'CANCELLED' then 1 else 0 end), 0) as today_cancelled_order_count,
+                  coalesce(sum(case when created_at >= ? and status = 'REJECTED' then 1 else 0 end), 0) as today_rejected_order_count
+                from stock_order
+                where market_type = 'ORDER_BOOK'
+                """;
+        return jdbcTemplate.queryForObject(
+                sql,
+                (rs, rowNum) -> new AdminOrderFlowSummaryResponse(
+                        rs.getLong("open_order_count"),
+                        rs.getLong("open_buy_order_count"),
+                        rs.getLong("open_sell_order_count"),
+                        rs.getLong("partially_filled_order_count"),
+                        rs.getBigDecimal("reserved_buy_cash"),
+                        rs.getLong("reserved_sell_quantity"),
+                        rs.getLong("today_order_count"),
+                        rs.getLong("today_filled_order_count"),
+                        rs.getLong("today_cancelled_order_count"),
+                        rs.getLong("today_rejected_order_count")
+                ),
+                todayStart,
+                todayStart,
+                todayStart,
+                todayStart
+        );
+    }
+
+    private AdminCorporateActionFlowSummaryResponse loadAdminCorporateActionFlowSummary() {
+        LocalDateTime todayStart = LocalDate.now().atStartOfDay();
+        String sql = """
+                select
+                  coalesce(sum(case when status = 'ANNOUNCED' then 1 else 0 end), 0) as announced_count,
+                  coalesce(sum(case when status = 'EX_RIGHTS_APPLIED' then 1 else 0 end), 0) as ex_rights_applied_count,
+                  coalesce(sum(case when status = 'PAID' then 1 else 0 end), 0) as paid_count,
+                  coalesce(sum(case when status = 'LISTED' then 1 else 0 end), 0) as listed_count,
+                  coalesce(sum(case when status = 'DELISTED' then 1 else 0 end), 0) as delisted_count,
+                  coalesce(sum(case when status in ('ANNOUNCED', 'EX_RIGHTS_APPLIED') then 1 else 0 end), 0) as pending_count,
+                  coalesce(sum(case when created_at >= ? then 1 else 0 end), 0) as today_created_count
+                from stock_corporate_action
+                """;
+        return jdbcTemplate.queryForObject(
+                sql,
+                (rs, rowNum) -> new AdminCorporateActionFlowSummaryResponse(
+                        rs.getLong("announced_count"),
+                        rs.getLong("ex_rights_applied_count"),
+                        rs.getLong("paid_count"),
+                        rs.getLong("listed_count"),
+                        rs.getLong("delisted_count"),
+                        rs.getLong("pending_count"),
+                        rs.getLong("today_created_count")
+                ),
+                todayStart
+        );
+    }
+
+    private List<AdminSymbolFlowResponse> loadAdminSymbolFlows() {
+        String sql = """
+                select i.symbol,
+                       i.name,
+                       i.enabled,
+                       coalesce(m.market_status, 'CLOSED') as market_status,
+                       i.issued_shares,
+                       i.tradable_shares,
+                       coalesce(p.current_price, i.initial_price) as current_price,
+                       coalesce(p.previous_close, i.initial_price) as previous_close,
+                       coalesce(e.execution_count, 0) as execution_count,
+                       coalesce(e.execution_quantity, 0) as execution_quantity,
+                       coalesce(e.turnover_amount, 0) as turnover_amount,
+                       coalesce(e.buy_quantity, 0) as buy_quantity,
+                       coalesce(e.sell_quantity, 0) as sell_quantity,
+                       coalesce(e.buy_net_amount, 0) as buy_net_amount,
+                       coalesce(e.sell_net_amount, 0) as sell_net_amount,
+                       coalesce(o.open_order_count, 0) as open_order_count,
+                       coalesce(o.open_buy_order_count, 0) as open_buy_order_count,
+                       coalesce(o.open_sell_order_count, 0) as open_sell_order_count,
+                       coalesce(o.reserved_buy_cash, 0) as reserved_buy_cash,
+                       coalesce(h.holder_count, 0) as holder_count,
+                       coalesce(h.holding_quantity, 0) as holding_quantity,
+                       coalesce(c.pending_corporate_action_count, 0) as pending_corporate_action_count,
+                       e.last_executed_at
+                  from stock_order_book_instrument i
+                  left join stock_order_book_market_config m on m.symbol = i.symbol
+                  left join stock_price p on p.symbol = i.symbol
+                  left join (
+                       select symbol,
+                              count(*) as execution_count,
+                              sum(quantity) as execution_quantity,
+                              sum(gross_amount) as turnover_amount,
+                              sum(case when side = 'BUY' then quantity else 0 end) as buy_quantity,
+                              sum(case when side = 'SELL' then quantity else 0 end) as sell_quantity,
+                              sum(case when side = 'BUY' then net_amount else 0 end) as buy_net_amount,
+                              sum(case when side = 'SELL' then net_amount else 0 end) as sell_net_amount,
+                              max(executed_at) as last_executed_at
+                         from stock_execution
+                        where source = 'INTERNAL_ORDER_BOOK'
+                        group by symbol
+                  ) e on e.symbol = i.symbol
+                  left join (
+                       select symbol,
+                              count(*) as open_order_count,
+                              sum(case when side = 'BUY' then 1 else 0 end) as open_buy_order_count,
+                              sum(case when side = 'SELL' then 1 else 0 end) as open_sell_order_count,
+                              sum(case when side = 'BUY' then reserved_cash else 0 end) as reserved_buy_cash
+                         from stock_order
+                        where market_type = 'ORDER_BOOK'
+                          and status in ('PENDING', 'PARTIALLY_FILLED')
+                        group by symbol
+                  ) o on o.symbol = i.symbol
+                  left join (
+                       select h.symbol,
+                              count(distinct h.account_id) as holder_count,
+                              sum(h.quantity) as holding_quantity
+                         from stock_holding h
+                         join stock_account a on a.id = h.account_id and a.status = 'ACTIVE'
+                        group by h.symbol
+                  ) h on h.symbol = i.symbol
+                  left join (
+                       select symbol, count(*) as pending_corporate_action_count
+                         from stock_corporate_action
+                        where status in ('ANNOUNCED', 'EX_RIGHTS_APPLIED')
+                        group by symbol
+                  ) c on c.symbol = i.symbol
+                 order by coalesce(e.turnover_amount, 0) desc,
+                          coalesce(e.execution_count, 0) desc,
+                          i.symbol asc
+                """;
+        return jdbcTemplate.query(sql, (rs, rowNum) -> {
+            BigDecimal currentPrice = rs.getBigDecimal("current_price");
+            BigDecimal previousClose = rs.getBigDecimal("previous_close");
+            return new AdminSymbolFlowResponse(
+                    rs.getString("symbol"),
+                    rs.getString("name"),
+                    rs.getBoolean("enabled"),
+                    rs.getString("market_status"),
+                    rs.getLong("issued_shares"),
+                    rs.getLong("tradable_shares"),
+                    currentPrice,
+                    previousClose,
+                    calculateChangeRate(currentPrice, previousClose),
+                    rs.getLong("execution_count"),
+                    rs.getLong("execution_quantity"),
+                    rs.getBigDecimal("turnover_amount"),
+                    rs.getLong("buy_quantity"),
+                    rs.getLong("sell_quantity"),
+                    rs.getBigDecimal("buy_net_amount"),
+                    rs.getBigDecimal("sell_net_amount"),
+                    rs.getLong("open_order_count"),
+                    rs.getLong("open_buy_order_count"),
+                    rs.getLong("open_sell_order_count"),
+                    rs.getBigDecimal("reserved_buy_cash"),
+                    rs.getLong("holder_count"),
+                    rs.getLong("holding_quantity"),
+                    rs.getLong("pending_corporate_action_count"),
+                    rs.getTimestamp("last_executed_at") == null ? null : rs.getTimestamp("last_executed_at").toLocalDateTime()
+            );
+        });
+    }
+
+    private List<AdminRecentCashFlowResponse> loadAdminRecentCashFlows() {
+        String sql = """
+                select f.id,
+                       a.id as account_id,
+                       a.user_key,
+                       f.flow_type,
+                       f.amount,
+                       f.reason,
+                       f.created_by,
+                       f.created_at
+                  from stock_account_cash_flow f
+                  join stock_account a on a.id = f.account_id
+                 order by f.created_at desc, f.id desc
+                 limit 20
+                """;
+        return jdbcTemplate.query(sql, (rs, rowNum) -> new AdminRecentCashFlowResponse(
+                rs.getLong("id"),
+                rs.getLong("account_id"),
+                rs.getString("user_key"),
+                rs.getString("flow_type"),
+                rs.getBigDecimal("amount"),
+                rs.getString("reason"),
+                rs.getString("created_by"),
+                rs.getTimestamp("created_at").toLocalDateTime()
+        ));
+    }
+
     private BigDecimal toBigDecimal(Object value) {
         if (value instanceof BigDecimal decimal) {
             return decimal;
@@ -1402,6 +1693,15 @@ public class MarketService {
             return number.longValue();
         }
         return value == null ? 0L : Long.parseLong(value.toString());
+    }
+
+    private BigDecimal calculateChangeRate(BigDecimal currentPrice, BigDecimal previousClose) {
+        if (currentPrice == null || previousClose == null || previousClose.compareTo(BigDecimal.ZERO) <= 0) {
+            return BigDecimal.ZERO;
+        }
+        return currentPrice.subtract(previousClose)
+                .multiply(BigDecimal.valueOf(100))
+                .divide(previousClose, 4, RoundingMode.HALF_UP);
     }
 
     private void validateCorporateActionFieldScope(CorporateActionRequest request) {
@@ -1646,16 +1946,12 @@ public class MarketService {
         StockPrice price = stockPriceRepository.findById(instrument.getSymbol())
                 .orElseThrow(() -> StockException.notFound("Price not found: " + instrument.getSymbol()));
         BigDecimal basePrice = price.getCurrentPrice();
-        BigDecimal theoreticalExRightsPrice = basePrice.subtract(dividendAmount).setScale(2, RoundingMode.HALF_UP);
-        if (theoreticalExRightsPrice.compareTo(BigDecimal.ZERO) <= 0) {
-            throw StockException.badRequest("Cash dividend amount must be less than the current price");
-        }
 
         stockCorporateActionRepository.save(StockCorporateAction.cashDividend(
                 instrument.getSymbol(),
                 dividendAmount,
                 basePrice,
-                theoreticalExRightsPrice,
+                basePrice,
                 exRightsDate,
                 paymentDate,
                 normalizeNullableDescription(request.description())
@@ -2017,7 +2313,7 @@ public class MarketService {
         defaults.put(AutoParticipantProfileType.SWING_TRADER, profileDefaults(0.30, 0.45, 0.25, 0.25, 0.15, 0.00, 0.15, 0.12, 0.05, 0.20, 0.95, 1.05, 1.10, 1.05, 0.20, 0.15, 0.45, "0.00"));
         defaults.put(AutoParticipantProfileType.LONG_TERM_HOLDER, profileDefaults(0.20, 0.05, 0.20, 0.85, 0.00, 0.00, 0.00, 0.05, 0.00, 0.45, 0.45, 0.50, 2.50, 0.55, 0.95, 0.75, 0.05, "0.00"));
         defaults.put(AutoParticipantProfileType.PAYDAY_ACCUMULATOR, profileDefaults(0.20, 0.10, 0.15, 0.65, 0.05, 0.00, 0.00, 0.06, 0.00, 0.55, 0.90, 0.80, 2.00, 0.70, 0.90, 0.55, 0.05, "300000.00"));
-        defaults.put(AutoParticipantProfileType.DIVIDEND_REINVESTOR, profileDefaults(0.20, 0.08, 0.20, 0.70, 0.05, 0.00, 0.00, 0.05, 0.00, 0.50, 0.80, 0.75, 2.20, 0.65, 0.90, 0.65, 0.08, "120000.00"));
+        defaults.put(AutoParticipantProfileType.DIVIDEND_REINVESTOR, profileDefaults(0.20, 0.08, 0.20, 0.70, 0.05, 0.00, 0.00, 0.05, 0.00, 0.50, 0.80, 0.75, 2.20, 0.65, 0.90, 0.65, 0.08, "0.00"));
         defaults.put(AutoParticipantProfileType.LIMIT_DOWN_TRAPPED, profileDefaults(0.20, 0.00, 0.20, 1.00, 0.05, 0.00, 0.00, 0.08, 0.00, 0.25, 0.55, 0.55, 2.50, 0.50, 1.00, 1.00, 0.00, "0.00"));
         defaults.put(AutoParticipantProfileType.AVERAGE_DOWN_BUYER, profileDefaults(0.20, 0.00, 0.55, 0.80, 0.05, 0.00, 0.00, 0.08, 0.00, 0.95, 1.05, 0.90, 1.80, 1.20, 0.75, 0.35, 0.05, "0.00"));
         defaults.put(AutoParticipantProfileType.STOP_LOSS_TRADER, profileDefaults(0.25, 0.35, 0.00, 0.00, 0.20, 0.00, 0.05, 0.18, 0.80, 0.00, 1.20, 1.25, 0.55, 0.95, 0.00, 0.10, 0.65, "0.00"));

@@ -32,6 +32,7 @@ public class StockBatchAdminClient {
     private static final String INTERNAL_TOKEN_HEADER = "X-Internal-Token";
     private static final String CASH_FLOW_STATUS_PATH = "/internal/stock-batch/v1/jobs/auto-participant-cash-flow/status";
     private static final String CASH_FLOW_RUN_PATH = "/internal/stock-batch/v1/jobs/auto-participant-cash-flow/run";
+    private static final String MARKET_CLOSE_ROLLOVER_RUN_PATH = "/internal/stock-batch/v1/jobs/market-close/rollover";
     private static final String RUNTIME_CONTROLS_PATH = "/internal/stock-batch/v1/jobs/runtime-controls";
 
     private final RestClient restClient;
@@ -113,6 +114,38 @@ public class StockBatchAdminClient {
             throw batchGatewayException("월급 지급 배치를 실행하지 못했습니다.", ex);
         } catch (RestClientException ex) {
             throw batchGatewayException("월급 지급 배치를 실행하지 못했습니다.", ex);
+        }
+    }
+
+    public StockBatchJobRunResponse runMarketCloseRollover() {
+        try {
+            ResponseDataDTO<StockBatchJobRunResponse> response = restClient.post()
+                    .uri(MARKET_CLOSE_ROLLOVER_RUN_PATH)
+                    .headers(this::applyInternalHeaders)
+                    .retrieve()
+                    .body(new ParameterizedTypeReference<>() {
+                    });
+            return requireData(response);
+        } catch (RestClientResponseException ex) {
+            throw batchGatewayException("장마감 롤오버 배치를 실행하지 못했습니다.", ex);
+        } catch (RestClientException ex) {
+            throw batchGatewayException("장마감 롤오버 배치를 실행하지 못했습니다.", ex);
+        }
+    }
+
+    public StockBatchJobRunResponse runMarketCloseRollover(String symbol) {
+        try {
+            ResponseDataDTO<StockBatchJobRunResponse> response = restClient.post()
+                    .uri(MARKET_CLOSE_ROLLOVER_RUN_PATH + "/{symbol}", symbol)
+                    .headers(this::applyInternalHeaders)
+                    .retrieve()
+                    .body(new ParameterizedTypeReference<>() {
+                    });
+            return requireData(response);
+        } catch (RestClientResponseException ex) {
+            throw batchGatewayException("종목 장마감 롤오버 배치를 실행하지 못했습니다.", ex);
+        } catch (RestClientException ex) {
+            throw batchGatewayException("종목 장마감 롤오버 배치를 실행하지 못했습니다.", ex);
         }
     }
 

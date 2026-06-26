@@ -12,11 +12,13 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import stock.back.service.trading.biz.AccountService;
+import stock.back.service.trading.biz.TradingService;
 import stock.back.service.trading.vo.AccountCashAdjustmentRequest;
 import stock.back.service.trading.vo.AccountCashAdjustmentResponse;
 import stock.back.service.trading.vo.AccountReconnectRequest;
 import stock.back.service.trading.vo.AccountResponse;
 import stock.back.service.trading.vo.AccountStatusResponse;
+import stock.back.service.trading.vo.FundFlowResponse;
 import web.common.core.response.base.dto.ResponseDataDTO;
 
 @RestController
@@ -26,6 +28,7 @@ import web.common.core.response.base.dto.ResponseDataDTO;
 public class AccountController {
 
     private final AccountService accountService;
+    private final TradingService tradingService;
 
     @GetMapping("/me")
     public ResponseDataDTO<AccountResponse> getMyAccount(UserContext userContext) {
@@ -65,5 +68,11 @@ public class AccountController {
             UserContext userContext
     ) {
         return ResponseDataDTO.of(accountService.adjustUserAccountCash(userKey, request, userContext.getUserKey()));
+    }
+
+    @GetMapping("/admin/users/{userKey}/fund-flow")
+    @RequirePrincipalRole(anyOf = {UserRole.ADMIN})
+    public ResponseDataDTO<FundFlowResponse> getUserFundFlow(@PathVariable String userKey) {
+        return ResponseDataDTO.of(tradingService.getFundFlow(userKey));
     }
 }

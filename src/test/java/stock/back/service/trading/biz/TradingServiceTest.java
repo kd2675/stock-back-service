@@ -812,6 +812,37 @@ class TradingServiceTest {
         assertThat(stockAccountRepository.findByUserKey("user-profit-summary-empty")).isEmpty();
     }
 
+    @Test
+    void getFundFlow_splitsExternalCashDividendTradingAndValuation() {
+        insertAccount("user-fund-flow", "9750000.00", "10000000.00");
+        insertCashFlow("user-fund-flow", "500000.00", "ADMIN_DEPOSIT");
+        insertWithdrawCashFlow("user-fund-flow", "200000.00", "ADMIN_WITHDRAW");
+        insertCashFlow("user-fund-flow", "30000.00", "DIVIDEND_PAYMENT");
+        insertHolding("user-fund-flow", "005930", 2, 0, "70000.00");
+        insertExecution("user-fund-flow", "005930", "BUY", 2, "140000.00", "140.00", "0.00", "140140.00", null);
+        insertExecution("user-fund-flow", "005930", "SELL", 1, "80000.00", "80.00", "160.00", "79760.00", "9760.00");
+
+        var fundFlow = tradingService.getFundFlow("user-fund-flow");
+
+        assertThat(fundFlow.cashBalance()).isEqualByComparingTo(new BigDecimal("9750000.00"));
+        assertThat(fundFlow.marketValue()).isEqualByComparingTo(new BigDecimal("144800.00"));
+        assertThat(fundFlow.totalAsset()).isEqualByComparingTo(new BigDecimal("9894800.00"));
+        assertThat(fundFlow.externalDepositAmount()).isEqualByComparingTo(new BigDecimal("10500000.00"));
+        assertThat(fundFlow.externalWithdrawAmount()).isEqualByComparingTo(new BigDecimal("200000.00"));
+        assertThat(fundFlow.netExternalCashFlow()).isEqualByComparingTo(new BigDecimal("10300000.00"));
+        assertThat(fundFlow.dividendIncomeAmount()).isEqualByComparingTo(new BigDecimal("30000.00"));
+        assertThat(fundFlow.buyNetAmount()).isEqualByComparingTo(new BigDecimal("140140.00"));
+        assertThat(fundFlow.sellNetAmount()).isEqualByComparingTo(new BigDecimal("79760.00"));
+        assertThat(fundFlow.tradeNetCashFlow()).isEqualByComparingTo(new BigDecimal("-60380.00"));
+        assertThat(fundFlow.totalFeeAmount()).isEqualByComparingTo(new BigDecimal("220.00"));
+        assertThat(fundFlow.totalTaxAmount()).isEqualByComparingTo(new BigDecimal("160.00"));
+        assertThat(fundFlow.realizedProfit()).isEqualByComparingTo(new BigDecimal("9760.00"));
+        assertThat(fundFlow.unrealizedProfit()).isEqualByComparingTo(new BigDecimal("4800.00"));
+        assertThat(fundFlow.totalProfit()).isEqualByComparingTo(new BigDecimal("14560.00"));
+        assertThat(fundFlow.executionCount()).isEqualTo(2L);
+        assertThat(fundFlow.recentCashFlows()).hasSize(4);
+    }
+
     private void insertHolding(String userKey, String symbol, long quantity, long reservedQuantity, String averagePrice) {
         Long accountId = accountIdFor(userKey);
         jdbcTemplate.update(
@@ -911,6 +942,21 @@ class TradingServiceTest {
                 """
                 insert into stock_account_cash_flow(account_id, flow_type, amount, reason, created_by, created_at)
                 select id, 'DEPOSIT', ?, ?, 'SYSTEM', ?
+                from stock_account
+                where user_key = ?
+                """,
+                new BigDecimal(amount),
+                reason,
+                LocalDateTime.now(),
+                userKey
+        );
+    }
+
+    private void insertWithdrawCashFlow(String userKey, String amount, String reason) {
+        jdbcTemplate.update(
+                """
+                insert into stock_account_cash_flow(account_id, flow_type, amount, reason, created_by, created_at)
+                select id, 'WITHDRAW', ?, ?, 'SYSTEM', ?
                 from stock_account
                 where user_key = ?
                 """,
