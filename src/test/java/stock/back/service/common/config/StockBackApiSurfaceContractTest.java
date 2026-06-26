@@ -61,6 +61,7 @@ class StockBackApiSurfaceContractTest {
             "GET /api/stock/v1/markets/virtual-market",
             "GET /api/stock/v1/markets/order-book-market",
             "GET /api/stock/v1/markets/auto-market",
+            "GET /api/stock/v1/markets/admin/cash-flows",
             "GET /api/stock/v1/markets/admin/flow-overview",
             "GET /api/stock/v1/markets/auto-market/participants/overviews",
             "GET /api/stock/v1/markets/auto-market/cash-flow",

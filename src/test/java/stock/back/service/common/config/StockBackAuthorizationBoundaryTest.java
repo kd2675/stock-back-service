@@ -773,6 +773,41 @@ class StockBackAuthorizationBoundaryTest {
     }
 
     @Test
+    void getAdminCashFlows_adminPrincipalHeaders_isAllowed() throws Exception {
+        seedStockAccount("stock-admin-auth-cash-flow");
+        Long accountId = jdbcTemplate.queryForObject(
+                "select id from stock_account where user_key = ?",
+                Long.class,
+                "stock-admin-auth-cash-flow"
+        );
+        jdbcTemplate.update(
+                """
+                insert into stock_account_cash_flow(account_id, flow_type, amount, reason, created_by, created_at)
+                values (?, 'DEPOSIT', 500000.00, 'ADMIN_DEPOSIT', 'stock-admin-key', ?)
+                """,
+                accountId,
+                LocalDateTime.now()
+        );
+
+        mockMvc.perform(get("/api/stock/v1/markets/admin/cash-flows?page=0&size=10")
+                        .header("X-User-Key", "stock-admin-key")
+                        .header("X-User-Role", "ROLE_ADMIN"))
+                .andExpect(status().isOk())
+                .andExpect(content().string(containsString("\"content\"")))
+                .andExpect(content().string(containsString("\"totalElements\"")))
+                .andExpect(content().string(containsString("stock-admin-auth-cash-flow")));
+    }
+
+    @Test
+    void getAdminCashFlows_userPrincipalHeaders_returnsForbidden() throws Exception {
+        mockMvc.perform(get("/api/stock/v1/markets/admin/cash-flows")
+                        .header("X-User-Key", "stock-user-key")
+                        .header("X-User-Role", "ROLE_USER"))
+                .andExpect(status().isForbidden())
+                .andExpect(content().string(containsString("Required role: ADMIN")));
+    }
+
+    @Test
     void updateAutoParticipantSymbolConfig_userPrincipalHeaders_returnsForbidden() throws Exception {
         seedOrderBookInstrument("ZQAUTH06");
         seedAutoParticipant("stock-auto-auth-symbol");

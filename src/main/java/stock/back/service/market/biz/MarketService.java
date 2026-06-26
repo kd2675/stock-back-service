@@ -60,6 +60,7 @@ import stock.back.service.market.cache.StockPriceCacheService;
 import stock.back.service.market.vo.AutoMarketConfigResponse;
 import stock.back.service.market.vo.AutoMarketConfigUpdateRequest;
 import stock.back.service.market.vo.AutoMarketStatusResponse;
+import stock.back.service.market.vo.AdminCashFlowPageResponse;
 import stock.back.service.market.vo.AdminCorporateActionFlowSummaryResponse;
 import stock.back.service.market.vo.AdminFlowOverviewResponse;
 import stock.back.service.market.vo.AdminFundFlowSummaryResponse;
@@ -101,6 +102,8 @@ import stock.back.service.market.vo.VirtualMarketStatusResponse;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -706,6 +709,45 @@ public class MarketService {
                 loadAdminSymbolFlows(),
                 loadAdminRecentCashFlows(),
                 LocalDateTime.now()
+        );
+    }
+
+    @Transactional(readOnly = true)
+    public AdminCashFlowPageResponse getAdminCashFlows(int page, int size) {
+        int normalizedPage = Math.max(0, page);
+        int normalizedSize = Math.max(1, Math.min(100, size));
+        int offset = normalizedPage > Integer.MAX_VALUE / normalizedSize
+                ? Integer.MAX_VALUE
+                : normalizedPage * normalizedSize;
+        Long totalElements = jdbcTemplate.queryForObject("""
+                select count(*)
+                  from stock_account_cash_flow f
+                  join stock_account a on a.id = f.account_id
+                """, Long.class);
+        long total = totalElements == null ? 0L : totalElements;
+        int totalPages = total == 0L ? 0 : (int) Math.ceil((double) total / normalizedSize);
+        List<AdminRecentCashFlowResponse> content = jdbcTemplate.query("""
+                select f.id,
+                       a.id as account_id,
+                       a.user_key,
+                       f.flow_type,
+                       f.amount,
+                       f.reason,
+                       f.created_by,
+                       f.created_at
+                  from stock_account_cash_flow f
+                  join stock_account a on a.id = f.account_id
+                 order by f.created_at desc, f.id desc
+                 limit ? offset ?
+                """, (rs, rowNum) -> toAdminRecentCashFlowResponse(rs), normalizedSize, offset);
+        return new AdminCashFlowPageResponse(
+                content,
+                normalizedPage,
+                normalizedSize,
+                total,
+                totalPages,
+                normalizedPage > 0 && totalPages > 0,
+                normalizedPage + 1 < totalPages
         );
     }
 
@@ -1849,11 +1891,15 @@ public class MarketService {
                        f.created_by,
                        f.created_at
                   from stock_account_cash_flow f
-                  join stock_account a on a.id = f.account_id
+                 join stock_account a on a.id = f.account_id
                  order by f.created_at desc, f.id desc
                  limit 20
                 """;
-        return jdbcTemplate.query(sql, (rs, rowNum) -> new AdminRecentCashFlowResponse(
+        return jdbcTemplate.query(sql, (rs, rowNum) -> toAdminRecentCashFlowResponse(rs));
+    }
+
+    private AdminRecentCashFlowResponse toAdminRecentCashFlowResponse(ResultSet rs) throws SQLException {
+        return new AdminRecentCashFlowResponse(
                 rs.getLong("id"),
                 rs.getLong("account_id"),
                 rs.getString("user_key"),
@@ -1862,7 +1908,7 @@ public class MarketService {
                 rs.getString("reason"),
                 rs.getString("created_by"),
                 rs.getTimestamp("created_at").toLocalDateTime()
-        ));
+        );
     }
 
     private BigDecimal toBigDecimal(Object value) {

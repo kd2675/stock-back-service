@@ -13,6 +13,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import stock.back.service.common.exception.StockException;
@@ -24,6 +25,7 @@ import stock.back.service.market.stream.PriceStreamService;
 import stock.back.service.market.vo.AutoParticipantCashFlowControlRequest;
 import stock.back.service.market.vo.AutoParticipantCashFlowStatusResponse;
 import stock.back.service.market.vo.AutoMarketStatusResponse;
+import stock.back.service.market.vo.AdminCashFlowPageResponse;
 import stock.back.service.market.vo.AdminFlowOverviewResponse;
 import stock.back.service.market.vo.AutoMarketConfigResponse;
 import stock.back.service.market.vo.AutoMarketConfigUpdateRequest;
@@ -228,6 +230,15 @@ public class MarketController {
     @RequirePrincipalRole(anyOf = {UserRole.ADMIN})
     public ResponseDataDTO<AdminFlowOverviewResponse> getAdminFlowOverview() {
         return ResponseDataDTO.of(marketService.getAdminFlowOverview());
+    }
+
+    @GetMapping("/admin/cash-flows")
+    @RequirePrincipalRole(anyOf = {UserRole.ADMIN})
+    public ResponseDataDTO<AdminCashFlowPageResponse> getAdminCashFlows(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size
+    ) {
+        return ResponseDataDTO.of(marketService.getAdminCashFlows(page, size));
     }
 
     @GetMapping("/auto-market/participants/overviews")
