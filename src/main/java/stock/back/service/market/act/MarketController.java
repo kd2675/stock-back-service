@@ -51,6 +51,9 @@ import stock.back.service.market.vo.OrderBookInstrumentRequest;
 import stock.back.service.market.vo.OrderBookInstrumentResponse;
 import stock.back.service.market.vo.OrderBookMarketStatusResponse;
 import stock.back.service.market.vo.OrderBookResponse;
+import stock.back.service.market.vo.OrderBookCandleResponse;
+import stock.back.service.market.vo.OrderBookRecentExecutionResponse;
+import stock.back.service.market.vo.OrderBookTradeSummaryResponse;
 import stock.back.service.market.vo.PriceResponse;
 import stock.back.service.market.vo.PriceTickResponse;
 import stock.back.service.market.vo.RankingResponse;
@@ -181,6 +184,24 @@ public class MarketController {
     @GetMapping("/order-books/{symbol}")
     public ResponseDataDTO<OrderBookResponse> getOrderBook(@PathVariable String symbol) {
         return ResponseDataDTO.of(marketService.getOrderBook(symbol));
+    }
+
+    @GetMapping("/order-books/{symbol}/trade-summary")
+    public ResponseDataDTO<OrderBookTradeSummaryResponse> getOrderBookTradeSummary(@PathVariable String symbol) {
+        return ResponseDataDTO.of(marketService.getOrderBookTradeSummary(symbol));
+    }
+
+    @GetMapping("/order-books/{symbol}/executions/recent")
+    public ResponseDataDTO<List<OrderBookRecentExecutionResponse>> getRecentOrderBookExecutions(@PathVariable String symbol) {
+        return ResponseDataDTO.of(marketService.getRecentOrderBookExecutions(symbol));
+    }
+
+    @GetMapping("/order-books/{symbol}/candles/{interval}")
+    public ResponseDataDTO<List<OrderBookCandleResponse>> getOrderBookCandles(
+            @PathVariable String symbol,
+            @PathVariable String interval
+    ) {
+        return ResponseDataDTO.of(marketService.getOrderBookCandles(symbol, interval));
     }
 
     @GetMapping("/rankings")

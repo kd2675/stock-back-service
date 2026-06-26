@@ -90,6 +90,9 @@ import stock.back.service.market.vo.OrderBookInstrumentResponse;
 import stock.back.service.market.vo.OrderBookLevelResponse;
 import stock.back.service.market.vo.OrderBookMarketStatusResponse;
 import stock.back.service.market.vo.OrderBookResponse;
+import stock.back.service.market.vo.OrderBookCandleResponse;
+import stock.back.service.market.vo.OrderBookRecentExecutionResponse;
+import stock.back.service.market.vo.OrderBookTradeSummaryResponse;
 import stock.back.service.market.vo.PriceResponse;
 import stock.back.service.market.vo.PriceTickResponse;
 import stock.back.service.market.vo.RankingResponse;
@@ -98,6 +101,7 @@ import stock.back.service.market.vo.VirtualMarketStatusResponse;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.Arrays;
@@ -106,9 +110,10 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
 import java.util.stream.Collectors;
-import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.IntStream;
 
 @Service
 @RequiredArgsConstructor
@@ -463,13 +468,7 @@ public class MarketService {
 
     @Transactional(readOnly = true)
     public OrderBookResponse getOrderBook(String symbol) {
-        String normalizedSymbol = normalizeSymbol(symbol);
-        if (normalizedSymbol.isBlank()) {
-            throw StockException.badRequest("Symbol is required");
-        }
-        if (!stockOrderBookInstrumentRepository.existsBySymbolAndEnabledTrue(normalizedSymbol)) {
-            throw StockException.notFound("Unknown stock symbol: " + normalizedSymbol);
-        }
+        String normalizedSymbol = requireEnabledOrderBookSymbol(symbol);
         List<OrderStatus> openStatuses = List.of(OrderStatus.PENDING, OrderStatus.PARTIALLY_FILLED);
         var page = PageRequest.of(0, 10);
         List<OrderBookLevelResponse> bids = stockOrderRepository
@@ -483,6 +482,179 @@ public class MarketService {
                 .map(this::toOrderBookLevelResponse)
                 .toList();
         return new OrderBookResponse(normalizedSymbol, bids, asks);
+    }
+
+    @Transactional(readOnly = true)
+    public OrderBookTradeSummaryResponse getOrderBookTradeSummary(String symbol) {
+        String normalizedSymbol = requireEnabledOrderBookSymbol(symbol);
+        LocalDateTime todayStart = LocalDate.now().atStartOfDay();
+        String sql = """
+                select
+                  coalesce(count(*), 0) as today_execution_count,
+                  coalesce(sum(quantity), 0) as today_volume,
+                  coalesce(sum(gross_amount), 0) as today_turnover,
+                  coalesce(sum(case when side = 'BUY' then quantity else 0 end), 0) as buy_volume,
+                  coalesce(sum(case when side = 'SELL' then quantity else 0 end), 0) as sell_volume,
+                  coalesce(sum(case when side = 'BUY' then gross_amount else 0 end), 0) as buy_turnover,
+                  coalesce(sum(case when side = 'SELL' then gross_amount else 0 end), 0) as sell_turnover,
+                  min(price) as low_price,
+                  max(price) as high_price,
+                  (select e.price
+                     from stock_execution e
+                    where e.symbol = ?
+                      and e.source = 'INTERNAL_ORDER_BOOK'
+                    order by e.executed_at desc, e.id desc
+                    limit 1) as last_price,
+                  (select e.executed_at
+                     from stock_execution e
+                    where e.symbol = ?
+                      and e.source = 'INTERNAL_ORDER_BOOK'
+                    order by e.executed_at desc, e.id desc
+                    limit 1) as last_executed_at
+                from stock_execution
+                where symbol = ?
+                  and source = 'INTERNAL_ORDER_BOOK'
+                  and executed_at >= ?
+                """;
+        return jdbcTemplate.queryForObject(sql, (rs, rowNum) -> {
+            long todayVolume = rs.getLong("today_volume");
+            long sellVolume = rs.getLong("sell_volume");
+            BigDecimal todayTurnover = nullToZero(rs.getBigDecimal("today_turnover"));
+            BigDecimal vwap = todayVolume <= 0
+                    ? BigDecimal.ZERO
+                    : todayTurnover.divide(BigDecimal.valueOf(todayVolume), 4, RoundingMode.HALF_UP);
+            BigDecimal executionStrength = sellVolume <= 0
+                    ? BigDecimal.ZERO
+                    : BigDecimal.valueOf(rs.getLong("buy_volume"))
+                    .multiply(BigDecimal.valueOf(100))
+                    .divide(BigDecimal.valueOf(sellVolume), 2, RoundingMode.HALF_UP);
+            return new OrderBookTradeSummaryResponse(
+                    normalizedSymbol,
+                    rs.getLong("today_execution_count"),
+                    todayVolume,
+                    todayTurnover,
+                    vwap,
+                    nullToZero(rs.getBigDecimal("high_price")),
+                    nullToZero(rs.getBigDecimal("low_price")),
+                    rs.getLong("buy_volume"),
+                    sellVolume,
+                    nullToZero(rs.getBigDecimal("buy_turnover")),
+                    nullToZero(rs.getBigDecimal("sell_turnover")),
+                    executionStrength,
+                    nullToZero(rs.getBigDecimal("last_price")),
+                    rs.getTimestamp("last_executed_at") == null ? null : rs.getTimestamp("last_executed_at").toLocalDateTime()
+            );
+        }, normalizedSymbol, normalizedSymbol, normalizedSymbol, todayStart);
+    }
+
+    @Transactional(readOnly = true)
+    public List<OrderBookRecentExecutionResponse> getRecentOrderBookExecutions(String symbol) {
+        String normalizedSymbol = requireEnabledOrderBookSymbol(symbol);
+        String sql = """
+                select id,
+                       symbol,
+                       side,
+                       quantity,
+                       price,
+                       gross_amount,
+                       executed_at
+                  from stock_execution
+                 where symbol = ?
+                   and source = 'INTERNAL_ORDER_BOOK'
+                 order by executed_at desc, id desc
+                 limit 30
+                """;
+        List<RecentExecutionRow> rows = jdbcTemplate.query(sql, (rs, rowNum) -> new RecentExecutionRow(
+                rs.getLong("id"),
+                rs.getString("symbol"),
+                OrderSide.valueOf(rs.getString("side")),
+                rs.getLong("quantity"),
+                rs.getBigDecimal("price"),
+                rs.getBigDecimal("gross_amount"),
+                rs.getTimestamp("executed_at").toLocalDateTime()
+        ), normalizedSymbol);
+        return IntStream.range(0, rows.size())
+                .mapToObj(index -> {
+                    RecentExecutionRow row = rows.get(index);
+                    BigDecimal previousPrice = index + 1 < rows.size() ? rows.get(index + 1).price() : null;
+                    BigDecimal priceChange = previousPrice == null ? BigDecimal.ZERO : row.price().subtract(previousPrice);
+                    return new OrderBookRecentExecutionResponse(
+                            row.id(),
+                            row.symbol(),
+                            row.side(),
+                            row.quantity(),
+                            row.price(),
+                            row.grossAmount(),
+                            priceChange,
+                            row.executedAt()
+                    );
+                })
+                .toList();
+    }
+
+    @Transactional(readOnly = true)
+    public List<OrderBookCandleResponse> getOrderBookCandles(String symbol, String interval) {
+        String normalizedSymbol = requireEnabledOrderBookSymbol(symbol);
+        CandleInterval candleInterval = CandleInterval.parse(interval);
+        LocalDateTime from = LocalDateTime.now().minus(candleInterval.lookback());
+        String priceBucket = candleInterval.bucketExpression("price_time");
+        String executionBucket = candleInterval.bucketExpression("executed_at");
+        String sql = """
+                select *
+                from (
+                    select p.bucket_start,
+                           p.open_price,
+                           p.high_price,
+                           p.low_price,
+                           p.close_price,
+                           coalesce(e.volume, 0) as volume,
+                           coalesce(e.turnover, 0) as turnover,
+                           coalesce(e.execution_count, 0) as execution_count
+                    from (
+                        select bucket_start,
+                               max(case when open_rank = 1 then price end) as open_price,
+                               max(price) as high_price,
+                               min(price) as low_price,
+                               max(case when close_rank = 1 then price end) as close_price
+                        from (
+                            select %s as bucket_start,
+                                   price,
+                                   row_number() over(partition by %s order by price_time asc, id asc) as open_rank,
+                                   row_number() over(partition by %s order by price_time desc, id desc) as close_rank
+                              from stock_price_tick
+                             where symbol = ?
+                               and price_time >= ?
+                        ) ranked_price
+                        group by bucket_start
+                    ) p
+                    left join (
+                        select %s as bucket_start,
+                               sum(quantity) as volume,
+                               sum(gross_amount) as turnover,
+                               count(*) as execution_count
+                          from stock_execution
+                         where symbol = ?
+                           and source = 'INTERNAL_ORDER_BOOK'
+                           and executed_at >= ?
+                         group by bucket_start
+                    ) e on e.bucket_start = p.bucket_start
+                    order by p.bucket_start desc
+                    limit ?
+                ) recent_candles
+                order by bucket_start asc
+                """.formatted(priceBucket, priceBucket, priceBucket, executionBucket);
+        return jdbcTemplate.query(sql, (rs, rowNum) -> new OrderBookCandleResponse(
+                normalizedSymbol,
+                candleInterval.value(),
+                rs.getTimestamp("bucket_start").toLocalDateTime(),
+                rs.getBigDecimal("open_price"),
+                rs.getBigDecimal("high_price"),
+                rs.getBigDecimal("low_price"),
+                rs.getBigDecimal("close_price"),
+                rs.getLong("volume"),
+                nullToZero(rs.getBigDecimal("turnover")),
+                rs.getLong("execution_count")
+        ), normalizedSymbol, from, normalizedSymbol, from, candleInterval.limit());
     }
 
     @Transactional(readOnly = true)
@@ -1317,6 +1489,21 @@ public class MarketService {
             throw StockException.notFound("Unknown order book symbol: " + normalizedSymbol);
         }
         return normalizedSymbol;
+    }
+
+    private String requireEnabledOrderBookSymbol(String symbol) {
+        String normalizedSymbol = normalizeSymbol(symbol);
+        if (normalizedSymbol.isBlank()) {
+            throw StockException.badRequest("Symbol is required");
+        }
+        if (!stockOrderBookInstrumentRepository.existsBySymbolAndEnabledTrue(normalizedSymbol)) {
+            throw StockException.notFound("Unknown stock symbol: " + normalizedSymbol);
+        }
+        return normalizedSymbol;
+    }
+
+    private BigDecimal nullToZero(BigDecimal value) {
+        return value == null ? BigDecimal.ZERO : value;
     }
 
     private void validateInstrumentReportRequest(InstrumentReportRequest request) {
@@ -2628,5 +2815,68 @@ public class MarketService {
                 level.getQuantity() == null ? 0L : level.getQuantity(),
                 level.getOrderCount() == null ? 0L : level.getOrderCount()
         );
+    }
+
+    private record RecentExecutionRow(
+            Long id,
+            String symbol,
+            OrderSide side,
+            long quantity,
+            BigDecimal price,
+            BigDecimal grossAmount,
+            LocalDateTime executedAt
+    ) {
+    }
+
+    private enum CandleInterval {
+        ONE_MINUTE("1M", Duration.ofHours(6), 120),
+        FIVE_MINUTES("5M", Duration.ofHours(24), 120),
+        FIFTEEN_MINUTES("15M", Duration.ofDays(3), 120),
+        DAY("1D", Duration.ofDays(180), 120),
+        WEEK("1W", Duration.ofDays(730), 120);
+
+        private final String value;
+        private final Duration lookback;
+        private final int limit;
+
+        CandleInterval(String value, Duration lookback, int limit) {
+            this.value = value;
+            this.lookback = lookback;
+            this.limit = limit;
+        }
+
+        static CandleInterval parse(String value) {
+            String normalized = value == null ? "" : value.trim().toUpperCase(Locale.ROOT);
+            return switch (normalized) {
+                case "1M", "1MIN", "1MINUTE" -> ONE_MINUTE;
+                case "5M", "5MIN", "5MINUTE" -> FIVE_MINUTES;
+                case "15M", "15MIN", "15MINUTE" -> FIFTEEN_MINUTES;
+                case "1D", "D", "DAY" -> DAY;
+                case "1W", "W", "WEEK" -> WEEK;
+                default -> throw StockException.badRequest("Unknown candle interval: " + value);
+            };
+        }
+
+        String bucketExpression(String column) {
+            return switch (this) {
+                case ONE_MINUTE -> "timestamp(date(" + column + "), maketime(hour(" + column + "), minute(" + column + "), 0))";
+                case FIVE_MINUTES -> "timestamp(date(" + column + "), maketime(hour(" + column + "), floor(minute(" + column + ") / 5) * 5, 0))";
+                case FIFTEEN_MINUTES -> "timestamp(date(" + column + "), maketime(hour(" + column + "), floor(minute(" + column + ") / 15) * 15, 0))";
+                case DAY -> "date(" + column + ")";
+                case WEEK -> "date_sub(date(" + column + "), interval weekday(" + column + ") day)";
+            };
+        }
+
+        String value() {
+            return value;
+        }
+
+        Duration lookback() {
+            return lookback;
+        }
+
+        int limit() {
+            return limit;
+        }
     }
 }
