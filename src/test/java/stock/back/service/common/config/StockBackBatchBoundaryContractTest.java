@@ -14,8 +14,14 @@ class StockBackBatchBoundaryContractTest {
 
     private static final Path MAIN_JAVA_ROOT = Path.of("src/main/java");
     private static final Path APPLICATION_YML = Path.of("src/main/resources/application.yml");
+    private static final Path LOCAL_APPLICATION_YML = Path.of("src/main/resources/application-local.yml");
     private static final Path DEV_APPLICATION_YML = Path.of("src/main/resources/application-dev.yml");
     private static final Path PROD_APPLICATION_YML = Path.of("src/main/resources/application-prod.yml");
+    private static final List<String> REQUIRED_MYSQL_JDBC_OPTIONS = List.of(
+            "connectTimeout=5000",
+            "socketTimeout=30000",
+            "tcpKeepAlive=true"
+    );
     private static final List<String> FORBIDDEN_BATCH_IMPLEMENTATION_MARKERS = List.of(
             "import stock.batch.service.",
             "stock.batch.service."
@@ -88,11 +94,35 @@ class StockBackBatchBoundaryContractTest {
         assertThat(stockBatchAdminClient).doesNotContain("@Value(\"${stock.batch-client.base-url:http://localhost:30481}\")");
     }
 
+    @Test
+    void mysqlJdbcUrls_defineTimeoutAndKeepAliveOptions() throws IOException {
+        for (Path configPath : List.of(LOCAL_APPLICATION_YML, DEV_APPLICATION_YML, PROD_APPLICATION_YML)) {
+            assertMysqlJdbcUrlOptions(configPath);
+        }
+    }
+
     private void assertRequiresExplicitStockBatchHttpBoundaryConfiguration(String config) {
         assertThat(config).contains("base-url: ${STOCK_BATCH_API_BASE_URL}");
         assertThat(config).contains("internal-token: ${STOCK_BATCH_INTERNAL_TOKEN}");
         assertThat(config).doesNotContain("base-url: ${STOCK_BATCH_API_BASE_URL:");
         assertThat(config).doesNotContain("internal-token: ${STOCK_BATCH_INTERNAL_TOKEN:");
+    }
+
+    private void assertMysqlJdbcUrlOptions(Path configPath) throws IOException {
+        List<String> mysqlUrlLines = Files.readAllLines(configPath, StandardCharsets.UTF_8).stream()
+                .map(String::trim)
+                .filter(line -> line.startsWith("url:"))
+                .filter(line -> line.contains("jdbc:mysql")
+                        || line.contains("STOCK_DB_URL")
+                        || line.contains("STOCK_DB_SLAVE_URL"))
+                .toList();
+
+        assertThat(mysqlUrlLines).as(configPath.toString()).isNotEmpty();
+        for (String mysqlUrlLine : mysqlUrlLines) {
+            assertThat(mysqlUrlLine)
+                    .as(configPath + " " + mysqlUrlLine)
+                    .contains(REQUIRED_MYSQL_JDBC_OPTIONS.toArray(String[]::new));
+        }
     }
 
     private List<Path> filesContaining(List<String> markers) throws IOException {

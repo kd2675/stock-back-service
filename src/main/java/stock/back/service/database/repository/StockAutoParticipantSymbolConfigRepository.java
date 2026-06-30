@@ -8,4 +8,6 @@ import stock.back.service.database.entity.StockAutoParticipantSymbolConfigId;
 
 public interface StockAutoParticipantSymbolConfigRepository extends JpaRepository<StockAutoParticipantSymbolConfig, StockAutoParticipantSymbolConfigId> {
     List<StockAutoParticipantSymbolConfig> findAllByOrderByUserKeyAscSymbolAsc();
+
+    List<StockAutoParticipantSymbolConfig> findByUserKeyInOrderByUserKeyAscSymbolAsc(List<String> userKeys);
 }

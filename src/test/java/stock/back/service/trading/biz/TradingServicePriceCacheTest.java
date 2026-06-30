@@ -12,6 +12,7 @@ import stock.back.service.database.entity.OrderType;
 import stock.back.service.database.entity.StockAccount;
 import stock.back.service.database.entity.StockHolding;
 import stock.back.service.database.entity.StockOrder;
+import stock.back.service.database.entity.StockPrice;
 import stock.back.service.database.entity.StockVirtualMarketConfig;
 import stock.back.service.database.repository.PortfolioSnapshotRepository;
 import stock.back.service.database.repository.StockAccountCashFlowRepository;
@@ -30,6 +31,7 @@ import stock.back.service.trading.vo.OrderRequest;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -83,6 +85,16 @@ class TradingServicePriceCacheTest {
 
     @BeforeEach
     void setUp() {
+        TradingQueryService tradingQueryService = new TradingQueryService(
+                accountService,
+                stockOrderRepository,
+                stockHoldingRepository,
+                stockExecutionRepository,
+                stockAccountCashFlowRepository,
+                portfolioSnapshotRepository,
+                stockPriceRepository,
+                stockPriceCacheService
+        );
         tradingService = new TradingService(
                 accountService,
                 stockInstrumentRepository,
@@ -92,10 +104,8 @@ class TradingServicePriceCacheTest {
                 stockPriceRepository,
                 stockOrderRepository,
                 stockHoldingRepository,
-                stockExecutionRepository,
-                stockAccountCashFlowRepository,
-                portfolioSnapshotRepository,
-                stockPriceCacheService
+                stockPriceCacheService,
+                tradingQueryService
         );
     }
 
@@ -140,8 +150,8 @@ class TradingServicePriceCacheTest {
                 anyList()
         )).thenReturn(0L);
         when(accountService.getNetCashFlow(102L)).thenReturn(new BigDecimal("10000000.00"));
-        when(stockPriceCacheService.getCachedPrice("005930"))
-                .thenReturn(Optional.of(new CachedStockPrice(new BigDecimal("75000.00"), "redis-cache")));
+        when(stockPriceCacheService.getCachedPrices(List.of("005930")))
+                .thenReturn(Map.of("005930", new CachedStockPrice(new BigDecimal("75000.00"), "redis-cache")));
 
         var portfolio = tradingService.getPortfolio("cache-portfolio-user");
 
@@ -150,6 +160,29 @@ class TradingServicePriceCacheTest {
         assertThat(portfolio.holdings().get(0).marketValue()).isEqualByComparingTo(new BigDecimal("150000.00"));
         assertThat(portfolio.totalAsset()).isEqualByComparingTo(new BigDecimal("10150000.00"));
         verify(stockPriceRepository, never()).findById("005930");
+    }
+
+    @Test
+    void getHoldings_withoutCachedPrices_loadsPricesInSingleBatch() {
+        StockAccount account = StockAccount.open("batch-holding-user");
+        ReflectionTestUtils.setField(account, "id", 103L);
+        StockHolding first = holding(103L, "005930", 2, 0, "60000.00");
+        StockHolding second = holding(103L, "000660", 3, 0, "100000.00");
+        when(accountService.findAccount("batch-holding-user")).thenReturn(Optional.of(account));
+        when(stockHoldingRepository.findByAccountIdOrderBySymbolAsc(103L)).thenReturn(List.of(first, second));
+        when(stockPriceCacheService.getCachedPrices(List.of("005930", "000660"))).thenReturn(Map.of());
+        when(stockPriceRepository.findAllById(any())).thenReturn(List.of(
+                StockPrice.initial("005930", new BigDecimal("75000.00")),
+                StockPrice.initial("000660", new BigDecimal("120000.00"))
+        ));
+
+        var holdings = tradingService.getHoldings("batch-holding-user");
+
+        assertThat(holdings).hasSize(2);
+        assertThat(holdings.get(0).currentPrice()).isEqualByComparingTo(new BigDecimal("75000.00"));
+        assertThat(holdings.get(1).currentPrice()).isEqualByComparingTo(new BigDecimal("120000.00"));
+        verify(stockPriceRepository).findAllById(any());
+        verify(stockPriceRepository, never()).findById(any());
     }
 
     private StockHolding holding(Long accountId, String symbol, long quantity, long reservedQuantity, String averagePrice) {

@@ -8,5 +8,9 @@ import java.util.List;
 public interface StockAutoParticipantRepository extends JpaRepository<StockAutoParticipant, String> {
     List<StockAutoParticipant> findByWithdrawnAtIsNullOrderByUserKeyAsc();
 
+    List<StockAutoParticipant> findByUserKeyInAndWithdrawnAtIsNull(List<String> userKeys);
+
+    long countByWithdrawnAtIsNull();
+
     long countByEnabledTrueAndWithdrawnAtIsNull();
 }

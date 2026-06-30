@@ -475,6 +475,52 @@ class StockBackAuthorizationBoundaryTest {
                 .andExpect(content().string(containsString("Required role: ADMIN")));
     }
 
+    @Test
+    void getAutoParticipantProfileOverviews_userPrincipalHeaders_returnsForbidden() throws Exception {
+        mockMvc.perform(get("/api/stock/v1/markets/auto-market/participants/profile-overviews")
+                        .header("X-User-Key", "stock-user-key")
+                        .header("X-User-Role", "ROLE_USER"))
+                .andExpect(status().isForbidden())
+                .andExpect(content().string(containsString("Required role: ADMIN")));
+    }
+
+    @Test
+    void getAutoParticipantHoldings_adminPrincipalHeaders_isAllowed() throws Exception {
+        seedOrderBookInstrument("ZQAUTH08");
+        seedAutoParticipant("stock-auto-auth-holding");
+        seedStockAccount("stock-auto-auth-holding");
+        Long accountId = jdbcTemplate.queryForObject(
+                "select id from stock_account where user_key = ?",
+                Long.class,
+                "stock-auto-auth-holding"
+        );
+        jdbcTemplate.update(
+                """
+                insert into stock_holding(account_id, symbol, quantity, reserved_quantity, average_price, updated_at)
+                values (?, 'ZQAUTH08', 10, 2, 70000.00, ?)
+                """,
+                accountId,
+                LocalDateTime.now()
+        );
+
+        mockMvc.perform(get("/api/stock/v1/markets/auto-market/participants/holdings?userKeys=stock-auto-auth-holding")
+                        .header("X-User-Key", "stock-admin-key")
+                        .header("X-User-Role", "ROLE_ADMIN"))
+                .andExpect(status().isOk())
+                .andExpect(content().string(containsString("\"userKey\":\"stock-auto-auth-holding\"")))
+                .andExpect(content().string(containsString("\"symbol\":\"ZQAUTH08\"")))
+                .andExpect(content().string(containsString("\"quantity\":10")));
+    }
+
+    @Test
+    void getAutoParticipantHoldings_userPrincipalHeaders_returnsForbidden() throws Exception {
+        mockMvc.perform(get("/api/stock/v1/markets/auto-market/participants/holdings?userKeys=stock-auto-auth-holding")
+                        .header("X-User-Key", "stock-user-key")
+                        .header("X-User-Role", "ROLE_USER"))
+                .andExpect(status().isForbidden())
+                .andExpect(content().string(containsString("Required role: ADMIN")));
+    }
+
     @ParameterizedTest
     @ValueSource(strings = {
             "GET /api/stock/v1/markets/auto-market/cash-flow",
@@ -608,6 +654,36 @@ class StockBackAuthorizationBoundaryTest {
                 .andExpect(content().string(containsString("\"netCashFlow\":10000000.00")))
                 .andExpect(content().string(containsString("\"totalProfit\":0.00")))
                 .andExpect(content().string(containsString("\"returnRate\":0")));
+    }
+
+    @Test
+    void getAutoParticipantProfileOverviews_adminPrincipalHeaders_isAllowed() throws Exception {
+        seedAutoParticipant("stock-auto-auth-profile-overview");
+        seedStockAccount("stock-auto-auth-profile-overview");
+        Long accountId = jdbcTemplate.queryForObject(
+                "select id from stock_account where user_key = ?",
+                Long.class,
+                "stock-auto-auth-profile-overview"
+        );
+        jdbcTemplate.update(
+                """
+                insert into stock_account_cash_flow(account_id, flow_type, amount, reason, created_by, created_at)
+                values (?, 'DEPOSIT', 10000000.00, 'OPENING_GRANT', 'SYSTEM', ?)
+                """,
+                accountId,
+                LocalDateTime.now()
+        );
+
+        mockMvc.perform(get("/api/stock/v1/markets/auto-market/participants/profile-overviews")
+                        .header("X-User-Key", "stock-admin-key")
+                        .header("X-User-Role", "ROLE_ADMIN"))
+                .andExpect(status().isOk())
+                .andExpect(content().string(containsString("\"success\":true")))
+                .andExpect(content().string(containsString("\"profileType\":\"NOISE_TRADER\"")))
+                .andExpect(content().string(containsString("\"totalCount\":1")))
+                .andExpect(content().string(containsString("\"availableCash\":10000000.00")))
+                .andExpect(content().string(containsString("\"estimatedTotalAsset\":10000000.00")))
+                .andExpect(content().string(containsString("\"netCashFlow\":10000000.00")));
     }
 
     @Test
@@ -764,8 +840,68 @@ class StockBackAuthorizationBoundaryTest {
     }
 
     @Test
+    void getAdminFlowOverview_withoutFundFlow_adminPrincipalHeaders_isAllowed() throws Exception {
+        mockMvc.perform(get("/api/stock/v1/markets/admin/flow-overview?includeFundFlow=false")
+                        .header("X-User-Key", "stock-admin-key")
+                        .header("X-User-Role", "ROLE_ADMIN"))
+                .andExpect(status().isOk())
+                .andExpect(content().string(containsString("\"fundFlow\":null")))
+                .andExpect(content().string(containsString("\"symbolFlows\"")))
+                .andExpect(content().string(containsString("\"recentCashFlows\"")));
+    }
+
+    @Test
+    void getAdminFlowOverview_withoutSymbolFlows_adminPrincipalHeaders_isAllowed() throws Exception {
+        mockMvc.perform(get("/api/stock/v1/markets/admin/flow-overview?includeSymbolFlows=false")
+                        .header("X-User-Key", "stock-admin-key")
+                        .header("X-User-Role", "ROLE_ADMIN"))
+                .andExpect(status().isOk())
+                .andExpect(content().string(containsString("\"symbolFlowTotalCount\"")))
+                .andExpect(content().string(containsString("\"symbolFlows\":[]")))
+                .andExpect(content().string(containsString("\"recentCashFlows\"")));
+    }
+
+    @Test
     void getAdminFlowOverview_userPrincipalHeaders_returnsForbidden() throws Exception {
         mockMvc.perform(get("/api/stock/v1/markets/admin/flow-overview")
+                        .header("X-User-Key", "stock-user-key")
+                        .header("X-User-Role", "ROLE_USER"))
+                .andExpect(status().isForbidden())
+                .andExpect(content().string(containsString("Required role: ADMIN")));
+    }
+
+    @Test
+    void getAdminFundFlowSummary_adminPrincipalHeaders_isAllowed() throws Exception {
+        mockMvc.perform(get("/api/stock/v1/markets/admin/fund-flow-summary")
+                        .header("X-User-Key", "stock-admin-key")
+                        .header("X-User-Role", "ROLE_ADMIN"))
+                .andExpect(status().isOk())
+                .andExpect(content().string(containsString("\"activeAccountCount\"")))
+                .andExpect(content().string(containsString("\"totalAsset\"")));
+    }
+
+    @Test
+    void getAdminFundFlowSummary_userPrincipalHeaders_returnsForbidden() throws Exception {
+        mockMvc.perform(get("/api/stock/v1/markets/admin/fund-flow-summary")
+                        .header("X-User-Key", "stock-user-key")
+                        .header("X-User-Role", "ROLE_USER"))
+                .andExpect(status().isForbidden())
+                .andExpect(content().string(containsString("Required role: ADMIN")));
+    }
+
+    @Test
+    void getAdminSymbolFlows_adminPrincipalHeaders_isAllowed() throws Exception {
+        mockMvc.perform(get("/api/stock/v1/markets/admin/symbol-flows?limit=8")
+                        .header("X-User-Key", "stock-admin-key")
+                        .header("X-User-Role", "ROLE_ADMIN"))
+                .andExpect(status().isOk())
+                .andExpect(content().string(containsString("\"totalCount\"")))
+                .andExpect(content().string(containsString("\"symbolFlows\"")));
+    }
+
+    @Test
+    void getAdminSymbolFlows_userPrincipalHeaders_returnsForbidden() throws Exception {
+        mockMvc.perform(get("/api/stock/v1/markets/admin/symbol-flows")
                         .header("X-User-Key", "stock-user-key")
                         .header("X-User-Role", "ROLE_USER"))
                 .andExpect(status().isForbidden())

@@ -14,7 +14,7 @@ database:
   datasource:
     pub:
       master:
-        url: ${STOCK_DB_URL}
+        url: "${STOCK_DB_URL}?zeroDateTimeBehavior=convertToNull&useLegacyDatetimeCode=false&serverTimezone=Asia/Seoul&noAccessToProcedureBodies=true&useSSL=false&allowPublicKeyRetrieval=true&connectTimeout=5000&socketTimeout=30000&tcpKeepAlive=true"
         username: ${STOCK_DB_USERNAME}
         password: ${STOCK_DB_PASSWORD}
         driver-class-name: com.mysql.cj.jdbc.Driver
@@ -24,7 +24,7 @@ database:
           max-lifetime: ${STOCK_DB_MAX_LIFETIME:540000}
           keepalive-time: ${STOCK_DB_KEEPALIVE_TIME:300000}
       slave1:
-        url: ${STOCK_DB_SLAVE_URL:${STOCK_DB_URL}}
+        url: "${STOCK_DB_SLAVE_URL:${STOCK_DB_URL}}?zeroDateTimeBehavior=convertToNull&useLegacyDatetimeCode=false&serverTimezone=Asia/Seoul&noAccessToProcedureBodies=true&useSSL=false&allowPublicKeyRetrieval=true&connectTimeout=5000&socketTimeout=30000&tcpKeepAlive=true"
         username: ${STOCK_DB_SLAVE_USERNAME:${STOCK_DB_USERNAME}}
         password: ${STOCK_DB_SLAVE_PASSWORD:${STOCK_DB_PASSWORD}}
         driver-class-name: com.mysql.cj.jdbc.Driver

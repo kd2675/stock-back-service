@@ -77,6 +77,24 @@ class StockMysqlDdlContractTest {
             "stock_batch_job_lock"
     );
 
+    private static final List<String> ADMIN_QUERY_INDEX_MARKERS = List.of(
+            "idx_stock_account_status_id",
+            "idx_stock_account_cash_flow_account_reason_creator_time",
+            "idx_stock_account_cash_flow_time",
+            "idx_stock_order_market_status_side",
+            "idx_stock_order_market_account_time",
+            "idx_stock_order_market_created_status",
+            "idx_stock_execution_time_account",
+            "idx_stock_execution_source_account_time",
+            "idx_stock_execution_source_symbol_time",
+            "idx_stock_execution_source_time",
+            "idx_stock_holding_symbol_account",
+            "idx_stock_auto_participant_active",
+            "idx_stock_auto_participant_profile_active",
+            "idx_stock_auto_participant_symbol_lookup",
+            "idx_stock_corporate_action_status_symbol"
+    );
+
     private static final List<String> MARKET_CLOSE_SNAPSHOT_TABLE_MARKERS = List.of(
             "stock_market_close_run",
             "stock_holding_snapshot",
@@ -89,6 +107,7 @@ class StockMysqlDdlContractTest {
 
         assertThat(ddl).contains("KEY idx_stock_price_tick_symbol_time (symbol, price_time)");
         assertThat(ddl).contains("KEY idx_stock_order_order_book_match (symbol, side, order_type, status, limit_price, created_at)");
+        assertThat(ddl).contains(ADMIN_QUERY_INDEX_MARKERS.toArray(String[]::new));
         assertThat(ddl).contains(BATCH_OPERATION_TABLE_MARKERS.toArray(String[]::new));
         assertThat(ddl).contains(MARKET_CLOSE_SNAPSHOT_TABLE_MARKERS.toArray(String[]::new));
         assertThat(ddl).doesNotContain(
@@ -131,6 +150,16 @@ class StockMysqlDdlContractTest {
 
             assertThat(firstExecutableSqlLine(ddl)).as(alterFile.toString()).isEqualTo("USE STOCK_SERVICE;");
         }
+    }
+
+    @Test
+    void adminQueryPerformanceAlterDdl_matchesInitialSchemaIndexNames() throws IOException {
+        String alterDdl = Files.readString(
+                Path.of("src/main/resources/db/ddl/stock_admin_query_performance_indexes_alter.sql"),
+                StandardCharsets.UTF_8
+        );
+
+        assertThat(alterDdl).contains(ADMIN_QUERY_INDEX_MARKERS.toArray(String[]::new));
     }
 
     @Test

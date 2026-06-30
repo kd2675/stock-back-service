@@ -9,6 +9,8 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
 
 import java.math.BigDecimal;
+import java.util.Arrays;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -78,5 +80,38 @@ class StockPriceCacheServiceTest {
         var cachedPrice = stockPriceCacheService.getCachedPrice("005930");
 
         assertThat(cachedPrice).isEmpty();
+    }
+
+    @Test
+    void getCachedPrices_validRedisValues_returnsCachedPricesByNormalizedSymbol() {
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        when(valueOperations.multiGet(List.of("stock:price:005930", "stock:price:ABC123")))
+                .thenReturn(List.of("71000.25", "51000.00"));
+
+        var cachedPrices = stockPriceCacheService.getCachedPrices(List.of("005930", " abc123 ", "005930"));
+
+        assertThat(cachedPrices).hasSize(2);
+        assertThat(cachedPrices.get("005930").currentPrice()).isEqualByComparingTo(new BigDecimal("71000.25"));
+        assertThat(cachedPrices.get("ABC123").currentPrice()).isEqualByComparingTo(new BigDecimal("51000.00"));
+    }
+
+    @Test
+    void getCachedPrices_invalidOneValue_skipsOnlyInvalidSymbol() {
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        when(valueOperations.multiGet(List.of("stock:price:005930", "stock:price:000660")))
+                .thenReturn(List.of("bad-price", "120000.00"));
+
+        var cachedPrices = stockPriceCacheService.getCachedPrices(List.of("005930", "000660"));
+
+        assertThat(cachedPrices).containsOnlyKeys("000660");
+        assertThat(cachedPrices.get("000660").currentPrice()).isEqualByComparingTo(new BigDecimal("120000.00"));
+    }
+
+    @Test
+    void getCachedPrices_emptySymbols_returnsEmptyWithoutRedisRead() {
+        var cachedPrices = stockPriceCacheService.getCachedPrices(Arrays.asList(" ", null));
+
+        assertThat(cachedPrices).isEmpty();
+        verifyNoInteractions(redisTemplate);
     }
 }

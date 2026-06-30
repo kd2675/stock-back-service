@@ -27,13 +27,17 @@ import stock.back.service.market.vo.AutoParticipantCashFlowStatusResponse;
 import stock.back.service.market.vo.AutoMarketStatusResponse;
 import stock.back.service.market.vo.AdminCashFlowPageResponse;
 import stock.back.service.market.vo.AdminFlowOverviewResponse;
+import stock.back.service.market.vo.AdminFundFlowSummaryResponse;
+import stock.back.service.market.vo.AdminSymbolFlowListResponse;
 import stock.back.service.market.vo.AutoMarketConfigResponse;
 import stock.back.service.market.vo.AutoMarketConfigUpdateRequest;
 import stock.back.service.market.vo.AutoParticipantCashAdjustmentRequest;
 import stock.back.service.market.vo.AutoParticipantCashAdjustmentResponse;
+import stock.back.service.market.vo.AutoParticipantHoldingGroupResponse;
 import stock.back.service.market.vo.AutoParticipantOverviewResponse;
 import stock.back.service.market.vo.AutoParticipantProfileConfigRequest;
 import stock.back.service.market.vo.AutoParticipantProfileConfigResponse;
+import stock.back.service.market.vo.AutoParticipantProfileOverviewResponse;
 import stock.back.service.market.vo.AutoParticipantRequest;
 import stock.back.service.market.vo.AutoParticipantResponse;
 import stock.back.service.market.vo.AutoParticipantSymbolConfigRequest;
@@ -217,19 +221,58 @@ public class MarketController {
     }
 
     @GetMapping("/order-book-market")
-    public ResponseDataDTO<OrderBookMarketStatusResponse> getOrderBookMarketStatus() {
-        return ResponseDataDTO.of(marketService.getOrderBookMarketStatus());
+    public ResponseDataDTO<OrderBookMarketStatusResponse> getOrderBookMarketStatus(
+            @RequestParam(defaultValue = "true") boolean includeConfigs,
+            @RequestParam(defaultValue = "true") boolean includeTodayExecution
+    ) {
+        return ResponseDataDTO.of(marketService.getOrderBookMarketStatus(includeConfigs, includeTodayExecution));
     }
 
     @GetMapping("/auto-market")
-    public ResponseDataDTO<AutoMarketStatusResponse> getAutoMarketStatus() {
-        return ResponseDataDTO.of(marketService.getAutoMarketStatus());
+    public ResponseDataDTO<AutoMarketStatusResponse> getAutoMarketStatus(
+            @RequestParam(defaultValue = "true") boolean includeConfigs,
+            @RequestParam(defaultValue = "true") boolean includeParticipants,
+            @RequestParam(defaultValue = "true") boolean includeParticipantSymbolConfigs,
+            @RequestParam(defaultValue = "true") boolean includeParticipantProfileConfigs,
+            @RequestParam(defaultValue = "true") boolean includeListingAutoAccounts,
+            @RequestParam(defaultValue = "true") boolean includeRuntimeMetrics,
+            @RequestParam(defaultValue = "true") boolean includeSalaryEligibility,
+            @RequestParam(required = false) String participantSymbolConfigUserKey
+    ) {
+        return ResponseDataDTO.of(marketService.getAutoMarketStatus(
+                includeConfigs,
+                includeParticipants,
+                includeParticipantSymbolConfigs,
+                includeParticipantProfileConfigs,
+                includeListingAutoAccounts,
+                includeRuntimeMetrics,
+                includeSalaryEligibility,
+                participantSymbolConfigUserKey
+        ));
     }
 
     @GetMapping("/admin/flow-overview")
     @RequirePrincipalRole(anyOf = {UserRole.ADMIN})
-    public ResponseDataDTO<AdminFlowOverviewResponse> getAdminFlowOverview() {
-        return ResponseDataDTO.of(marketService.getAdminFlowOverview());
+    public ResponseDataDTO<AdminFlowOverviewResponse> getAdminFlowOverview(
+            @RequestParam(defaultValue = "0") int symbolFlowLimit,
+            @RequestParam(defaultValue = "true") boolean includeFundFlow,
+            @RequestParam(defaultValue = "true") boolean includeSymbolFlows
+    ) {
+        return ResponseDataDTO.of(marketService.getAdminFlowOverview(symbolFlowLimit, includeFundFlow, includeSymbolFlows));
+    }
+
+    @GetMapping("/admin/fund-flow-summary")
+    @RequirePrincipalRole(anyOf = {UserRole.ADMIN})
+    public ResponseDataDTO<AdminFundFlowSummaryResponse> getAdminFundFlowSummary() {
+        return ResponseDataDTO.of(marketService.getAdminFundFlowSummary());
+    }
+
+    @GetMapping("/admin/symbol-flows")
+    @RequirePrincipalRole(anyOf = {UserRole.ADMIN})
+    public ResponseDataDTO<AdminSymbolFlowListResponse> getAdminSymbolFlows(
+            @RequestParam(defaultValue = "0") int limit
+    ) {
+        return ResponseDataDTO.of(marketService.getAdminSymbolFlows(limit));
     }
 
     @GetMapping("/admin/cash-flows")
@@ -243,8 +286,25 @@ public class MarketController {
 
     @GetMapping("/auto-market/participants/overviews")
     @RequirePrincipalRole(anyOf = {UserRole.ADMIN})
-    public ResponseDataDTO<List<AutoParticipantOverviewResponse>> getAutoParticipantOverviews() {
-        return ResponseDataDTO.of(marketService.getAutoParticipantOverviews());
+    public ResponseDataDTO<List<AutoParticipantOverviewResponse>> getAutoParticipantOverviews(
+            @RequestParam(defaultValue = "true") boolean includeHoldings,
+            @RequestParam(defaultValue = "") List<String> userKeys
+    ) {
+        return ResponseDataDTO.of(marketService.getAutoParticipantOverviews(includeHoldings, userKeys));
+    }
+
+    @GetMapping("/auto-market/participants/holdings")
+    @RequirePrincipalRole(anyOf = {UserRole.ADMIN})
+    public ResponseDataDTO<List<AutoParticipantHoldingGroupResponse>> getAutoParticipantHoldings(
+            @RequestParam(defaultValue = "") List<String> userKeys
+    ) {
+        return ResponseDataDTO.of(marketService.getAutoParticipantHoldings(userKeys));
+    }
+
+    @GetMapping("/auto-market/participants/profile-overviews")
+    @RequirePrincipalRole(anyOf = {UserRole.ADMIN})
+    public ResponseDataDTO<List<AutoParticipantProfileOverviewResponse>> getAutoParticipantProfileOverviews() {
+        return ResponseDataDTO.of(marketService.getAutoParticipantProfileOverviews());
     }
 
     @GetMapping("/auto-market/cash-flow")
@@ -259,11 +319,8 @@ public class MarketController {
             @RequestBody AutoParticipantCashFlowControlRequest request,
             UserContext userContext
     ) {
-        if (request == null || request.runtimeEnabled() == null) {
-            throw StockException.badRequest("runtimeEnabled is required");
-        }
         AutoParticipantCashFlowControlRequest command = new AutoParticipantCashFlowControlRequest(
-                request.runtimeEnabled(),
+                requireRuntimeEnabled(request == null ? null : request.runtimeEnabled()),
                 userContext.getUserKey()
         );
         return ResponseDataDTO.of(stockBatchAdminClient.updateAutoParticipantCashFlowStatus(command));
@@ -294,11 +351,8 @@ public class MarketController {
             @RequestBody BatchJobRuntimeControlRequest request,
             UserContext userContext
     ) {
-        if (request == null || request.runtimeEnabled() == null) {
-            throw StockException.badRequest("runtimeEnabled is required");
-        }
         BatchJobRuntimeControlRequest command = new BatchJobRuntimeControlRequest(
-                request.runtimeEnabled(),
+                requireRuntimeEnabled(request == null ? null : request.runtimeEnabled()),
                 userContext.getUserKey()
         );
         return ResponseDataDTO.of(stockBatchAdminClient.updateBatchJobRuntimeControl(jobName, command));
@@ -364,5 +418,12 @@ public class MarketController {
             @RequestBody AutoParticipantSymbolConfigRequest request
     ) {
         return ResponseDataDTO.of(marketService.updateAutoParticipantSymbolConfig(userKey, symbol, request));
+    }
+
+    private static boolean requireRuntimeEnabled(Boolean runtimeEnabled) {
+        if (runtimeEnabled == null) {
+            throw StockException.badRequest("runtimeEnabled is required");
+        }
+        return runtimeEnabled;
     }
 }

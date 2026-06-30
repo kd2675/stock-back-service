@@ -11,6 +11,8 @@ public record AutoParticipantResponse(
         BigDecimal recurringCashAmount,
         BigDecimal recurringCashIntervalValue,
         String recurringCashIntervalUnit,
+        Long accountId,
+        String accountStatus,
         BigDecimal cashBalance,
         LocalDateTime createdAt,
         LocalDateTime updatedAt,

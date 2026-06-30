@@ -8,12 +8,16 @@ import org.springframework.data.repository.query.Param;
 import stock.back.service.database.entity.StockAccount;
 import stock.back.service.database.entity.StockAccountStatus;
 
+import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 
 public interface StockAccountRepository extends JpaRepository<StockAccount, Long> {
     Optional<StockAccount> findByUserKey(String userKey);
 
     Optional<StockAccount> findByUserKeyAndStatus(String userKey, StockAccountStatus status);
+
+    List<StockAccount> findAllByUserKeyIn(Collection<String> userKeys);
 
     Optional<StockAccount> findByAccountCode(String accountCode);
 

@@ -24,6 +24,7 @@ import web.common.core.response.base.vo.Code;
 import java.net.http.HttpClient;
 import java.time.Duration;
 import java.util.List;
+import java.util.function.Supplier;
 
 @Slf4j
 @Component
@@ -67,122 +68,94 @@ public class StockBatchAdminClient {
     }
 
     public AutoParticipantCashFlowStatusResponse getAutoParticipantCashFlowStatus() {
-        try {
-            ResponseDataDTO<AutoParticipantCashFlowStatusResponse> response = restClient.get()
+        return invokeBatchApi(
+                "월급 지급 배치 상태를 조회하지 못했습니다.",
+                () -> restClient.get()
                     .uri(CASH_FLOW_STATUS_PATH)
                     .headers(this::applyInternalHeaders)
                     .retrieve()
                     .body(new ParameterizedTypeReference<>() {
-                    });
-            return requireData(response);
-        } catch (RestClientResponseException ex) {
-            throw batchGatewayException("월급 지급 배치 상태를 조회하지 못했습니다.", ex);
-        } catch (RestClientException ex) {
-            throw batchGatewayException("월급 지급 배치 상태를 조회하지 못했습니다.", ex);
-        }
+                    })
+        );
     }
 
     public AutoParticipantCashFlowStatusResponse updateAutoParticipantCashFlowStatus(
             AutoParticipantCashFlowControlRequest request
     ) {
-        try {
-            ResponseDataDTO<AutoParticipantCashFlowStatusResponse> response = restClient.patch()
+        return invokeBatchApi(
+                "월급 지급 배치 상태를 변경하지 못했습니다.",
+                () -> restClient.patch()
                     .uri(CASH_FLOW_STATUS_PATH)
                     .headers(this::applyInternalHeaders)
                     .body(request)
                     .retrieve()
                     .body(new ParameterizedTypeReference<>() {
-                    });
-            return requireData(response);
-        } catch (RestClientResponseException ex) {
-            throw batchGatewayException("월급 지급 배치 상태를 변경하지 못했습니다.", ex);
-        } catch (RestClientException ex) {
-            throw batchGatewayException("월급 지급 배치 상태를 변경하지 못했습니다.", ex);
-        }
+                    })
+        );
     }
 
     public StockBatchJobRunResponse runAutoParticipantCashFlow() {
-        try {
-            ResponseDataDTO<StockBatchJobRunResponse> response = restClient.post()
+        return invokeBatchApi(
+                "월급 지급 배치를 실행하지 못했습니다.",
+                () -> restClient.post()
                     .uri(CASH_FLOW_RUN_PATH)
                     .headers(this::applyInternalHeaders)
                     .retrieve()
                     .body(new ParameterizedTypeReference<>() {
-                    });
-            return requireData(response);
-        } catch (RestClientResponseException ex) {
-            throw batchGatewayException("월급 지급 배치를 실행하지 못했습니다.", ex);
-        } catch (RestClientException ex) {
-            throw batchGatewayException("월급 지급 배치를 실행하지 못했습니다.", ex);
-        }
+                    })
+        );
     }
 
     public StockBatchJobRunResponse runMarketCloseRollover() {
-        try {
-            ResponseDataDTO<StockBatchJobRunResponse> response = restClient.post()
+        return invokeBatchApi(
+                "장마감 롤오버 배치를 실행하지 못했습니다.",
+                () -> restClient.post()
                     .uri(MARKET_CLOSE_ROLLOVER_RUN_PATH)
                     .headers(this::applyInternalHeaders)
                     .retrieve()
                     .body(new ParameterizedTypeReference<>() {
-                    });
-            return requireData(response);
-        } catch (RestClientResponseException ex) {
-            throw batchGatewayException("장마감 롤오버 배치를 실행하지 못했습니다.", ex);
-        } catch (RestClientException ex) {
-            throw batchGatewayException("장마감 롤오버 배치를 실행하지 못했습니다.", ex);
-        }
+                    })
+        );
     }
 
     public StockBatchJobRunResponse runMarketCloseRollover(String symbol) {
-        try {
-            ResponseDataDTO<StockBatchJobRunResponse> response = restClient.post()
+        return invokeBatchApi(
+                "종목 장마감 롤오버 배치를 실행하지 못했습니다.",
+                () -> restClient.post()
                     .uri(MARKET_CLOSE_ROLLOVER_RUN_PATH + "/{symbol}", symbol)
                     .headers(this::applyInternalHeaders)
                     .retrieve()
                     .body(new ParameterizedTypeReference<>() {
-                    });
-            return requireData(response);
-        } catch (RestClientResponseException ex) {
-            throw batchGatewayException("종목 장마감 롤오버 배치를 실행하지 못했습니다.", ex);
-        } catch (RestClientException ex) {
-            throw batchGatewayException("종목 장마감 롤오버 배치를 실행하지 못했습니다.", ex);
-        }
+                    })
+        );
     }
 
     public List<BatchJobRuntimeStatusResponse> getBatchJobRuntimeControls() {
-        try {
-            ResponseDataDTO<List<BatchJobRuntimeStatusResponse>> response = restClient.get()
+        return invokeBatchApi(
+                "배치 자동 실행 상태를 조회하지 못했습니다.",
+                () -> restClient.get()
                     .uri(RUNTIME_CONTROLS_PATH)
                     .headers(this::applyInternalHeaders)
                     .retrieve()
                     .body(new ParameterizedTypeReference<>() {
-                    });
-            return requireData(response);
-        } catch (RestClientResponseException ex) {
-            throw batchGatewayException("배치 자동 실행 상태를 조회하지 못했습니다.", ex);
-        } catch (RestClientException ex) {
-            throw batchGatewayException("배치 자동 실행 상태를 조회하지 못했습니다.", ex);
-        }
+                    })
+        );
     }
 
     public BatchJobRuntimeStatusResponse updateBatchJobRuntimeControl(
             String jobName,
             BatchJobRuntimeControlRequest request
     ) {
-        try {
-            ResponseDataDTO<BatchJobRuntimeStatusResponse> response = restClient.patch()
+        return invokeBatchApi(
+                "배치 자동 실행 상태를 변경하지 못했습니다.",
+                () -> restClient.patch()
                     .uri(RUNTIME_CONTROLS_PATH + "/{jobName}", jobName)
                     .headers(this::applyInternalHeaders)
                     .body(request)
                     .retrieve()
                     .body(new ParameterizedTypeReference<>() {
-                    });
-            return requireData(response);
-        } catch (RestClientResponseException ex) {
-            throw batchGatewayException("배치 자동 실행 상태를 변경하지 못했습니다.", ex);
-        } catch (RestClientException ex) {
-            throw batchGatewayException("배치 자동 실행 상태를 변경하지 못했습니다.", ex);
-        }
+                    })
+        );
     }
 
     private void applyInternalHeaders(HttpHeaders headers) {
@@ -202,6 +175,16 @@ public class StockBatchAdminClient {
             throw new StockException(Code.BAD_GATEWAY, "Batch API returned empty response");
         }
         return response.getData();
+    }
+
+    private <T> T invokeBatchApi(String message, Supplier<ResponseDataDTO<T>> responseSupplier) {
+        try {
+            return requireData(responseSupplier.get());
+        } catch (RestClientResponseException ex) {
+            throw batchGatewayException(message, ex);
+        } catch (RestClientException ex) {
+            throw batchGatewayException(message, ex);
+        }
     }
 
     private StockException batchGatewayException(String message, RestClientException ex) {

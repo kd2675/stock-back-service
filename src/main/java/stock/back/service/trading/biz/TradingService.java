@@ -10,19 +10,13 @@ import stock.back.service.database.entity.MarketType;
 import stock.back.service.database.entity.OrderSide;
 import stock.back.service.database.entity.OrderStatus;
 import stock.back.service.database.entity.OrderType;
-import stock.back.service.database.entity.PortfolioSnapshot;
 import stock.back.service.database.entity.StockAccount;
-import stock.back.service.database.entity.StockAccountCashFlow;
-import stock.back.service.database.entity.StockExecution;
 import stock.back.service.database.entity.StockHolding;
 import stock.back.service.database.entity.StockOrder;
 import stock.back.service.database.entity.StockOrderBookInstrument;
 import stock.back.service.database.entity.StockOrderBookMarketConfig;
 import stock.back.service.database.entity.StockPrice;
 import stock.back.service.database.entity.StockVirtualMarketConfig;
-import stock.back.service.database.repository.PortfolioSnapshotRepository;
-import stock.back.service.database.repository.StockAccountCashFlowRepository;
-import stock.back.service.database.repository.StockExecutionRepository;
 import stock.back.service.database.repository.StockHoldingRepository;
 import stock.back.service.database.repository.StockInstrumentRepository;
 import stock.back.service.database.repository.StockOrderBookInstrumentRepository;
@@ -32,7 +26,6 @@ import stock.back.service.database.repository.StockPriceRepository;
 import stock.back.service.database.repository.StockVirtualMarketConfigRepository;
 import stock.back.service.market.cache.CachedStockPrice;
 import stock.back.service.market.cache.StockPriceCacheService;
-import stock.back.service.trading.vo.AccountCashFlowResponse;
 import stock.back.service.trading.vo.ExecutionResponse;
 import stock.back.service.trading.vo.FundFlowResponse;
 import stock.back.service.trading.vo.HoldingResponse;
@@ -46,7 +39,6 @@ import stock.back.service.trading.vo.ProfitSummaryResponse;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
-import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
@@ -71,10 +63,8 @@ public class TradingService {
     private final StockPriceRepository stockPriceRepository;
     private final StockOrderRepository stockOrderRepository;
     private final StockHoldingRepository stockHoldingRepository;
-    private final StockExecutionRepository stockExecutionRepository;
-    private final StockAccountCashFlowRepository stockAccountCashFlowRepository;
-    private final PortfolioSnapshotRepository portfolioSnapshotRepository;
     private final StockPriceCacheService stockPriceCacheService;
+    private final TradingQueryService tradingQueryService;
 
     @Transactional
     public OrderResponse placeOrder(String userKey, OrderRequest request) {
@@ -128,7 +118,7 @@ public class TradingService {
                 reservedCash
         );
 
-        return toOrderResponse(stockOrderRepository.save(order));
+        return TradingResponseMapper.toOrderResponse(stockOrderRepository.save(order));
     }
 
     @Transactional
@@ -150,7 +140,7 @@ public class TradingService {
                     .ifPresent(holding -> holding.releaseReservedQuantity(order.getQuantity() - order.getFilledQuantity()));
         }
         order.cancel();
-        return toOrderResponse(order);
+        return TradingResponseMapper.toOrderResponse(order);
     }
 
     @Transactional
@@ -180,7 +170,7 @@ public class TradingService {
         } else {
             amendSellLimitOrder(account.getId(), order, nextQuantity, nextLimitPrice);
         }
-        return toOrderResponse(order);
+        return TradingResponseMapper.toOrderResponse(order);
     }
 
     @Transactional
@@ -198,7 +188,7 @@ public class TradingService {
         if (request.quantity() == remainingQuantity) {
             releaseAllRemainingReservation(userKey, account.getId(), order);
             order.cancel();
-            return toOrderResponse(order);
+            return TradingResponseMapper.toOrderResponse(order);
         }
 
         if (order.getSide() == OrderSide.BUY) {
@@ -211,178 +201,42 @@ public class TradingService {
             holding.releaseReservedQuantity(request.quantity());
             order.reduceOpenQuantity(request.quantity(), BigDecimal.ZERO);
         }
-        return toOrderResponse(order);
+        return TradingResponseMapper.toOrderResponse(order);
     }
 
     @Transactional(readOnly = true)
     public List<OrderResponse> getOrders(String userKey, MarketType marketType) {
-        Optional<StockAccount> account = accountService.findAccount(userKey);
-        if (account.isEmpty()) {
-            return Collections.emptyList();
-        }
-        List<StockOrder> orders = marketType == null
-                ? stockOrderRepository.findTop50ByAccountIdOrderByCreatedAtDesc(account.get().getId())
-                : stockOrderRepository.findTop50ByAccountIdAndMarketTypeOrderByCreatedAtDesc(account.get().getId(), marketType);
-        return orders.stream()
-                .map(this::toOrderResponse)
-                .toList();
+        return tradingQueryService.getOrders(userKey, marketType);
     }
 
     @Transactional(readOnly = true)
     public List<ExecutionResponse> getExecutions(String userKey, ExecutionSource source) {
-        Optional<StockAccount> account = accountService.findAccount(userKey);
-        if (account.isEmpty()) {
-            return Collections.emptyList();
-        }
-        List<StockExecution> executions = source == null
-                ? stockExecutionRepository.findTop50ByAccountIdOrderByExecutedAtDesc(account.get().getId())
-                : stockExecutionRepository.findTop50ByAccountIdAndSourceOrderByExecutedAtDesc(account.get().getId(), source);
-        return executions.stream()
-                .map(this::toExecutionResponse)
-                .toList();
+        return tradingQueryService.getExecutions(userKey, source);
     }
 
     @Transactional(readOnly = true)
     public List<HoldingResponse> getHoldings(String userKey) {
-        return accountService.findAccount(userKey)
-                .map(account -> buildHoldingResponses(account.getId()))
-                .orElseGet(Collections::emptyList);
-    }
-
-    private List<HoldingResponse> buildHoldingResponses(Long accountId) {
-        return stockHoldingRepository.findByAccountIdOrderBySymbolAsc(accountId).stream()
-                .map(this::toHoldingResponse)
-                .toList();
+        return tradingQueryService.getHoldings(userKey);
     }
 
     @Transactional(readOnly = true)
     public PortfolioResponse getPortfolio(String userKey) {
-        StockAccount account = accountService.requireAccount(userKey);
-        List<HoldingResponse> holdings = buildHoldingResponses(account.getId());
-        BigDecimal marketValue = holdings.stream()
-                .map(HoldingResponse::marketValue)
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
-        List<OrderStatus> activeOrderStatuses = List.of(OrderStatus.PENDING, OrderStatus.PARTIALLY_FILLED);
-        BigDecimal reservedBuyCash = stockOrderRepository.sumReservedCashByAccountIdAndSideAndStatusIn(
-                account.getId(),
-                OrderSide.BUY,
-                activeOrderStatuses
-        );
-        BigDecimal totalAsset = account.getCashBalance().add(reservedBuyCash).add(marketValue);
-        BigDecimal returnRate = BigDecimal.ZERO;
-        BigDecimal netCashFlow = accountService.getNetCashFlow(account.getId());
-        if (netCashFlow.compareTo(BigDecimal.ZERO) > 0) {
-            returnRate = totalAsset.subtract(netCashFlow)
-                    .multiply(BigDecimal.valueOf(100))
-                    .divide(netCashFlow, 4, RoundingMode.HALF_UP);
-        }
-        long pendingCount = stockOrderRepository.countByAccountIdAndStatusIn(
-                account.getId(),
-                activeOrderStatuses
-        );
-        return new PortfolioResponse(
-                accountService.toResponse(account),
-                marketValue,
-                reservedBuyCash,
-                totalAsset,
-                returnRate,
-                pendingCount,
-                holdings
-        );
+        return tradingQueryService.getPortfolio(userKey);
     }
 
     @Transactional(readOnly = true)
     public List<PortfolioSnapshotResponse> getPortfolioSnapshots(String userKey) {
-        return accountService.findAccount(userKey)
-                .map(account -> portfolioSnapshotRepository.findTop30ByAccountIdOrderBySnapshotDateDesc(account.getId()).stream()
-                        .map(this::toPortfolioSnapshotResponse)
-                        .toList())
-                .orElseGet(Collections::emptyList);
+        return tradingQueryService.getPortfolioSnapshots(userKey);
     }
 
     @Transactional(readOnly = true)
     public ProfitSummaryResponse getProfitSummary(String userKey) {
-        Optional<StockAccount> accountOptional = accountService.findAccount(userKey);
-        if (accountOptional.isEmpty()) {
-            return emptyProfitSummary();
-        }
-        StockAccount account = accountOptional.get();
-        BigDecimal unrealizedProfit = buildHoldingResponses(account.getId()).stream()
-                .map(HoldingResponse::unrealizedProfit)
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
-        StockExecutionRepository.ProfitSummaryProjection summary =
-                stockExecutionRepository.summarizeProfitByAccountId(account.getId());
-        BigDecimal realizedProfit = zeroIfNull(summary.getRealizedProfit());
-        BigDecimal buyNetAmount = zeroIfNull(summary.getBuyNetAmount());
-        BigDecimal sellNetAmount = zeroIfNull(summary.getSellNetAmount());
-
-        return new ProfitSummaryResponse(
-                realizedProfit,
-                unrealizedProfit,
-                realizedProfit.add(unrealizedProfit),
-                zeroIfNull(summary.getTotalFeeAmount()),
-                zeroIfNull(summary.getTotalTaxAmount()),
-                zeroIfNull(summary.getBuyGrossAmount()),
-                zeroIfNull(summary.getSellGrossAmount()),
-                buyNetAmount,
-                sellNetAmount,
-                sellNetAmount.subtract(buyNetAmount),
-                summary.getExecutionCount()
-        );
+        return tradingQueryService.getProfitSummary(userKey);
     }
 
     @Transactional(readOnly = true)
     public FundFlowResponse getFundFlow(String userKey) {
-        StockAccount account = accountService.requireAccount(userKey);
-        List<HoldingResponse> holdings = buildHoldingResponses(account.getId());
-        BigDecimal marketValue = holdings.stream()
-                .map(HoldingResponse::marketValue)
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
-        BigDecimal unrealizedProfit = holdings.stream()
-                .map(HoldingResponse::unrealizedProfit)
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
-        List<OrderStatus> activeOrderStatuses = List.of(OrderStatus.PENDING, OrderStatus.PARTIALLY_FILLED);
-        BigDecimal reservedBuyCash = stockOrderRepository.sumReservedCashByAccountIdAndSideAndStatusIn(
-                account.getId(),
-                OrderSide.BUY,
-                activeOrderStatuses
-        );
-        BigDecimal totalAsset = account.getCashBalance().add(reservedBuyCash).add(marketValue);
-        StockAccountCashFlowRepository.CashFlowSummaryProjection cashFlowSummary =
-                stockAccountCashFlowRepository.summarizeCashFlowsByAccountId(account.getId());
-        StockExecutionRepository.ProfitSummaryProjection profitSummary =
-                stockExecutionRepository.summarizeProfitByAccountId(account.getId());
-        BigDecimal externalDepositAmount = zeroIfNull(cashFlowSummary.getExternalDepositAmount());
-        BigDecimal externalWithdrawAmount = zeroIfNull(cashFlowSummary.getExternalWithdrawAmount());
-        BigDecimal dividendIncomeAmount = zeroIfNull(cashFlowSummary.getDividendIncomeAmount());
-        BigDecimal buyNetAmount = zeroIfNull(profitSummary.getBuyNetAmount());
-        BigDecimal sellNetAmount = zeroIfNull(profitSummary.getSellNetAmount());
-        BigDecimal realizedProfit = zeroIfNull(profitSummary.getRealizedProfit());
-        List<AccountCashFlowResponse> recentCashFlows = stockAccountCashFlowRepository
-                .findTop30ByAccountIdOrderByCreatedAtDescIdDesc(account.getId()).stream()
-                .map(this::toAccountCashFlowResponse)
-                .toList();
-
-        return new FundFlowResponse(
-                account.getCashBalance(),
-                reservedBuyCash,
-                marketValue,
-                totalAsset,
-                externalDepositAmount,
-                externalWithdrawAmount,
-                externalDepositAmount.subtract(externalWithdrawAmount),
-                dividendIncomeAmount,
-                buyNetAmount,
-                sellNetAmount,
-                sellNetAmount.subtract(buyNetAmount),
-                zeroIfNull(profitSummary.getTotalFeeAmount()),
-                zeroIfNull(profitSummary.getTotalTaxAmount()),
-                realizedProfit,
-                unrealizedProfit,
-                realizedProfit.add(unrealizedProfit),
-                profitSummary.getExecutionCount(),
-                recentCashFlows
-        );
+        return tradingQueryService.getFundFlow(userKey);
     }
 
     private String normalizeSymbol(OrderRequest request) {
@@ -514,7 +368,7 @@ public class TradingService {
                     if (!order.getAccountId().equals(accountId)) {
                         throw StockException.conflict("Client order id already exists");
                     }
-                    return toOrderResponse(order);
+                    return TradingResponseMapper.toOrderResponse(order);
                 });
     }
 
@@ -527,7 +381,7 @@ public class TradingService {
                     if (!order.getAccountId().equals(accountId)) {
                         throw StockException.conflict("Client order id already exists");
                     }
-                    return toOrderResponse(order);
+                    return TradingResponseMapper.toOrderResponse(order);
                 });
     }
 
@@ -620,22 +474,6 @@ public class TradingService {
                 .orElseThrow(() -> StockException.notFound("Price not found: " + symbol));
     }
 
-    private HoldingResponse toHoldingResponse(StockHolding holding) {
-        BigDecimal currentPrice = resolveCurrentPrice(holding.getSymbol()).orElse(holding.getAveragePrice());
-        BigDecimal marketValue = currentPrice.multiply(BigDecimal.valueOf(holding.getQuantity()));
-        BigDecimal cost = holding.getAveragePrice().multiply(BigDecimal.valueOf(holding.getQuantity()));
-        return new HoldingResponse(
-                holding.getSymbol(),
-                holding.getQuantity(),
-                holding.getReservedQuantity() == null ? 0L : holding.getReservedQuantity(),
-                holding.getAvailableQuantity(),
-                holding.getAveragePrice(),
-                currentPrice,
-                marketValue,
-                marketValue.subtract(cost)
-        );
-    }
-
     private java.util.Optional<BigDecimal> resolveCurrentPrice(String symbol) {
         Optional<BigDecimal> cachedPrice = stockPriceCacheService.getCachedPrice(symbol)
                 .map(CachedStockPrice::currentPrice);
@@ -644,84 +482,5 @@ public class TradingService {
         }
         return stockPriceRepository.findById(symbol)
                 .map(StockPrice::getCurrentPrice);
-    }
-
-    private OrderResponse toOrderResponse(StockOrder order) {
-        return new OrderResponse(
-                order.getId(),
-                order.getAccountId(),
-                order.getClientOrderId(),
-                order.getSymbol(),
-                order.getMarketType(),
-                order.getSide(),
-                order.getOrderType(),
-                order.getStatus(),
-                order.getLimitPrice(),
-                order.getQuantity(),
-                order.getFilledQuantity(),
-                order.getAverageFillPrice(),
-                order.getReservedCash(),
-                order.getCreatedAt()
-        );
-    }
-
-    private ExecutionResponse toExecutionResponse(StockExecution execution) {
-        return new ExecutionResponse(
-                execution.getId(),
-                execution.getAccountId(),
-                execution.getOrderId(),
-                execution.getSymbol(),
-                execution.getSide(),
-                execution.getQuantity(),
-                execution.getPrice(),
-                execution.getGrossAmount(),
-                execution.getFeeAmount(),
-                execution.getTaxAmount(),
-                execution.getNetAmount(),
-                execution.getRealizedProfit(),
-                execution.getSource(),
-                execution.getExecutedAt()
-        );
-    }
-
-    private PortfolioSnapshotResponse toPortfolioSnapshotResponse(PortfolioSnapshot snapshot) {
-        return new PortfolioSnapshotResponse(
-                snapshot.getSnapshotDate(),
-                snapshot.getTotalAsset(),
-                snapshot.getCashBalance(),
-                snapshot.getMarketValue(),
-                snapshot.getReturnRate()
-        );
-    }
-
-    private AccountCashFlowResponse toAccountCashFlowResponse(StockAccountCashFlow cashFlow) {
-        return new AccountCashFlowResponse(
-                cashFlow.getId(),
-                cashFlow.getFlowType().name(),
-                cashFlow.getAmount(),
-                cashFlow.getReason().name(),
-                cashFlow.getCreatedBy(),
-                cashFlow.getCreatedAt()
-        );
-    }
-
-    private ProfitSummaryResponse emptyProfitSummary() {
-        return new ProfitSummaryResponse(
-                BigDecimal.ZERO,
-                BigDecimal.ZERO,
-                BigDecimal.ZERO,
-                BigDecimal.ZERO,
-                BigDecimal.ZERO,
-                BigDecimal.ZERO,
-                BigDecimal.ZERO,
-                BigDecimal.ZERO,
-                BigDecimal.ZERO,
-                BigDecimal.ZERO,
-                0L
-        );
-    }
-
-    private BigDecimal zeroIfNull(BigDecimal value) {
-        return value == null ? BigDecimal.ZERO : value;
     }
 }

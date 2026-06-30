@@ -13,6 +13,7 @@ public record OrderBookCandleResponse(
         BigDecimal closePrice,
         long volume,
         BigDecimal turnover,
-        long executionCount
+        long executionCount,
+        boolean hasExecution
 ) {
 }

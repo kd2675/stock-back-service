@@ -7,4 +7,6 @@ import java.util.List;
 
 public interface StockAutoMarketConfigRepository extends JpaRepository<StockAutoMarketConfig, String> {
     List<StockAutoMarketConfig> findByEnabledTrueOrderBySymbolAsc();
+
+    boolean existsByEnabledTrue();
 }

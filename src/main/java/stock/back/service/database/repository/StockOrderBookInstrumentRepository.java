@@ -9,5 +9,7 @@ public interface StockOrderBookInstrumentRepository extends JpaRepository<StockO
 
     boolean existsBySymbolAndEnabledTrue(String symbol);
 
+    long countByEnabledTrue();
+
     List<StockOrderBookInstrument> findByEnabledTrueOrderBySymbolAsc();
 }

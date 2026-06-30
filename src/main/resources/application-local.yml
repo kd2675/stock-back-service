@@ -14,7 +14,7 @@ database:
   datasource:
     pub:
       master:
-        url: jdbc:mysql://kimd0.iptime.org:23306/STOCK_SERVICE?zeroDateTimeBehavior=convertToNull&useLegacyDatetimeCode=false&serverTimezone=Asia/Seoul&noAccessToProcedureBodies=true&useSSL=false&allowPublicKeyRetrieval=true
+        url: jdbc:mysql://kimd0.iptime.org:23306/STOCK_SERVICE?zeroDateTimeBehavior=convertToNull&useLegacyDatetimeCode=false&serverTimezone=Asia/Seoul&noAccessToProcedureBodies=true&useSSL=false&allowPublicKeyRetrieval=true&connectTimeout=5000&socketTimeout=30000&tcpKeepAlive=true
         username: root
         password: 1234
         driver-class-name: com.mysql.cj.jdbc.Driver
@@ -24,7 +24,7 @@ database:
           max-lifetime: 540000
           keepalive-time: 300000
       slave1:
-        url: jdbc:mysql://kimd0.iptime.org:23306/STOCK_SERVICE?zeroDateTimeBehavior=convertToNull&useLegacyDatetimeCode=false&serverTimezone=Asia/Seoul&noAccessToProcedureBodies=true&useSSL=false&allowPublicKeyRetrieval=true
+        url: jdbc:mysql://kimd0.iptime.org:23306/STOCK_SERVICE?zeroDateTimeBehavior=convertToNull&useLegacyDatetimeCode=false&serverTimezone=Asia/Seoul&noAccessToProcedureBodies=true&useSSL=false&allowPublicKeyRetrieval=true&connectTimeout=5000&socketTimeout=30000&tcpKeepAlive=true
         username: root
         password: 1234
         driver-class-name: com.mysql.cj.jdbc.Driver
