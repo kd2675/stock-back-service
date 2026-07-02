@@ -1,9 +1,11 @@
 package stock.back.service.common.config;
 
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.task.TaskExecutor;
 import org.springframework.data.redis.connection.RedisConnectionFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.listener.PatternTopic;
@@ -27,10 +29,12 @@ public class RedisConfig {
     )
     public RedisMessageListenerContainer redisMessageListenerContainer(
             RedisConnectionFactory connectionFactory,
-            PriceStreamService priceStreamService
+            PriceStreamService priceStreamService,
+            @Qualifier(StockBackExecutorNames.PRICE_STREAM) TaskExecutor priceStreamTaskExecutor
     ) {
         RedisMessageListenerContainer container = new RedisMessageListenerContainer();
         container.setConnectionFactory(connectionFactory);
+        container.setTaskExecutor(priceStreamTaskExecutor);
         container.addMessageListener(priceStreamService, new PatternTopic("stock.price.*"));
         return container;
     }

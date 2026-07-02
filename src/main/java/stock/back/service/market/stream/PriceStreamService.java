@@ -5,20 +5,22 @@ import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArraySet;
+import java.util.concurrent.RejectedExecutionException;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.core.task.TaskExecutor;
 import org.springframework.data.redis.connection.Message;
 import org.springframework.data.redis.connection.MessageListener;
 import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
+import stock.back.service.common.config.StockBackExecutorNames;
 import stock.back.service.market.biz.SimulationClockService;
 
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class PriceStreamService implements MessageListener {
 
     private static final long EMITTER_TIMEOUT_MILLIS = 30 * 60 * 1000L;
@@ -26,7 +28,18 @@ public class PriceStreamService implements MessageListener {
 
     private final ObjectMapper objectMapper;
     private final SimulationClockService simulationClockService;
+    private final TaskExecutor priceStreamTaskExecutor;
     private final Set<SseEmitter> emitters = new CopyOnWriteArraySet<>();
+
+    public PriceStreamService(
+            ObjectMapper objectMapper,
+            SimulationClockService simulationClockService,
+            @Qualifier(StockBackExecutorNames.PRICE_STREAM) TaskExecutor priceStreamTaskExecutor
+    ) {
+        this.objectMapper = objectMapper;
+        this.simulationClockService = simulationClockService;
+        this.priceStreamTaskExecutor = priceStreamTaskExecutor;
+    }
 
     public SseEmitter connect() {
         SseEmitter emitter = new SseEmitter(EMITTER_TIMEOUT_MILLIS);
@@ -44,7 +57,11 @@ public class PriceStreamService implements MessageListener {
         if (event == null) {
             return;
         }
-        broadcast(event);
+        try {
+            priceStreamTaskExecutor.execute(() -> broadcast(event));
+        } catch (RejectedExecutionException ex) {
+            log.debug("SSE price stream event dropped: symbol={}, reason={}", event.symbol(), ex.getMessage());
+        }
     }
 
     int connectedCount() {

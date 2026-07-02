@@ -126,6 +126,7 @@ scripts/stock-smoke.sh
 - DB는 주문, 체결, 잔고, 거래 이력의 원장입니다.
 - 시장 가격 조회는 Redis `stock:price:{symbol}` 캐시를 우선 사용하고, Redis 장애나 값 오류가 있으면 DB `stock_price`로 fallback합니다.
 - Redis에는 최신가 문자열을 저장하므로 `StringRedisTemplate` 기반 설정을 사용합니다. JSON Redis serializer는 현재 Spring Data Redis 4.x에서 removal deprecated 경고가 있어 사용하지 않습니다.
+- Redis 가격 pub/sub을 SSE로 전달하는 작업은 `stockBackPriceStreamTaskExecutor` 전용 executor에서 처리합니다. 기본값은 core 1, max 2, queue 1000이며 `STOCK_PRICE_STREAM_EXECUTOR_CORE_SIZE`, `STOCK_PRICE_STREAM_EXECUTOR_MAX_SIZE`, `STOCK_PRICE_STREAM_EXECUTOR_QUEUE_CAPACITY`로 조정합니다. 이 풀은 체결 엔진이 아니라 화면 가격 이벤트 전송 지연을 격리하기 위한 풀입니다.
 - 보유 종목 평가는 DB 현재가를 우선 사용하되, 내부 주문장 체결처럼 아직 `stock_price`가 없는 종목은 보유 평단가로 fallback합니다.
 - 가격 이력 조회는 `stock_price_tick`에서 종목별 최근 100건을 `price_time desc` 기준으로 반환합니다.
 - 주문장 조회는 미체결/부분체결 LIMIT 주문을 가격대별로 집계하며, 매수는 높은 가격 우선, 매도는 낮은 가격 우선으로 반환합니다.

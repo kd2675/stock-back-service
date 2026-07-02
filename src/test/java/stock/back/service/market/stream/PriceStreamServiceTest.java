@@ -8,6 +8,7 @@ import java.util.Set;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
+import org.springframework.core.task.TaskExecutor;
 import org.springframework.data.redis.connection.DefaultMessage;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.web.context.request.async.AsyncRequestNotUsableException;
@@ -24,7 +25,11 @@ class PriceStreamServiceTest {
     private static final LocalDateTime SIMULATION_NOW = LocalDateTime.of(2026, 7, 1, 10, 0);
 
     private final SimulationClockService simulationClockService = mock(SimulationClockService.class);
-    private final PriceStreamService priceStreamService = new PriceStreamService(new ObjectMapper(), simulationClockService);
+    private final PriceStreamService priceStreamService = new PriceStreamService(
+            new ObjectMapper(),
+            simulationClockService,
+            Runnable::run
+    );
 
     @Test
     void parseMessage_jsonPayload_returnsPriceStreamEvent() {
@@ -75,6 +80,24 @@ class PriceStreamServiceTest {
         assertThat(priceStreamService.connectedCount()).isZero();
     }
 
+    @Test
+    void onMessage_validPayload_delegatesBroadcastToExecutor() {
+        RecordingTaskExecutor taskExecutor = new RecordingTaskExecutor();
+        PriceStreamService service = new PriceStreamService(new ObjectMapper(), simulationClockService, taskExecutor);
+        service.connect();
+
+        service.onMessage(message("stock.price.005930", """
+                {
+                  "symbol": "005930",
+                  "currentPrice": 70100.00,
+                  "priceTime": "2026-06-18T10:10:01",
+                  "provider": "test-provider"
+                }
+                """), null);
+
+        assertThat(taskExecutor.task).isNotNull();
+    }
+
     private DefaultMessage message(String channel, String payload) {
         return new DefaultMessage(
                 channel.getBytes(StandardCharsets.UTF_8),
@@ -92,6 +115,16 @@ class PriceStreamServiceTest {
         @Override
         public void send(SseEventBuilder builder) throws IOException {
             throw new AsyncRequestNotUsableException("Servlet container error notification for disconnected client");
+        }
+    }
+
+    private static final class RecordingTaskExecutor implements TaskExecutor {
+
+        private Runnable task;
+
+        @Override
+        public void execute(Runnable task) {
+            this.task = task;
         }
     }
 }

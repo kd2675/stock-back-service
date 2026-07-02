@@ -20,6 +20,20 @@ class StockBackDatasourceConfigurationTest {
     }
 
     @Test
+    void rootConfiguration_definesDedicatedPriceStreamExecutor() throws IOException {
+        PropertySource<?> properties = loadProperties("application.yml");
+
+        assertThat(properties.getProperty("stock.market.price-stream.redis-listener-enabled"))
+                .isEqualTo("${STOCK_PRICE_STREAM_REDIS_LISTENER_ENABLED:true}");
+        assertThat(properties.getProperty("stock.market.price-stream.executor.core-size"))
+                .isEqualTo("${STOCK_PRICE_STREAM_EXECUTOR_CORE_SIZE:1}");
+        assertThat(properties.getProperty("stock.market.price-stream.executor.max-size"))
+                .isEqualTo("${STOCK_PRICE_STREAM_EXECUTOR_MAX_SIZE:2}");
+        assertThat(properties.getProperty("stock.market.price-stream.executor.queue-capacity"))
+                .isEqualTo("${STOCK_PRICE_STREAM_EXECUTOR_QUEUE_CAPACITY:1000}");
+    }
+
+    @Test
     void localDatasource_usesShortLivedKeepalivePoolsAndNetworkTimeouts() throws IOException {
         PropertySource<?> properties = loadProperties("application-local.yml");
 
