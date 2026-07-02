@@ -78,13 +78,23 @@ public class StockAccount {
     }
 
     public static StockAccount open(String userKey, String accountCode, String recoveryCodeHash, String issuedRecoveryCode) {
+        return open(userKey, accountCode, recoveryCodeHash, issuedRecoveryCode, LocalDateTime.now());
+    }
+
+    public static StockAccount open(
+            String userKey,
+            String accountCode,
+            String recoveryCodeHash,
+            String issuedRecoveryCode,
+            LocalDateTime openedAt
+    ) {
         StockAccount account = new StockAccount();
         account.userKey = userKey;
         account.accountCode = accountCode;
         account.recoveryCodeHash = recoveryCodeHash;
         account.status = StockAccountStatus.ACTIVE;
         account.cashBalance = BigDecimal.ZERO;
-        account.createdAt = LocalDateTime.now();
+        account.createdAt = openedAt == null ? LocalDateTime.now() : openedAt;
         account.updatedAt = account.createdAt;
         account.issuedRecoveryCode = issuedRecoveryCode;
         return account;
@@ -146,26 +156,42 @@ public class StockAccount {
     }
 
     public void reserveCash(BigDecimal amount) {
+        reserveCash(amount, LocalDateTime.now());
+    }
+
+    public void reserveCash(BigDecimal amount, LocalDateTime updatedAt) {
         this.cashBalance = this.cashBalance.subtract(amount);
-        this.updatedAt = LocalDateTime.now();
+        this.updatedAt = updatedAt == null ? LocalDateTime.now() : updatedAt;
     }
 
     public void releaseCash(BigDecimal amount) {
+        releaseCash(amount, LocalDateTime.now());
+    }
+
+    public void releaseCash(BigDecimal amount, LocalDateTime updatedAt) {
         this.cashBalance = this.cashBalance.add(amount);
-        this.updatedAt = LocalDateTime.now();
+        this.updatedAt = updatedAt == null ? LocalDateTime.now() : updatedAt;
     }
 
     public void depositCash(BigDecimal amount) {
+        depositCash(amount, LocalDateTime.now());
+    }
+
+    public void depositCash(BigDecimal amount, LocalDateTime updatedAt) {
         this.cashBalance = this.cashBalance.add(amount);
-        this.updatedAt = LocalDateTime.now();
+        this.updatedAt = updatedAt == null ? LocalDateTime.now() : updatedAt;
     }
 
     public boolean withdrawCash(BigDecimal amount) {
+        return withdrawCash(amount, LocalDateTime.now());
+    }
+
+    public boolean withdrawCash(BigDecimal amount, LocalDateTime updatedAt) {
         if (this.cashBalance.compareTo(amount) < 0) {
             return false;
         }
         this.cashBalance = this.cashBalance.subtract(amount);
-        this.updatedAt = LocalDateTime.now();
+        this.updatedAt = updatedAt == null ? LocalDateTime.now() : updatedAt;
         return true;
     }
 }

@@ -14,8 +14,6 @@ import stock.back.service.market.vo.AutoMarketConfigUpdateRequest;
 import stock.back.service.market.vo.ListingAutoAccountRequest;
 import stock.back.service.market.vo.ListingAutoAccountResponse;
 
-import java.util.Locale;
-
 @Service
 @RequiredArgsConstructor
 public class AutoMarketConfigService {
@@ -27,7 +25,7 @@ public class AutoMarketConfigService {
 
     @Transactional
     public ListingAutoAccountResponse updateListingAutoAccountConfig(String symbol, ListingAutoAccountRequest request) {
-        String normalizedSymbol = normalizeSymbol(symbol);
+        String normalizedSymbol = MarketTextNormalizer.symbol(symbol);
         if (normalizedSymbol.isBlank()) {
             throw StockException.badRequest("Symbol is required");
         }
@@ -36,7 +34,7 @@ public class AutoMarketConfigService {
         }
         StockListingAutoAccountConfig config = stockListingAutoAccountConfigRepository.findById(normalizedSymbol)
                 .orElseThrow(() -> StockException.notFound("Listing auto account not found: " + normalizedSymbol));
-        String displayName = request.displayName() == null ? null : normalizeText(request.displayName());
+        String displayName = request.displayName() == null ? null : MarketTextNormalizer.text(request.displayName());
         if (displayName != null && displayName.length() > 80) {
             throw StockException.badRequest("Listing auto account display name must be 80 characters or less");
         }
@@ -54,7 +52,7 @@ public class AutoMarketConfigService {
 
     @Transactional
     public AutoMarketConfigResponse updateAutoMarketConfig(String symbol, AutoMarketConfigUpdateRequest request) {
-        String normalizedSymbol = normalizeSymbol(symbol);
+        String normalizedSymbol = MarketTextNormalizer.symbol(symbol);
         if (normalizedSymbol.isBlank()) {
             throw StockException.badRequest("Symbol is required");
         }
@@ -118,17 +116,4 @@ public class AutoMarketConfigService {
         );
     }
 
-    private String normalizeSymbol(String symbol) {
-        if (symbol == null) {
-            return "";
-        }
-        return symbol.trim().toUpperCase(Locale.ROOT);
-    }
-
-    private String normalizeText(String value) {
-        if (value == null) {
-            return "";
-        }
-        return value.trim();
-    }
 }

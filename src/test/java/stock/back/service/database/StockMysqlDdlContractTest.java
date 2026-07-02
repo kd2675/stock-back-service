@@ -9,6 +9,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.List;
+import java.util.regex.Pattern;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -77,15 +78,21 @@ class StockMysqlDdlContractTest {
             "stock_batch_job_lock"
     );
 
+    private static final List<String> SIMULATION_CLOCK_TABLE_MARKERS = List.of(
+            "stock_simulation_clock"
+    );
+
     private static final List<String> ADMIN_QUERY_INDEX_MARKERS = List.of(
             "idx_stock_account_status_id",
             "idx_stock_account_cash_flow_account_reason_creator_time",
             "idx_stock_account_cash_flow_time",
             "idx_stock_order_market_status_side",
+            "idx_stock_order_market_status_account_time",
             "idx_stock_order_market_account_time",
             "idx_stock_order_market_created_status",
             "idx_stock_execution_time_account",
             "idx_stock_execution_source_account_time",
+            "idx_stock_execution_source_time_account",
             "idx_stock_execution_source_symbol_time",
             "idx_stock_execution_source_time",
             "idx_stock_holding_symbol_account",
@@ -101,6 +108,70 @@ class StockMysqlDdlContractTest {
             "holding_snapshot_run_id"
     );
 
+    private static final List<String> CLEAR_DATA_REQUIRED_TRUNCATES = List.of(
+            "TRUNCATE TABLE stock_batch_job_lock;",
+            "TRUNCATE TABLE stock_batch_job_control;",
+            "TRUNCATE TABLE stock_execution;",
+            "TRUNCATE TABLE stock_account_cash_flow;",
+            "TRUNCATE TABLE stock_price_tick;",
+            "TRUNCATE TABLE stock_order;",
+            "TRUNCATE TABLE portfolio_snapshot;",
+            "TRUNCATE TABLE stock_market_close_run;",
+            "TRUNCATE TABLE stock_listing_auto_account_config;",
+            "TRUNCATE TABLE stock_simulation_clock;"
+    );
+
+    private static final List<String> CLEAR_RUNTIME_HISTORY_KEEP_PARTICIPANTS_REQUIRED_MARKERS = List.of(
+            "UPDATE stock_account",
+            "SET cash_balance = 0.00",
+            "TRUNCATE TABLE stock_corporate_action_entitlement;",
+            "TRUNCATE TABLE stock_execution;",
+            "TRUNCATE TABLE stock_account_cash_flow;",
+            "TRUNCATE TABLE stock_holding_snapshot;",
+            "TRUNCATE TABLE stock_market_close_run;",
+            "TRUNCATE TABLE stock_holding;",
+            "TRUNCATE TABLE portfolio_snapshot;",
+            "TRUNCATE TABLE stock_order;",
+            "TRUNCATE TABLE stock_price_tick;",
+            "TRUNCATE TABLE stock_corporate_action;",
+            "INSERT INTO stock_simulation_clock(",
+            "ON DUPLICATE KEY UPDATE",
+            "accumulated_real_seconds = 0",
+            "running = false",
+            "last_started_at = null",
+            "last_heartbeat_at = null",
+            "INSERT INTO stock_price(symbol, current_price, previous_close, price_time, provider)",
+            "CAST(base_simulation_date AS DATETIME)",
+            "'runtime-history-reset'",
+            "current_price = VALUES(current_price)",
+            "INSERT INTO stock_holding(account_id, symbol, quantity, reserved_quantity, average_price, updated_at)",
+            "FROM stock_listing_auto_account_config c",
+            "JOIN stock_order_book_market_config m",
+            "m.market_status = 'OPEN'",
+            "JOIN stock_price p",
+            "i.tradable_shares",
+            "c.position_side = 'SELL_ONLY'"
+    );
+
+    private static final List<String> CLEAR_RUNTIME_HISTORY_KEEP_PARTICIPANTS_FORBIDDEN_TRUNCATES = List.of(
+            "TRUNCATE TABLE stock_batch_job_lock;",
+            "TRUNCATE TABLE stock_batch_job_control;",
+            "TRUNCATE TABLE stock_account;",
+            "TRUNCATE TABLE stock_auto_participant;",
+            "TRUNCATE TABLE stock_auto_participant_profile_config;",
+            "TRUNCATE TABLE stock_auto_participant_symbol_config;",
+            "TRUNCATE TABLE stock_auto_market_config;",
+            "TRUNCATE TABLE stock_listing_auto_account_config;",
+            "TRUNCATE TABLE stock_price;",
+            "TRUNCATE TABLE stock_simulation_clock;",
+            "TRUNCATE TABLE stock_virtual_market_config;",
+            "TRUNCATE TABLE stock_order_book_market_config;",
+            "TRUNCATE TABLE stock_order_book_instrument;",
+            "TRUNCATE TABLE stock_instrument;",
+            "WHERE status = 'ACTIVE';",
+            "TIMESTAMP(CURDATE())"
+    );
+
     @Test
     void stockAllSql_createsSchemaWithoutDefaultMarketSeed() throws IOException {
         String ddl = readStockAllSql();
@@ -109,10 +180,22 @@ class StockMysqlDdlContractTest {
         assertThat(ddl).contains("KEY idx_stock_order_order_book_match (symbol, side, order_type, status, limit_price, created_at)");
         assertThat(ddl).contains(ADMIN_QUERY_INDEX_MARKERS.toArray(String[]::new));
         assertThat(ddl).contains(BATCH_OPERATION_TABLE_MARKERS.toArray(String[]::new));
+        assertThat(ddl).contains(SIMULATION_CLOCK_TABLE_MARKERS.toArray(String[]::new));
         assertThat(ddl).contains(MARKET_CLOSE_SNAPSHOT_TABLE_MARKERS.toArray(String[]::new));
         assertThat(ddl).doesNotContain(
                 DEFAULT_SEED_MARKERS.toArray(String[]::new)
         );
+    }
+
+    @Test
+    void stockAllSql_matchesStockBatchServiceMysqlDdl() throws IOException {
+        String stockBackDdl = readStockAllSql();
+        String stockBatchDdl = Files.readString(
+                Path.of("../stock-batch-service/src/main/resources/db/ddl/stock_all.sql"),
+                StandardCharsets.UTF_8
+        );
+
+        assertThat(stockBackDdl).isEqualTo(stockBatchDdl);
     }
 
     @Test
@@ -177,6 +260,34 @@ class StockMysqlDdlContractTest {
         }
     }
 
+    @Test
+    void stockClearDataMaintenanceSql_clearsSimulationTradeHistoryAndClock() throws IOException {
+        String stockAllDdl = readStockAllSql();
+        String maintenanceSql = Files.readString(
+                Path.of("src/main/resources/db/maintenance/stock_clear_data.sql"),
+                StandardCharsets.UTF_8
+        );
+
+        assertThat(firstExecutableSqlLine(maintenanceSql)).isEqualTo("USE STOCK_SERVICE;");
+        assertThat(maintenanceSql).contains(CLEAR_DATA_REQUIRED_TRUNCATES.toArray(String[]::new));
+        assertThat(extractCreateTableNames(stockAllDdl))
+                .allSatisfy(tableName -> assertThat(maintenanceSql)
+                        .as(tableName)
+                        .contains("TRUNCATE TABLE " + tableName + ";"));
+    }
+
+    @Test
+    void stockClearRuntimeHistoryKeepParticipantsSql_preservesParticipantsAndMarketConfiguration() throws IOException {
+        String maintenanceSql = Files.readString(
+                Path.of("src/main/resources/db/maintenance/stock_clear_runtime_history_keep_participants.sql"),
+                StandardCharsets.UTF_8
+        );
+
+        assertThat(firstExecutableSqlLine(maintenanceSql)).isEqualTo("USE STOCK_SERVICE;");
+        assertThat(maintenanceSql).contains(CLEAR_RUNTIME_HISTORY_KEEP_PARTICIPANTS_REQUIRED_MARKERS.toArray(String[]::new));
+        assertThat(maintenanceSql).doesNotContain(CLEAR_RUNTIME_HISTORY_KEEP_PARTICIPANTS_FORBIDDEN_TRUNCATES.toArray(String[]::new));
+    }
+
     private String readStockAllSql() throws IOException {
         return readDdlResource("db/ddl/stock_all.sql");
     }
@@ -223,5 +334,13 @@ class StockMysqlDdlContractTest {
                 .filter(line -> !line.isEmpty())
                 .reduce((left, right) -> left + "\n" + right)
                 .orElse("");
+    }
+
+    private List<String> extractCreateTableNames(String ddl) {
+        return Pattern.compile("^CREATE TABLE IF NOT EXISTS\\s+([a-zA-Z0-9_]+)\\s*\\(", Pattern.MULTILINE)
+                .matcher(ddl)
+                .results()
+                .map(match -> match.group(1))
+                .toList();
     }
 }

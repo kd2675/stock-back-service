@@ -35,6 +35,18 @@ public class StockBatchAdminClient {
     private static final String CASH_FLOW_RUN_PATH = "/internal/stock-batch/v1/jobs/auto-participant-cash-flow/run";
     private static final String MARKET_CLOSE_ROLLOVER_RUN_PATH = "/internal/stock-batch/v1/jobs/market-close/rollover";
     private static final String RUNTIME_CONTROLS_PATH = "/internal/stock-batch/v1/jobs/runtime-controls";
+    private static final ParameterizedTypeReference<ResponseDataDTO<AutoParticipantCashFlowStatusResponse>>
+            CASH_FLOW_STATUS_RESPONSE_TYPE = new ParameterizedTypeReference<>() {
+    };
+    private static final ParameterizedTypeReference<ResponseDataDTO<StockBatchJobRunResponse>>
+            JOB_RUN_RESPONSE_TYPE = new ParameterizedTypeReference<>() {
+    };
+    private static final ParameterizedTypeReference<ResponseDataDTO<List<BatchJobRuntimeStatusResponse>>>
+            RUNTIME_STATUS_LIST_RESPONSE_TYPE = new ParameterizedTypeReference<>() {
+    };
+    private static final ParameterizedTypeReference<ResponseDataDTO<BatchJobRuntimeStatusResponse>>
+            RUNTIME_STATUS_RESPONSE_TYPE = new ParameterizedTypeReference<>() {
+    };
 
     private final RestClient restClient;
     private final String internalToken;
@@ -68,77 +80,54 @@ public class StockBatchAdminClient {
     }
 
     public AutoParticipantCashFlowStatusResponse getAutoParticipantCashFlowStatus() {
-        return invokeBatchApi(
+        return getBatchApi(
                 "월급 지급 배치 상태를 조회하지 못했습니다.",
-                () -> restClient.get()
-                    .uri(CASH_FLOW_STATUS_PATH)
-                    .headers(this::applyInternalHeaders)
-                    .retrieve()
-                    .body(new ParameterizedTypeReference<>() {
-                    })
+                CASH_FLOW_STATUS_PATH,
+                CASH_FLOW_STATUS_RESPONSE_TYPE
         );
     }
 
     public AutoParticipantCashFlowStatusResponse updateAutoParticipantCashFlowStatus(
             AutoParticipantCashFlowControlRequest request
     ) {
-        return invokeBatchApi(
+        return patchBatchApi(
                 "월급 지급 배치 상태를 변경하지 못했습니다.",
-                () -> restClient.patch()
-                    .uri(CASH_FLOW_STATUS_PATH)
-                    .headers(this::applyInternalHeaders)
-                    .body(request)
-                    .retrieve()
-                    .body(new ParameterizedTypeReference<>() {
-                    })
+                CASH_FLOW_STATUS_PATH,
+                request,
+                CASH_FLOW_STATUS_RESPONSE_TYPE
         );
     }
 
     public StockBatchJobRunResponse runAutoParticipantCashFlow() {
-        return invokeBatchApi(
+        return postBatchApi(
                 "월급 지급 배치를 실행하지 못했습니다.",
-                () -> restClient.post()
-                    .uri(CASH_FLOW_RUN_PATH)
-                    .headers(this::applyInternalHeaders)
-                    .retrieve()
-                    .body(new ParameterizedTypeReference<>() {
-                    })
+                CASH_FLOW_RUN_PATH,
+                JOB_RUN_RESPONSE_TYPE
         );
     }
 
     public StockBatchJobRunResponse runMarketCloseRollover() {
-        return invokeBatchApi(
+        return postBatchApi(
                 "장마감 롤오버 배치를 실행하지 못했습니다.",
-                () -> restClient.post()
-                    .uri(MARKET_CLOSE_ROLLOVER_RUN_PATH)
-                    .headers(this::applyInternalHeaders)
-                    .retrieve()
-                    .body(new ParameterizedTypeReference<>() {
-                    })
+                MARKET_CLOSE_ROLLOVER_RUN_PATH,
+                JOB_RUN_RESPONSE_TYPE
         );
     }
 
     public StockBatchJobRunResponse runMarketCloseRollover(String symbol) {
-        return invokeBatchApi(
+        return postBatchApi(
                 "종목 장마감 롤오버 배치를 실행하지 못했습니다.",
-                () -> restClient.post()
-                    .uri(MARKET_CLOSE_ROLLOVER_RUN_PATH + "/{symbol}", symbol)
-                    .headers(this::applyInternalHeaders)
-                    .retrieve()
-                    .body(new ParameterizedTypeReference<>() {
-                    })
+                MARKET_CLOSE_ROLLOVER_RUN_PATH + "/{symbol}",
+                symbol,
+                JOB_RUN_RESPONSE_TYPE
         );
     }
 
     public List<BatchJobRuntimeStatusResponse> getBatchJobRuntimeControls() {
-        return invokeBatchApi(
+        return getBatchApi(
                 "배치 자동 실행 상태를 조회하지 못했습니다.",
-                () -> restClient.get()
-                    .uri(RUNTIME_CONTROLS_PATH)
-                    .headers(this::applyInternalHeaders)
-                    .retrieve()
-                    .body(new ParameterizedTypeReference<>() {
-                    })
+                RUNTIME_CONTROLS_PATH,
+                RUNTIME_STATUS_LIST_RESPONSE_TYPE
         );
     }
 
@@ -146,15 +135,93 @@ public class StockBatchAdminClient {
             String jobName,
             BatchJobRuntimeControlRequest request
     ) {
-        return invokeBatchApi(
+        return patchBatchApi(
                 "배치 자동 실행 상태를 변경하지 못했습니다.",
+                RUNTIME_CONTROLS_PATH + "/{jobName}",
+                jobName,
+                request,
+                RUNTIME_STATUS_RESPONSE_TYPE
+        );
+    }
+
+    private <T> T getBatchApi(
+            String message,
+            String path,
+            ParameterizedTypeReference<ResponseDataDTO<T>> responseType
+    ) {
+        return invokeBatchApi(
+                message,
+                () -> restClient.get()
+                        .uri(path)
+                        .headers(this::applyInternalHeaders)
+                        .retrieve()
+                        .body(responseType)
+        );
+    }
+
+    private <T> T postBatchApi(
+            String message,
+            String path,
+            ParameterizedTypeReference<ResponseDataDTO<T>> responseType
+    ) {
+        return invokeBatchApi(
+                message,
+                () -> restClient.post()
+                        .uri(path)
+                        .headers(this::applyInternalHeaders)
+                        .retrieve()
+                        .body(responseType)
+        );
+    }
+
+    private <T> T postBatchApi(
+            String message,
+            String path,
+            Object uriVariable,
+            ParameterizedTypeReference<ResponseDataDTO<T>> responseType
+    ) {
+        return invokeBatchApi(
+                message,
+                () -> restClient.post()
+                        .uri(path, uriVariable)
+                        .headers(this::applyInternalHeaders)
+                        .retrieve()
+                        .body(responseType)
+        );
+    }
+
+    private <T> T patchBatchApi(
+            String message,
+            String path,
+            Object request,
+            ParameterizedTypeReference<ResponseDataDTO<T>> responseType
+    ) {
+        return invokeBatchApi(
+                message,
                 () -> restClient.patch()
-                    .uri(RUNTIME_CONTROLS_PATH + "/{jobName}", jobName)
-                    .headers(this::applyInternalHeaders)
-                    .body(request)
-                    .retrieve()
-                    .body(new ParameterizedTypeReference<>() {
-                    })
+                        .uri(path)
+                        .headers(this::applyInternalHeaders)
+                        .body(request)
+                        .retrieve()
+                        .body(responseType)
+        );
+    }
+
+    private <T> T patchBatchApi(
+            String message,
+            String path,
+            Object uriVariable,
+            Object request,
+            ParameterizedTypeReference<ResponseDataDTO<T>> responseType
+    ) {
+        return invokeBatchApi(
+                message,
+                () -> restClient.patch()
+                        .uri(path, uriVariable)
+                        .headers(this::applyInternalHeaders)
+                        .body(request)
+                        .retrieve()
+                        .body(responseType)
         );
     }
 

@@ -86,6 +86,21 @@ public class StockOrder {
             long quantity,
             BigDecimal reservedCash
     ) {
+        return pending(clientOrderId, accountId, symbol, marketType, side, orderType, limitPrice, quantity, reservedCash, LocalDateTime.now());
+    }
+
+    public static StockOrder pending(
+            String clientOrderId,
+            Long accountId,
+            String symbol,
+            MarketType marketType,
+            OrderSide side,
+            OrderType orderType,
+            BigDecimal limitPrice,
+            long quantity,
+            BigDecimal reservedCash,
+            LocalDateTime createdAt
+    ) {
         StockOrder order = new StockOrder();
         order.clientOrderId = clientOrderId;
         order.accountId = accountId;
@@ -98,27 +113,39 @@ public class StockOrder {
         order.quantity = quantity;
         order.filledQuantity = 0L;
         order.reservedCash = reservedCash;
-        order.createdAt = LocalDateTime.now();
+        order.createdAt = createdAt == null ? LocalDateTime.now() : createdAt;
         order.updatedAt = order.createdAt;
         return order;
     }
 
     public void cancel() {
+        cancel(LocalDateTime.now());
+    }
+
+    public void cancel(LocalDateTime cancelledAt) {
         this.status = OrderStatus.CANCELLED;
         this.reservedCash = BigDecimal.ZERO;
-        this.updatedAt = LocalDateTime.now();
+        this.updatedAt = cancelledAt == null ? LocalDateTime.now() : cancelledAt;
     }
 
     public void amendLimitOrder(long quantity, BigDecimal limitPrice, BigDecimal reservedCash) {
+        amendLimitOrder(quantity, limitPrice, reservedCash, LocalDateTime.now());
+    }
+
+    public void amendLimitOrder(long quantity, BigDecimal limitPrice, BigDecimal reservedCash, LocalDateTime amendedAt) {
         this.quantity = quantity;
         this.limitPrice = limitPrice;
         this.reservedCash = reservedCash;
-        this.updatedAt = LocalDateTime.now();
+        this.updatedAt = amendedAt == null ? LocalDateTime.now() : amendedAt;
     }
 
     public void reduceOpenQuantity(long quantityToCancel, BigDecimal reservedCash) {
+        reduceOpenQuantity(quantityToCancel, reservedCash, LocalDateTime.now());
+    }
+
+    public void reduceOpenQuantity(long quantityToCancel, BigDecimal reservedCash, LocalDateTime cancelledAt) {
         this.quantity = this.quantity - quantityToCancel;
         this.reservedCash = reservedCash;
-        this.updatedAt = LocalDateTime.now();
+        this.updatedAt = cancelledAt == null ? LocalDateTime.now() : cancelledAt;
     }
 }

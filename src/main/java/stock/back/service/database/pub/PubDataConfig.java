@@ -43,8 +43,10 @@ public class PubDataConfig {
     @Bean
     @Primary
     @ConfigurationProperties("database.datasource.pub.master.configure")
-    public DataSource pubMasterDatasource() {
-        return pubMasterDatasourceProperties()
+    public HikariDataSource pubMasterDatasource(
+            @Qualifier("pubMasterDatasourceProperties") DataSourceProperties properties
+    ) {
+        return properties
                 .initializeDataSourceBuilder()
                 .type(HikariDataSource.class)
                 .build();
@@ -58,8 +60,10 @@ public class PubDataConfig {
 
     @Bean
     @ConfigurationProperties("database.datasource.pub.slave1.configure")
-    public DataSource pubSlave1Datasource() {
-        return pubSlave1DatasourceProperties()
+    public HikariDataSource pubSlave1Datasource(
+            @Qualifier("pubSlave1DatasourceProperties") DataSourceProperties properties
+    ) {
+        return properties
                 .initializeDataSourceBuilder()
                 .type(HikariDataSource.class)
                 .build();

@@ -19,9 +19,11 @@ import stock.back.service.database.repository.StockHoldingRepository;
 import stock.back.service.database.repository.StockInstrumentRepository;
 import stock.back.service.database.repository.StockOrderBookInstrumentRepository;
 import stock.back.service.database.repository.StockOrderRepository;
+import stock.back.service.trading.vo.ExecutionResponse;
 import stock.back.service.trading.vo.OrderAmendRequest;
 import stock.back.service.trading.vo.OrderCancelRequest;
 import stock.back.service.trading.vo.OrderRequest;
+import stock.back.service.trading.vo.OrderResponse;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -740,6 +742,50 @@ class TradingServiceTest {
     }
 
     @Test
+    void getOrders_symbolAndLimitFilter_returnsRecentMatchingOrdersOnly() {
+        LocalDateTime baseTime = LocalDateTime.now().minusMinutes(10);
+        for (int index = 0; index < 6; index++) {
+            insertOrder(
+                    "symbol-order-target-" + index,
+                    "user-order-symbol-limit",
+                    "005930",
+                    "ORDER_BOOK",
+                    "BUY",
+                    "LIMIT",
+                    "PENDING",
+                    "70000.00",
+                    1,
+                    0,
+                    null,
+                    "70000.00",
+                    baseTime.plusSeconds(index)
+            );
+            insertOrder(
+                    "symbol-order-other-" + index,
+                    "user-order-symbol-limit",
+                    "000660",
+                    "ORDER_BOOK",
+                    "BUY",
+                    "LIMIT",
+                    "PENDING",
+                    "70000.00",
+                    1,
+                    0,
+                    null,
+                    "70000.00",
+                    baseTime.plusSeconds(index + 100)
+            );
+        }
+
+        var orders = tradingService.getOrders("user-order-symbol-limit", MarketType.ORDER_BOOK, "005930", 3);
+
+        assertThat(orders).hasSize(3);
+        assertThat(orders).allSatisfy(order -> assertThat(order.symbol()).isEqualTo("005930"));
+        assertThat(orders).extracting(OrderResponse::clientOrderId)
+                .containsExactly("symbol-order-target-5", "symbol-order-target-4", "symbol-order-target-3");
+    }
+
+    @Test
     void getExecutions_sourceFilter_returnsMatchingExecutionsBeforeTop50Limit() {
         LocalDateTime oldExecutionTime = LocalDateTime.now().minusDays(1);
         insertExecution(
@@ -775,6 +821,51 @@ class TradingServiceTest {
 
         assertThat(executions).hasSize(1);
         assertThat(executions.get(0).source()).isEqualTo(ExecutionSource.INTERNAL_ORDER_BOOK);
+    }
+
+    @Test
+    void getExecutions_symbolAndLimitFilter_returnsRecentMatchingExecutionsOnly() {
+        LocalDateTime baseTime = LocalDateTime.now().minusMinutes(10);
+        for (int index = 0; index < 6; index++) {
+            insertExecution(
+                    "user-execution-symbol-limit",
+                    "005930",
+                    "BUY",
+                    1,
+                    "70000.00",
+                    "0.00",
+                    "0.00",
+                    "70000.00",
+                    null,
+                    "INTERNAL_ORDER_BOOK",
+                    baseTime.plusSeconds(index)
+            );
+            insertExecution(
+                    "user-execution-symbol-limit",
+                    "000660",
+                    "BUY",
+                    1,
+                    "70000.00",
+                    "0.00",
+                    "0.00",
+                    "70000.00",
+                    null,
+                    "INTERNAL_ORDER_BOOK",
+                    baseTime.plusSeconds(index + 100)
+            );
+        }
+
+        var executions = tradingService.getExecutions(
+                "user-execution-symbol-limit",
+                ExecutionSource.INTERNAL_ORDER_BOOK,
+                "005930",
+                3
+        );
+
+        assertThat(executions).hasSize(3);
+        assertThat(executions).allSatisfy(execution -> assertThat(execution.symbol()).isEqualTo("005930"));
+        assertThat(executions).extracting(ExecutionResponse::executedAt)
+                .containsExactly(baseTime.plusSeconds(5), baseTime.plusSeconds(4), baseTime.plusSeconds(3));
     }
 
     @Test

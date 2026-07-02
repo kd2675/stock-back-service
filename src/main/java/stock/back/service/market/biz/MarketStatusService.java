@@ -18,9 +18,7 @@ import stock.back.service.market.vo.MarketStatusUpdateRequest;
 import stock.back.service.market.vo.SymbolMarketConfigResponse;
 import stock.back.service.market.vo.VirtualMarketStatusResponse;
 
-import java.time.LocalDate;
 import java.util.List;
-import java.util.Locale;
 
 @Service
 @RequiredArgsConstructor
@@ -30,10 +28,11 @@ public class MarketStatusService {
     private final StockOrderBookMarketConfigRepository stockOrderBookMarketConfigRepository;
     private final StockOrderRepository stockOrderRepository;
     private final StockExecutionMarketViewRepository stockExecutionMarketViewRepository;
+    private final SimulationClockService simulationClockService;
 
     @Transactional
     public SymbolMarketConfigResponse updateMarketStatus(MarketType marketType, String symbol, MarketStatusUpdateRequest request) {
-        String normalizedSymbol = normalizeSymbol(symbol);
+        String normalizedSymbol = MarketTextNormalizer.symbol(symbol);
         if (marketType == null) {
             throw StockException.badRequest("Market type is required");
         }
@@ -64,7 +63,7 @@ public class MarketStatusService {
         List<OrderStatus> openStatuses = List.of(OrderStatus.PENDING, OrderStatus.PARTIALLY_FILLED);
         long openOrderCount = stockOrderRepository.countByMarketTypeAndStatusIn(MarketType.VIRTUAL_PRICE, openStatuses);
         long todayExecutionCount = stockExecutionMarketViewRepository.countExecutionsFromBySource(
-                LocalDate.now().atStartOfDay(),
+                simulationClockService.currentMarketDayStart(),
                 ExecutionSource.VIRTUAL_MARKET_PRICE
         );
         return new VirtualMarketStatusResponse(
@@ -99,10 +98,4 @@ public class MarketStatusService {
         return marketStatus == null ? MarketSessionStatus.OPEN : marketStatus;
     }
 
-    private String normalizeSymbol(String symbol) {
-        if (symbol == null) {
-            return "";
-        }
-        return symbol.trim().toUpperCase(Locale.ROOT);
-    }
 }

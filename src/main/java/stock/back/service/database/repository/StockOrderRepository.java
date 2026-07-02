@@ -17,9 +17,18 @@ import java.util.List;
 import java.util.Optional;
 
 public interface StockOrderRepository extends JpaRepository<StockOrder, Long> {
-    List<StockOrder> findTop50ByAccountIdOrderByCreatedAtDesc(Long accountId);
+    List<StockOrder> findByAccountIdOrderByCreatedAtDesc(Long accountId, Pageable pageable);
 
-    List<StockOrder> findTop50ByAccountIdAndMarketTypeOrderByCreatedAtDesc(Long accountId, MarketType marketType);
+    List<StockOrder> findByAccountIdAndMarketTypeOrderByCreatedAtDesc(Long accountId, MarketType marketType, Pageable pageable);
+
+    List<StockOrder> findByAccountIdAndSymbolOrderByCreatedAtDesc(Long accountId, String symbol, Pageable pageable);
+
+    List<StockOrder> findByAccountIdAndMarketTypeAndSymbolOrderByCreatedAtDesc(
+            Long accountId,
+            MarketType marketType,
+            String symbol,
+            Pageable pageable
+    );
 
     Optional<StockOrder> findByClientOrderId(String clientOrderId);
 

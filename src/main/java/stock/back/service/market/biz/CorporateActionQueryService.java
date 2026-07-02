@@ -15,7 +15,6 @@ import stock.back.service.market.vo.CorporateActionEntitlementResponse;
 import stock.back.service.market.vo.CorporateActionResponse;
 
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -31,7 +30,7 @@ public class CorporateActionQueryService {
 
     @Transactional(readOnly = true)
     public List<CorporateActionResponse> getCorporateActions(String symbol) {
-        String normalizedSymbol = normalizeSymbol(symbol);
+        String normalizedSymbol = MarketTextNormalizer.symbol(symbol);
         if (normalizedSymbol.isBlank()) {
             throw StockException.badRequest("Symbol is required");
         }
@@ -109,7 +108,4 @@ public class CorporateActionQueryService {
         );
     }
 
-    private String normalizeSymbol(String symbol) {
-        return symbol == null ? "" : symbol.trim().toUpperCase(Locale.ROOT);
-    }
 }

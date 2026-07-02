@@ -55,9 +55,11 @@ public class TradingController {
     @GetMapping("/orders")
     public ResponseDataDTO<List<OrderResponse>> getOrders(
             UserContext userContext,
-            @RequestParam(required = false) MarketType marketType
+            @RequestParam(required = false) MarketType marketType,
+            @RequestParam(required = false) String symbol,
+            @RequestParam(required = false) Integer limit
     ) {
-        return ResponseDataDTO.of(tradingService.getOrders(userContext.getUserKey(), marketType));
+        return ResponseDataDTO.of(tradingService.getOrders(userContext.getUserKey(), marketType, symbol, limit));
     }
 
     @PostMapping("/orders")
@@ -94,9 +96,11 @@ public class TradingController {
     @GetMapping("/executions")
     public ResponseDataDTO<List<ExecutionResponse>> getExecutions(
             UserContext userContext,
-            @RequestParam(required = false) ExecutionSource source
+            @RequestParam(required = false) ExecutionSource source,
+            @RequestParam(required = false) String symbol,
+            @RequestParam(required = false) Integer limit
     ) {
-        return ResponseDataDTO.of(tradingService.getExecutions(userContext.getUserKey(), source));
+        return ResponseDataDTO.of(tradingService.getExecutions(userContext.getUserKey(), source, symbol, limit));
     }
 
     @GetMapping("/holdings")

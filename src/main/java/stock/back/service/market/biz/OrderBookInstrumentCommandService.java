@@ -1,7 +1,7 @@
 package stock.back.service.market.biz;
 
-import lombok.RequiredArgsConstructor;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import stock.back.service.common.exception.StockException;
@@ -27,7 +27,6 @@ import java.time.LocalDateTime;
 import java.util.Locale;
 
 @Service
-@RequiredArgsConstructor
 public class OrderBookInstrumentCommandService {
 
     private static final String LISTING_SUPPLY_USER_KEY_PREFIX = "stock-listing-";
@@ -40,12 +39,37 @@ public class OrderBookInstrumentCommandService {
     private final StockCorporateActionRepository stockCorporateActionRepository;
     private final StockListingAutoAccountConfigRepository stockListingAutoAccountConfigRepository;
     private final JdbcTemplate jdbcTemplate;
+    private final JdbcClient jdbcClient;
+    private final SimulationClockService simulationClockService;
+
+    public OrderBookInstrumentCommandService(
+            StockInstrumentRepository stockInstrumentRepository,
+            StockPriceRepository stockPriceRepository,
+            StockAutoMarketConfigRepository stockAutoMarketConfigRepository,
+            StockOrderBookInstrumentRepository stockOrderBookInstrumentRepository,
+            StockOrderBookMarketConfigRepository stockOrderBookMarketConfigRepository,
+            StockCorporateActionRepository stockCorporateActionRepository,
+            StockListingAutoAccountConfigRepository stockListingAutoAccountConfigRepository,
+            JdbcTemplate jdbcTemplate,
+            SimulationClockService simulationClockService
+    ) {
+        this.stockInstrumentRepository = stockInstrumentRepository;
+        this.stockPriceRepository = stockPriceRepository;
+        this.stockAutoMarketConfigRepository = stockAutoMarketConfigRepository;
+        this.stockOrderBookInstrumentRepository = stockOrderBookInstrumentRepository;
+        this.stockOrderBookMarketConfigRepository = stockOrderBookMarketConfigRepository;
+        this.stockCorporateActionRepository = stockCorporateActionRepository;
+        this.stockListingAutoAccountConfigRepository = stockListingAutoAccountConfigRepository;
+        this.jdbcTemplate = jdbcTemplate;
+        this.jdbcClient = JdbcClient.create(jdbcTemplate);
+        this.simulationClockService = simulationClockService;
+    }
 
     @Transactional
     public OrderBookInstrumentResponse createOrderBookInstrument(OrderBookInstrumentRequest request) {
-        String symbol = normalizeSymbol(request == null ? null : request.symbol());
-        String name = normalizeText(request == null ? null : request.name());
-        String market = normalizeText(request == null ? null : request.market());
+        String symbol = MarketTextNormalizer.symbol(request == null ? null : request.symbol());
+        String name = MarketTextNormalizer.text(request == null ? null : request.name());
+        String market = MarketTextNormalizer.text(request == null ? null : request.market());
         if (symbol.isBlank()) {
             throw StockException.badRequest("Symbol is required");
         }
@@ -68,13 +92,14 @@ public class OrderBookInstrumentCommandService {
         StockOrderBookInstrument instrument = stockOrderBookInstrumentRepository.save(
                 StockOrderBookInstrument.listed(symbol, name, market, request.initialPrice(), request.issuedShares(), tickSize, priceLimitRate)
         );
+        LocalDateTime now = simulationClockService.currentMarketDateTime();
         stockCorporateActionRepository.save(
-                StockCorporateAction.initialIssue(symbol, request.issuedShares(), request.initialPrice())
+                StockCorporateAction.initialIssue(symbol, request.issuedShares(), request.initialPrice(), now)
         );
         stockOrderBookMarketConfigRepository.save(StockOrderBookMarketConfig.enabled(symbol));
         stockAutoMarketConfigRepository.save(StockAutoMarketConfig.defaults(symbol));
-        stockPriceRepository.save(StockPrice.initial(symbol, request.initialPrice()));
-        seedListingAutoAccount(symbol, name, request.initialPrice(), request.issuedShares(), request.listingAutoAccount());
+        stockPriceRepository.save(StockPrice.initial(symbol, request.initialPrice(), now));
+        seedListingAutoAccount(symbol, name, request.initialPrice(), request.issuedShares(), request.listingAutoAccount(), now);
         return OrderBookInstrumentResponseMapper.toResponse(instrument, findPrice(instrument));
     }
 
@@ -109,11 +134,11 @@ public class OrderBookInstrumentCommandService {
             String name,
             BigDecimal initialPrice,
             long tradableShares,
-            ListingAutoAccountRequest request
+            ListingAutoAccountRequest request,
+            LocalDateTime now
     ) {
-        LocalDateTime now = LocalDateTime.now();
         String listingUserKey = LISTING_SUPPLY_USER_KEY_PREFIX + symbol.toLowerCase(Locale.ROOT);
-        String displayName = normalizeText(request == null ? null : request.displayName());
+        String displayName = MarketTextNormalizer.text(request == null ? null : request.displayName());
         if (displayName.isBlank()) {
             displayName = name + " 상장주관사";
         }
@@ -131,14 +156,11 @@ public class OrderBookInstrumentCommandService {
                 now,
                 now
         );
-        Long accountId = jdbcTemplate.queryForObject(
-                "select id from stock_account where user_key = ?",
-                Long.class,
-                listingUserKey
-        );
-        if (accountId == null) {
-            throw StockException.notFound("Listing supply account not found after opening");
-        }
+        Long accountId = jdbcClient.sql("select id from stock_account where user_key = ?")
+                .param(listingUserKey)
+                .query(Long.class)
+                .optional()
+                .orElseThrow(() -> StockException.notFound("Listing supply account not found after opening"));
         jdbcTemplate.update(
                 """
                 insert into stock_holding(
@@ -172,14 +194,4 @@ public class OrderBookInstrumentCommandService {
         return stockPriceRepository.findById(instrument.getSymbol()).orElse(null);
     }
 
-    private String normalizeSymbol(String symbol) {
-        return symbol == null ? "" : symbol.trim().toUpperCase(Locale.ROOT);
-    }
-
-    private String normalizeText(String value) {
-        if (value == null || value.isBlank()) {
-            return "";
-        }
-        return value.trim();
-    }
 }

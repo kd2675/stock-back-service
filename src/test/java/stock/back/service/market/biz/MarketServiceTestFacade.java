@@ -1,9 +1,6 @@
 package stock.back.service.market.biz;
 
-import lombok.RequiredArgsConstructor;
-import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import stock.back.service.database.entity.OrderSide;
 import stock.back.service.database.entity.MarketType;
 import stock.back.service.market.vo.AutoMarketConfigResponse;
 import stock.back.service.market.vo.AutoMarketConfigUpdateRequest;
@@ -45,13 +42,9 @@ import stock.back.service.market.vo.RankingResponse;
 import stock.back.service.market.vo.SymbolMarketConfigResponse;
 import stock.back.service.market.vo.VirtualMarketStatusResponse;
 
-import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 
-@Service
-@RequiredArgsConstructor
-public class MarketService {
+public class MarketServiceTestFacade {
 
     private final OrderBookInstrumentCommandService orderBookInstrumentCommandService;
     private final MarketCatalogQueryService marketCatalogQueryService;
@@ -70,6 +63,44 @@ public class MarketService {
     private final OrderBookMarketStatusQueryService orderBookMarketStatusQueryService;
     private final OrderBookQueryService orderBookQueryService;
     private final OrderBookCandleQueryService orderBookCandleQueryService;
+
+    public MarketServiceTestFacade(
+            OrderBookInstrumentCommandService orderBookInstrumentCommandService,
+            MarketCatalogQueryService marketCatalogQueryService,
+            InstrumentReportService instrumentReportService,
+            AutoParticipantCashAdjustmentService autoParticipantCashAdjustmentService,
+            AutoParticipantManagementService autoParticipantManagementService,
+            AutoParticipantProfileConfigService autoParticipantProfileConfigService,
+            AutoParticipantSymbolConfigService autoParticipantSymbolConfigService,
+            AutoMarketConfigService autoMarketConfigService,
+            MarketStatusService marketStatusService,
+            CorporateActionCommandService corporateActionCommandService,
+            CorporateActionQueryService corporateActionQueryService,
+            AdminFlowQueryService adminFlowQueryService,
+            AutoParticipantOverviewQueryService autoParticipantOverviewQueryService,
+            AutoMarketStatusQueryService autoMarketStatusQueryService,
+            OrderBookMarketStatusQueryService orderBookMarketStatusQueryService,
+            OrderBookQueryService orderBookQueryService,
+            OrderBookCandleQueryService orderBookCandleQueryService
+    ) {
+        this.orderBookInstrumentCommandService = orderBookInstrumentCommandService;
+        this.marketCatalogQueryService = marketCatalogQueryService;
+        this.instrumentReportService = instrumentReportService;
+        this.autoParticipantCashAdjustmentService = autoParticipantCashAdjustmentService;
+        this.autoParticipantManagementService = autoParticipantManagementService;
+        this.autoParticipantProfileConfigService = autoParticipantProfileConfigService;
+        this.autoParticipantSymbolConfigService = autoParticipantSymbolConfigService;
+        this.autoMarketConfigService = autoMarketConfigService;
+        this.marketStatusService = marketStatusService;
+        this.corporateActionCommandService = corporateActionCommandService;
+        this.corporateActionQueryService = corporateActionQueryService;
+        this.adminFlowQueryService = adminFlowQueryService;
+        this.autoParticipantOverviewQueryService = autoParticipantOverviewQueryService;
+        this.autoMarketStatusQueryService = autoMarketStatusQueryService;
+        this.orderBookMarketStatusQueryService = orderBookMarketStatusQueryService;
+        this.orderBookQueryService = orderBookQueryService;
+        this.orderBookCandleQueryService = orderBookCandleQueryService;
+    }
 
     @Transactional(readOnly = true)
     public List<InstrumentResponse> getInstruments() {

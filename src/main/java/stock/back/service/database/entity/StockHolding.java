@@ -51,6 +51,10 @@ public class StockHolding {
     }
 
     public void reserveQuantity(long quantityToReserve) {
+        reserveQuantity(quantityToReserve, LocalDateTime.now());
+    }
+
+    public void reserveQuantity(long quantityToReserve, LocalDateTime updatedAt) {
         if (quantityToReserve <= 0) {
             throw new IllegalArgumentException("Reserved quantity must be positive");
         }
@@ -58,15 +62,19 @@ public class StockHolding {
             throw new IllegalArgumentException("Not enough available holding quantity");
         }
         this.reservedQuantity = (reservedQuantity == null ? 0L : reservedQuantity) + quantityToReserve;
-        this.updatedAt = LocalDateTime.now();
+        this.updatedAt = updatedAt == null ? LocalDateTime.now() : updatedAt;
     }
 
     public void releaseReservedQuantity(long quantityToRelease) {
+        releaseReservedQuantity(quantityToRelease, LocalDateTime.now());
+    }
+
+    public void releaseReservedQuantity(long quantityToRelease, LocalDateTime updatedAt) {
         if (quantityToRelease <= 0) {
             return;
         }
         long reserved = reservedQuantity == null ? 0L : reservedQuantity;
         this.reservedQuantity = Math.max(0L, reserved - quantityToRelease);
-        this.updatedAt = LocalDateTime.now();
+        this.updatedAt = updatedAt == null ? LocalDateTime.now() : updatedAt;
     }
 }

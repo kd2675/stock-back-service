@@ -7,32 +7,21 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import stock.back.service.common.exception.StockException;
-import stock.back.service.database.entity.OrderSide;
-import stock.back.service.database.entity.OrderStatus;
 import stock.back.service.database.entity.StockAccount;
 import stock.back.service.database.entity.StockAccountCashFlow;
 import stock.back.service.database.entity.StockAccountStatus;
 import stock.back.service.database.repository.StockAccountCashFlowRepository;
-import stock.back.service.database.repository.StockHoldingRepository;
 import stock.back.service.database.repository.StockAccountRepository;
+import stock.back.service.market.biz.SimulationClockService;
 import stock.back.service.trading.vo.AccountCashAdjustmentRequest;
 import stock.back.service.trading.vo.AccountCashAdjustmentResponse;
 import stock.back.service.trading.vo.AccountReconnectRequest;
 import stock.back.service.trading.vo.AccountResponse;
 
 import java.math.BigDecimal;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
-import java.security.SecureRandom;
 import java.time.LocalDateTime;
-import java.util.HexFormat;
-import java.util.List;
 import java.util.Locale;
-import java.util.Map;
 import java.util.Optional;
-import java.util.UUID;
-import java.util.regex.Pattern;
 
 @Service
 @RequiredArgsConstructor
@@ -40,14 +29,13 @@ public class AccountService {
 
     private static final int RECOVERY_DAYS = 30;
     private static final int PURGE_DAYS = 90;
-    private static final Pattern ACCOUNT_CODE_PATTERN = Pattern.compile("^[A-Z0-9-]{6,32}$");
-    private static final char[] RECOVERY_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789".toCharArray();
 
     private final StockAccountRepository stockAccountRepository;
     private final StockAccountCashFlowRepository stockAccountCashFlowRepository;
-    private final StockHoldingRepository stockHoldingRepository;
     private final JdbcTemplate jdbcTemplate;
-    private final SecureRandom secureRandom = new SecureRandom();
+    private final AccountOrderCleanupService accountOrderCleanupService;
+    private final SimulationClockService simulationClockService;
+    private final AccountRecoveryCredentialGenerator credentialGenerator = new AccountRecoveryCredentialGenerator();
 
     @Value("${stock.trading.opening-grant-amount:10000000}")
     private BigDecimal openingGrantAmount;
@@ -106,13 +94,13 @@ public class AccountService {
     @Transactional
     public AccountResponse detachAccount(String userKey) {
         StockAccount account = requireAccountForUpdate(userKey);
-        cancelOpenOrdersForDetach(account);
-        account.assignAccountCodeIfMissing(generateAccountCode());
-        String recoveryCode = generateRecoveryCode();
+        accountOrderCleanupService.cancelOpenOrdersForDetach(account);
+        account.assignAccountCodeIfMissing(credentialGenerator.generateAccountCode());
+        String recoveryCode = credentialGenerator.generateRecoveryCode();
         LocalDateTime now = LocalDateTime.now();
         account.detach(
-                hashValue(userKey),
-                hashRecoveryCode(recoveryCode),
+                credentialGenerator.hashValue(userKey),
+                credentialGenerator.hashRecoveryCode(recoveryCode),
                 recoveryCode,
                 now.plusDays(RECOVERY_DAYS),
                 now.plusDays(PURGE_DAYS)
@@ -126,8 +114,8 @@ public class AccountService {
         if (findAccount(userKey).isPresent()) {
             throw StockException.conflict("Active account already exists");
         }
-        String accountCode = normalizeAccountCode(request == null ? null : request.accountCode());
-        String recoveryCode = normalizeRecoveryCode(request == null ? null : request.recoveryCode());
+        String accountCode = credentialGenerator.normalizeAccountCode(request == null ? null : request.accountCode());
+        String recoveryCode = credentialGenerator.normalizeRecoveryCode(request == null ? null : request.recoveryCode());
         StockAccount account = stockAccountRepository.findByAccountCodeForUpdate(accountCode)
                 .orElseThrow(() -> StockException.notFound("Recoverable account not found"));
         if (account.isActive()) {
@@ -144,11 +132,11 @@ public class AccountService {
         if (account.getRecoveryExpiresAt() != null && now.isAfter(account.getRecoveryExpiresAt())) {
             throw StockException.conflict("Account recovery code expired");
         }
-        if (!matchesRecoveryCode(recoveryCode, account.getRecoveryCodeHash())) {
+        if (!credentialGenerator.matchesRecoveryCode(recoveryCode, account.getRecoveryCodeHash())) {
             throw StockException.unauthorized("Invalid recovery code");
         }
-        String nextRecoveryCode = generateRecoveryCode();
-        account.reconnect(userKey, hashRecoveryCode(nextRecoveryCode), nextRecoveryCode);
+        String nextRecoveryCode = credentialGenerator.generateRecoveryCode();
+        account.reconnect(userKey, credentialGenerator.hashRecoveryCode(nextRecoveryCode), nextRecoveryCode);
         return toResponse(account);
     }
 
@@ -163,20 +151,21 @@ public class AccountService {
         if (amount == null || amount.compareTo(BigDecimal.ZERO) <= 0) {
             throw StockException.badRequest("Adjustment amount must be positive");
         }
-        String adjustmentType = normalizeText(request.adjustmentType()).toUpperCase(Locale.ROOT);
+        String adjustmentType = normalizeAdjustmentType(request == null ? null : request.adjustmentType());
         if (!"DEPOSIT".equals(adjustmentType) && !"WITHDRAW".equals(adjustmentType)) {
             throw StockException.badRequest("Adjustment type must be DEPOSIT or WITHDRAW");
         }
 
         StockAccount account = stockAccountRepository.findByUserKeyAndStatusForUpdate(userKey, StockAccountStatus.ACTIVE)
                 .orElseThrow(() -> StockException.notFound("User account is not opened yet: " + userKey));
+        LocalDateTime createdAt = simulationClockService.currentMarketDateTime();
         if ("DEPOSIT".equals(adjustmentType)) {
-            account.depositCash(amount);
-            stockAccountCashFlowRepository.save(StockAccountCashFlow.adminDeposit(account.getId(), amount, normalizeText(adminUserKey)));
-        } else if (!account.withdrawCash(amount)) {
+            account.depositCash(amount, createdAt);
+            stockAccountCashFlowRepository.save(StockAccountCashFlow.adminDeposit(account.getId(), amount, normalizeText(adminUserKey), createdAt));
+        } else if (!account.withdrawCash(amount, createdAt)) {
             throw StockException.badRequest("Insufficient user cash balance");
         } else {
-            stockAccountCashFlowRepository.save(StockAccountCashFlow.adminWithdraw(account.getId(), amount, normalizeText(adminUserKey)));
+            stockAccountCashFlowRepository.save(StockAccountCashFlow.adminWithdraw(account.getId(), amount, normalizeText(adminUserKey), createdAt));
         }
 
         return new AccountCashAdjustmentResponse(
@@ -199,6 +188,10 @@ public class AccountService {
         return value == null ? "" : value.trim();
     }
 
+    private String normalizeAdjustmentType(String value) {
+        return normalizeText(value).toUpperCase(Locale.ROOT);
+    }
+
     public AccountResponse toResponse(StockAccount account) {
         return new AccountResponse(
                 account.getId(),
@@ -216,12 +209,14 @@ public class AccountService {
 
     private StockAccount openAccountAfterCreateRace(String userKey) {
         try {
-            String recoveryCode = generateRecoveryCode();
+            String recoveryCode = credentialGenerator.generateRecoveryCode();
+            LocalDateTime createdAt = simulationClockService.currentMarketDateTime();
             StockAccount account = stockAccountRepository.saveAndFlush(StockAccount.open(
                     userKey,
-                    generateAccountCode(),
-                    hashRecoveryCode(recoveryCode),
-                    recoveryCode
+                    credentialGenerator.generateAccountCode(),
+                    credentialGenerator.hashRecoveryCode(recoveryCode),
+                    recoveryCode,
+                    createdAt
             ));
             applyOpeningGrant(account);
             return account;
@@ -233,9 +228,9 @@ public class AccountService {
     }
 
     private StockAccount issueRecoveryCredentials(StockAccount account) {
-        account.assignAccountCodeIfMissing(generateAccountCode());
-        String recoveryCode = generateRecoveryCode();
-        account.issueRecoveryCode(hashRecoveryCode(recoveryCode), recoveryCode);
+        account.assignAccountCodeIfMissing(credentialGenerator.generateAccountCode());
+        String recoveryCode = credentialGenerator.generateRecoveryCode();
+        account.issueRecoveryCode(credentialGenerator.hashRecoveryCode(recoveryCode), recoveryCode);
         return account;
     }
 
@@ -255,8 +250,8 @@ public class AccountService {
     }
 
     private void insertAccount(String userKey) {
-        LocalDateTime now = LocalDateTime.now();
-        String recoveryCode = generateRecoveryCode();
+        LocalDateTime now = simulationClockService.currentMarketDateTime();
+        String recoveryCode = credentialGenerator.generateRecoveryCode();
         jdbcTemplate.update(
                 """
                 insert into stock_account(
@@ -266,8 +261,8 @@ public class AccountService {
                 values (?, ?, ?, 'ACTIVE', 0.00, ?, ?)
                 """,
                 userKey,
-                generateAccountCode(),
-                hashRecoveryCode(recoveryCode),
+                credentialGenerator.generateAccountCode(),
+                credentialGenerator.hashRecoveryCode(recoveryCode),
                 now,
                 now
         );
@@ -277,120 +272,13 @@ public class AccountService {
         if (openingGrantAmount == null || openingGrantAmount.compareTo(BigDecimal.ZERO) <= 0) {
             return;
         }
-        account.depositCash(openingGrantAmount);
-        stockAccountCashFlowRepository.save(StockAccountCashFlow.openingGrant(account.getId(), openingGrantAmount));
-    }
-
-    private void cancelOpenOrdersForDetach(StockAccount account) {
-        List<String> openStatuses = List.of(OrderStatus.PENDING.name(), OrderStatus.PARTIALLY_FILLED.name());
-        BigDecimal reservedBuyCash = jdbcTemplate.queryForObject(
-                """
-                select coalesce(sum(reserved_cash), 0)
-                  from stock_order
-                 where account_id = ?
-                   and side = ?
-                   and status in (?, ?)
-                """,
-                BigDecimal.class,
+        LocalDateTime createdAt = simulationClockService.currentMarketDateTime();
+        account.depositCash(openingGrantAmount, createdAt);
+        stockAccountCashFlowRepository.save(StockAccountCashFlow.openingGrant(
                 account.getId(),
-                OrderSide.BUY.name(),
-                openStatuses.get(0),
-                openStatuses.get(1)
-        );
-        if (reservedBuyCash != null && reservedBuyCash.compareTo(BigDecimal.ZERO) > 0) {
-            account.releaseCash(reservedBuyCash);
-        }
-
-        List<Map<String, Object>> sellReservations = jdbcTemplate.queryForList(
-                """
-                select symbol, coalesce(sum(quantity - filled_quantity), 0) as remaining_quantity
-                  from stock_order
-                 where account_id = ?
-                   and side = ?
-                   and status in (?, ?)
-                 group by symbol
-                """,
-                account.getId(),
-                OrderSide.SELL.name(),
-                openStatuses.get(0),
-                openStatuses.get(1)
-        );
-        for (Map<String, Object> row : sellReservations) {
-            String symbol = String.valueOf(row.get("symbol"));
-            long remainingQuantity = ((Number) row.get("remaining_quantity")).longValue();
-            stockHoldingRepository.findByAccountIdAndSymbolForUpdate(account.getId(), symbol)
-                    .ifPresent(holding -> holding.releaseReservedQuantity(remainingQuantity));
-        }
-
-        jdbcTemplate.update(
-                """
-                update stock_order
-                   set status = 'CANCELLED',
-                       reserved_cash = 0,
-                       updated_at = ?
-                 where account_id = ?
-                   and status in (?, ?)
-                """,
-                LocalDateTime.now(),
-                account.getId(),
-                openStatuses.get(0),
-                openStatuses.get(1)
-        );
+                openingGrantAmount,
+                createdAt
+        ));
     }
 
-    private String normalizeAccountCode(String accountCode) {
-        if (accountCode == null || accountCode.isBlank()) {
-            throw StockException.badRequest("Account code is required");
-        }
-        String normalized = accountCode.trim().toUpperCase(Locale.ROOT);
-        if (!ACCOUNT_CODE_PATTERN.matcher(normalized).matches()) {
-            throw StockException.badRequest("Account code contains invalid characters");
-        }
-        return normalized;
-    }
-
-    private String normalizeRecoveryCode(String recoveryCode) {
-        if (recoveryCode == null || recoveryCode.isBlank()) {
-            throw StockException.badRequest("Recovery code is required");
-        }
-        return recoveryCode.trim().toUpperCase(Locale.ROOT).replace(" ", "");
-    }
-
-    private String generateAccountCode() {
-        return "STK-" + UUID.randomUUID().toString().replace("-", "").substring(0, 12).toUpperCase(Locale.ROOT);
-    }
-
-    private String generateRecoveryCode() {
-        StringBuilder builder = new StringBuilder("RC-");
-        for (int index = 0; index < 12; index++) {
-            if (index > 0 && index % 4 == 0) {
-                builder.append('-');
-            }
-            builder.append(RECOVERY_CODE_ALPHABET[secureRandom.nextInt(RECOVERY_CODE_ALPHABET.length)]);
-        }
-        return builder.toString();
-    }
-
-    private String hashRecoveryCode(String recoveryCode) {
-        return hashValue(normalizeRecoveryCode(recoveryCode));
-    }
-
-    private String hashValue(String value) {
-        try {
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            return HexFormat.of().formatHex(digest.digest(value.getBytes(StandardCharsets.UTF_8)));
-        } catch (NoSuchAlgorithmException ex) {
-            throw new IllegalStateException("SHA-256 digest is not available", ex);
-        }
-    }
-
-    private boolean matchesRecoveryCode(String recoveryCode, String expectedHash) {
-        if (expectedHash == null || expectedHash.isBlank()) {
-            return false;
-        }
-        return MessageDigest.isEqual(
-                hashRecoveryCode(recoveryCode).getBytes(StandardCharsets.UTF_8),
-                expectedHash.getBytes(StandardCharsets.UTF_8)
-        );
-    }
 }

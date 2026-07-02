@@ -90,7 +90,11 @@ public class StockCorporateAction {
     private LocalDateTime createdAt;
 
     public static StockCorporateAction initialIssue(String symbol, long shares, BigDecimal issuePrice) {
-        StockCorporateAction action = create(symbol, StockCorporateActionType.INITIAL_ISSUE, shares, issuePrice, null, null, "Initial issue");
+        return initialIssue(symbol, shares, issuePrice, LocalDateTime.now());
+    }
+
+    public static StockCorporateAction initialIssue(String symbol, long shares, BigDecimal issuePrice, LocalDateTime createdAt) {
+        StockCorporateAction action = create(symbol, StockCorporateActionType.INITIAL_ISSUE, shares, issuePrice, null, null, "Initial issue", createdAt);
         action.status = StockCorporateActionStatus.LISTED;
         action.listedAt = action.createdAt;
         return action;
@@ -103,7 +107,18 @@ public class StockCorporateAction {
             LocalDate listingDate,
             String description
     ) {
-        StockCorporateAction action = create(symbol, StockCorporateActionType.ADDITIONAL_ISSUE, shares, issuePrice, null, null, description);
+        return additionalIssue(symbol, shares, issuePrice, listingDate, description, LocalDateTime.now());
+    }
+
+    public static StockCorporateAction additionalIssue(
+            String symbol,
+            long shares,
+            BigDecimal issuePrice,
+            LocalDate listingDate,
+            String description,
+            LocalDateTime createdAt
+    ) {
+        StockCorporateAction action = create(symbol, StockCorporateActionType.ADDITIONAL_ISSUE, shares, issuePrice, null, null, description, createdAt);
         action.status = StockCorporateActionStatus.ANNOUNCED;
         action.listingDate = listingDate;
         return action;
@@ -120,7 +135,22 @@ public class StockCorporateAction {
             LocalDate listingDate,
             String description
     ) {
-        StockCorporateAction action = create(symbol, StockCorporateActionType.PAID_IN_CAPITAL_INCREASE, shares, issuePrice, null, null, description);
+        return paidInCapitalIncrease(symbol, shares, issuePrice, basePrice, theoreticalExRightsPrice, exRightsDate, paymentDate, listingDate, description, LocalDateTime.now());
+    }
+
+    public static StockCorporateAction paidInCapitalIncrease(
+            String symbol,
+            long shares,
+            BigDecimal issuePrice,
+            BigDecimal basePrice,
+            BigDecimal theoreticalExRightsPrice,
+            LocalDate exRightsDate,
+            LocalDate paymentDate,
+            LocalDate listingDate,
+            String description,
+            LocalDateTime createdAt
+    ) {
+        StockCorporateAction action = create(symbol, StockCorporateActionType.PAID_IN_CAPITAL_INCREASE, shares, issuePrice, null, null, description, createdAt);
         action.status = StockCorporateActionStatus.ANNOUNCED;
         action.basePrice = basePrice;
         action.theoreticalExRightsPrice = theoreticalExRightsPrice;
@@ -139,7 +169,20 @@ public class StockCorporateAction {
             LocalDate paymentDate,
             String description
     ) {
-        StockCorporateAction action = create(symbol, StockCorporateActionType.CASH_DIVIDEND, null, null, null, null, description);
+        return cashDividend(symbol, dividendAmount, basePrice, theoreticalExRightsPrice, exRightsDate, paymentDate, description, LocalDateTime.now());
+    }
+
+    public static StockCorporateAction cashDividend(
+            String symbol,
+            BigDecimal dividendAmount,
+            BigDecimal basePrice,
+            BigDecimal theoreticalExRightsPrice,
+            LocalDate exRightsDate,
+            LocalDate paymentDate,
+            String description,
+            LocalDateTime createdAt
+    ) {
+        StockCorporateAction action = create(symbol, StockCorporateActionType.CASH_DIVIDEND, null, null, null, null, description, createdAt);
         action.status = StockCorporateActionStatus.ANNOUNCED;
         action.dividendAmount = dividendAmount;
         action.basePrice = basePrice;
@@ -158,7 +201,20 @@ public class StockCorporateAction {
             LocalDate listingDate,
             String description
     ) {
-        StockCorporateAction action = create(symbol, StockCorporateActionType.BONUS_ISSUE, shares, null, null, null, description);
+        return bonusIssue(symbol, shares, basePrice, theoreticalExRightsPrice, exRightsDate, listingDate, description, LocalDateTime.now());
+    }
+
+    public static StockCorporateAction bonusIssue(
+            String symbol,
+            long shares,
+            BigDecimal basePrice,
+            BigDecimal theoreticalExRightsPrice,
+            LocalDate exRightsDate,
+            LocalDate listingDate,
+            String description,
+            LocalDateTime createdAt
+    ) {
+        StockCorporateAction action = create(symbol, StockCorporateActionType.BONUS_ISSUE, shares, null, null, null, description, createdAt);
         action.status = StockCorporateActionStatus.ANNOUNCED;
         action.basePrice = basePrice;
         action.theoreticalExRightsPrice = theoreticalExRightsPrice;
@@ -176,7 +232,20 @@ public class StockCorporateAction {
             LocalDate listingDate,
             String description
     ) {
-        StockCorporateAction action = create(symbol, StockCorporateActionType.STOCK_DIVIDEND, shares, null, null, null, description);
+        return stockDividend(symbol, shares, basePrice, theoreticalExRightsPrice, exRightsDate, listingDate, description, LocalDateTime.now());
+    }
+
+    public static StockCorporateAction stockDividend(
+            String symbol,
+            long shares,
+            BigDecimal basePrice,
+            BigDecimal theoreticalExRightsPrice,
+            LocalDate exRightsDate,
+            LocalDate listingDate,
+            String description,
+            LocalDateTime createdAt
+    ) {
+        StockCorporateAction action = create(symbol, StockCorporateActionType.STOCK_DIVIDEND, shares, null, null, null, description, createdAt);
         action.status = StockCorporateActionStatus.ANNOUNCED;
         action.basePrice = basePrice;
         action.theoreticalExRightsPrice = theoreticalExRightsPrice;
@@ -186,14 +255,22 @@ public class StockCorporateAction {
     }
 
     public static StockCorporateAction stockSplit(String symbol, int splitFrom, int splitTo, LocalDate listingDate, String description) {
-        StockCorporateAction action = create(symbol, StockCorporateActionType.STOCK_SPLIT, null, null, splitFrom, splitTo, description);
+        return stockSplit(symbol, splitFrom, splitTo, listingDate, description, LocalDateTime.now());
+    }
+
+    public static StockCorporateAction stockSplit(String symbol, int splitFrom, int splitTo, LocalDate listingDate, String description, LocalDateTime createdAt) {
+        StockCorporateAction action = create(symbol, StockCorporateActionType.STOCK_SPLIT, null, null, splitFrom, splitTo, description, createdAt);
         action.status = StockCorporateActionStatus.ANNOUNCED;
         action.listingDate = listingDate;
         return action;
     }
 
     public static StockCorporateAction delisting(String symbol, LocalDate delistingDate, String description) {
-        StockCorporateAction action = create(symbol, StockCorporateActionType.DELISTING, null, null, null, null, description);
+        return delisting(symbol, delistingDate, description, LocalDateTime.now());
+    }
+
+    public static StockCorporateAction delisting(String symbol, LocalDate delistingDate, String description, LocalDateTime createdAt) {
+        StockCorporateAction action = create(symbol, StockCorporateActionType.DELISTING, null, null, null, null, description, createdAt);
         action.status = StockCorporateActionStatus.ANNOUNCED;
         action.delistingDate = delistingDate;
         action.delistingTreatment = StockDelistingTreatment.ZERO_VALUE;
@@ -207,7 +284,8 @@ public class StockCorporateAction {
             BigDecimal issuePrice,
             Integer splitFrom,
             Integer splitTo,
-            String description
+            String description,
+            LocalDateTime createdAt
     ) {
         StockCorporateAction action = new StockCorporateAction();
         action.symbol = symbol;
@@ -218,7 +296,7 @@ public class StockCorporateAction {
         action.splitFrom = splitFrom;
         action.splitTo = splitTo;
         action.description = description;
-        action.createdAt = LocalDateTime.now();
+        action.createdAt = createdAt == null ? LocalDateTime.now() : createdAt;
         return action;
     }
 }

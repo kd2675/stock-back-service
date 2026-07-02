@@ -29,7 +29,6 @@ import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.function.Function;
@@ -57,8 +56,13 @@ public class MarketCatalogQueryService {
 
     @Transactional(readOnly = true)
     public List<PriceResponse> getPrices() {
-        return stockPriceRepository.findVirtualMarketPrices().stream()
-                .map(this::toPriceResponse)
+        List<StockPrice> prices = stockPriceRepository.findVirtualMarketPrices();
+        Map<String, CachedStockPrice> cachedPricesBySymbol = stockPriceCacheService.getCachedPrices(prices.stream()
+                .filter(price -> price.getCurrentPrice().compareTo(BigDecimal.ZERO) > 0)
+                .map(StockPrice::getSymbol)
+                .toList());
+        return prices.stream()
+                .map(price -> toPriceResponse(price, cachedPricesBySymbol))
                 .toList();
     }
 
@@ -114,7 +118,7 @@ public class MarketCatalogQueryService {
 
     @Transactional(readOnly = true)
     public List<PriceTickResponse> getPriceTicks(String symbol) {
-        String normalizedSymbol = normalizeSymbol(symbol);
+        String normalizedSymbol = MarketTextNormalizer.symbol(symbol);
         if (normalizedSymbol.isBlank()) {
             throw StockException.badRequest("Symbol is required");
         }
@@ -151,16 +155,10 @@ public class MarketCatalogQueryService {
         );
     }
 
-    private PriceResponse toPriceResponse(StockPrice price) {
-        var cachedPrice = price.getCurrentPrice().compareTo(BigDecimal.ZERO) <= 0
-                ? Optional.<CachedStockPrice>empty()
-                : stockPriceCacheService.getCachedPrice(price.getSymbol());
-        BigDecimal currentPrice = cachedPrice
-                .map(CachedStockPrice::currentPrice)
-                .orElse(price.getCurrentPrice());
-        String provider = cachedPrice
-                .map(CachedStockPrice::provider)
-                .orElse(price.getProvider());
+    private PriceResponse toPriceResponse(StockPrice price, Map<String, CachedStockPrice> cachedPricesBySymbol) {
+        CachedStockPrice cachedPrice = cachedPricesBySymbol.get(price.getSymbol());
+        BigDecimal currentPrice = cachedPrice == null ? price.getCurrentPrice() : cachedPrice.currentPrice();
+        String provider = cachedPrice == null ? price.getProvider() : cachedPrice.provider();
 
         BigDecimal changeRate = BigDecimal.ZERO;
         if (price.getPreviousClose().compareTo(BigDecimal.ZERO) > 0) {
@@ -204,10 +202,4 @@ public class MarketCatalogQueryService {
         return new PriceTickResponse(tick.getSymbol(), tick.getPrice(), tick.getProvider(), tick.getPriceTime());
     }
 
-    private String normalizeSymbol(String symbol) {
-        if (symbol == null) {
-            return "";
-        }
-        return symbol.trim().toUpperCase(Locale.ROOT);
-    }
 }

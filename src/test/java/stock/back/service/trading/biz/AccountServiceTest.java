@@ -9,37 +9,52 @@ import stock.back.service.common.exception.StockException;
 import stock.back.service.database.entity.StockAccount;
 import stock.back.service.database.entity.StockAccountStatus;
 import stock.back.service.database.repository.StockAccountCashFlowRepository;
-import stock.back.service.database.repository.StockHoldingRepository;
 import stock.back.service.database.repository.StockAccountRepository;
+import stock.back.service.market.biz.SimulationClockService;
 import stock.back.service.trading.vo.AccountCashAdjustmentRequest;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.contains;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.when;
 
 class AccountServiceTest {
 
+    private static final LocalDateTime SIMULATION_NOW = LocalDateTime.of(2026, 7, 1, 10, 0);
+
     private StockAccountRepository stockAccountRepository;
     private StockAccountCashFlowRepository stockAccountCashFlowRepository;
-    private StockHoldingRepository stockHoldingRepository;
     private JdbcTemplate jdbcTemplate;
+    private AccountOrderCleanupService accountOrderCleanupService;
+    private SimulationClockService simulationClockService;
     private AccountService accountService;
 
     @BeforeEach
     void setUp() {
         stockAccountRepository = mock(StockAccountRepository.class);
         stockAccountCashFlowRepository = mock(StockAccountCashFlowRepository.class);
-        stockHoldingRepository = mock(StockHoldingRepository.class);
         jdbcTemplate = mock(JdbcTemplate.class);
-        accountService = new AccountService(stockAccountRepository, stockAccountCashFlowRepository, stockHoldingRepository, jdbcTemplate);
+        accountOrderCleanupService = mock(AccountOrderCleanupService.class);
+        simulationClockService = mock(SimulationClockService.class);
+        lenient().when(simulationClockService.currentMarketDateTime()).thenReturn(SIMULATION_NOW);
+        accountService = new AccountService(
+                stockAccountRepository,
+                stockAccountCashFlowRepository,
+                jdbcTemplate,
+                accountOrderCleanupService,
+                simulationClockService
+        );
         ReflectionTestUtils.setField(accountService, "openingGrantAmount", new BigDecimal("10000000"));
     }
 
@@ -67,8 +82,29 @@ class AccountServiceTest {
         assertThat(account.getUserKey()).isEqualTo("new-user");
         assertThat(account.getAccountCode()).startsWith("STK-");
         assertThat(account.getIssuedRecoveryCode()).startsWith("RC-");
+        assertThat(account.getCreatedAt()).isEqualTo(SIMULATION_NOW);
         verify(stockAccountRepository, times(1)).findByUserKeyAndStatus("new-user", StockAccountStatus.ACTIVE);
         verify(stockAccountRepository).saveAndFlush(any(StockAccount.class));
+    }
+
+    @Test
+    void getOrOpenAccountForUpdate_noAccount_insertsAccountWithSimulationTime() {
+        StockAccount insertedAccount = StockAccount.open("lock-new-user", "STK-EXISTING", "hash", "RC-EXISTING", SIMULATION_NOW);
+        when(stockAccountRepository.findByUserKeyAndStatusForUpdate("lock-new-user", StockAccountStatus.ACTIVE))
+                .thenReturn(Optional.empty())
+                .thenReturn(Optional.of(insertedAccount));
+
+        StockAccount account = accountService.getOrOpenAccountForUpdate("lock-new-user");
+
+        assertThat(account).isSameAs(insertedAccount);
+        verify(jdbcTemplate).update(
+                contains("insert into stock_account"),
+                eq("lock-new-user"),
+                any(),
+                any(),
+                eq(SIMULATION_NOW),
+                eq(SIMULATION_NOW)
+        );
     }
 
     @Test
@@ -154,6 +190,19 @@ class AccountServiceTest {
         )).isInstanceOf(StockException.class)
                 .hasMessageContaining("Insufficient user cash balance");
 
+        verify(stockAccountCashFlowRepository, never()).save(any());
+    }
+
+    @Test
+    void adjustUserAccountCash_missingAdjustmentType_throwsBadRequest() {
+        assertThatThrownBy(() -> accountService.adjustUserAccountCash(
+                "user-3",
+                new AccountCashAdjustmentRequest(null, new BigDecimal("1.00")),
+                "admin-1"
+        )).isInstanceOf(StockException.class)
+                .hasMessageContaining("Adjustment type must be DEPOSIT or WITHDRAW");
+
+        verify(stockAccountRepository, never()).findByUserKeyAndStatusForUpdate(any(), any());
         verify(stockAccountCashFlowRepository, never()).save(any());
     }
 }

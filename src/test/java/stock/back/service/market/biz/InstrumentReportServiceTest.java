@@ -13,11 +13,13 @@ import stock.back.service.database.repository.StockInstrumentReportEventReposito
 import stock.back.service.database.repository.StockOrderBookInstrumentRepository;
 import stock.back.service.market.vo.InstrumentReportRequest;
 
+import java.time.LocalDateTime;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -31,14 +33,20 @@ class InstrumentReportServiceTest {
     @Mock
     private StockInstrumentReportEventRepository stockInstrumentReportEventRepository;
 
+    @Mock
+    private SimulationClockService simulationClockService;
+
     private InstrumentReportService service;
+    private final LocalDateTime simulationNow = LocalDateTime.of(2026, 7, 1, 10, 0);
 
     @BeforeEach
     void setUp() {
         service = new InstrumentReportService(
                 stockOrderBookInstrumentRepository,
-                stockInstrumentReportEventRepository
+                stockInstrumentReportEventRepository,
+                simulationClockService
         );
+        lenient().when(simulationClockService.currentMarketDateTime()).thenReturn(simulationNow);
     }
 
     @Test
@@ -66,6 +74,7 @@ class InstrumentReportServiceTest {
         assertThat(response.title()).isEqualTo("실적 개선 보고서");
         assertThat(response.fallReason()).isNull();
         assertThat(eventCaptor.getValue().getCreatedBy()).isEqualTo("admin-user");
+        assertThat(eventCaptor.getValue().getCreatedAt()).isEqualTo(simulationNow);
     }
 
     @Test

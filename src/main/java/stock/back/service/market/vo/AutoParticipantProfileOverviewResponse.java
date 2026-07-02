@@ -35,4 +35,37 @@ public record AutoParticipantProfileOverviewResponse(
         LocalDateTime lastExecutionAt,
         List<AutoParticipantProfileSymbolHoldingResponse> symbolHoldings
 ) {
+    public AutoParticipantProfileOverviewResponse withSymbolHoldings(List<AutoParticipantProfileSymbolHoldingResponse> nextSymbolHoldings) {
+        return new AutoParticipantProfileOverviewResponse(
+                profileType,
+                totalCount,
+                enabledCount,
+                disabledCount,
+                accountCount,
+                availableCash,
+                reservedBuyCash,
+                holdingMarketValue,
+                estimatedTotalAsset,
+                netCashFlow,
+                totalProfit,
+                returnRate,
+                holdingCount,
+                totalHoldingQuantity,
+                reservedSellQuantity,
+                openOrderCount,
+                openBuyOrderCount,
+                openSellOrderCount,
+                openBuyQuantity,
+                openSellQuantity,
+                todayExecutionCount,
+                todayBuyQuantity,
+                todaySellQuantity,
+                todayGrossAmount,
+                strategyCount,
+                enabledStrategyCount,
+                lastOrderAt,
+                lastExecutionAt,
+                nextSymbolHoldings
+        );
+    }
 }

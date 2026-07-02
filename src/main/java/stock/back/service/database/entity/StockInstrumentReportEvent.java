@@ -64,7 +64,20 @@ public class StockInstrumentReportEvent {
             String fallReason,
             String createdBy
     ) {
-        return report(symbol, StockInstrumentReportEventType.PUBLISH, title, summary, score, riseReason, fallReason, createdBy);
+        return publish(symbol, title, summary, score, riseReason, fallReason, createdBy, LocalDateTime.now());
+    }
+
+    public static StockInstrumentReportEvent publish(
+            String symbol,
+            String title,
+            String summary,
+            int score,
+            String riseReason,
+            String fallReason,
+            String createdBy,
+            LocalDateTime createdAt
+    ) {
+        return report(symbol, StockInstrumentReportEventType.PUBLISH, title, summary, score, riseReason, fallReason, createdBy, createdAt);
     }
 
     public static StockInstrumentReportEvent update(
@@ -76,16 +89,33 @@ public class StockInstrumentReportEvent {
             String fallReason,
             String createdBy
     ) {
-        return report(symbol, StockInstrumentReportEventType.UPDATE, title, summary, score, riseReason, fallReason, createdBy);
+        return update(symbol, title, summary, score, riseReason, fallReason, createdBy, LocalDateTime.now());
+    }
+
+    public static StockInstrumentReportEvent update(
+            String symbol,
+            String title,
+            String summary,
+            int score,
+            String riseReason,
+            String fallReason,
+            String createdBy,
+            LocalDateTime createdAt
+    ) {
+        return report(symbol, StockInstrumentReportEventType.UPDATE, title, summary, score, riseReason, fallReason, createdBy, createdAt);
     }
 
     public static StockInstrumentReportEvent delete(String symbol, String deleteReason, String createdBy) {
+        return delete(symbol, deleteReason, createdBy, LocalDateTime.now());
+    }
+
+    public static StockInstrumentReportEvent delete(String symbol, String deleteReason, String createdBy, LocalDateTime createdAt) {
         StockInstrumentReportEvent event = new StockInstrumentReportEvent();
         event.symbol = symbol;
         event.eventType = StockInstrumentReportEventType.DELETE;
         event.deleteReason = deleteReason;
         event.createdBy = createdBy;
-        event.createdAt = LocalDateTime.now();
+        event.createdAt = createdAt == null ? LocalDateTime.now() : createdAt;
         return event;
     }
 
@@ -97,7 +127,8 @@ public class StockInstrumentReportEvent {
             int score,
             String riseReason,
             String fallReason,
-            String createdBy
+            String createdBy,
+            LocalDateTime createdAt
     ) {
         StockInstrumentReportEvent event = new StockInstrumentReportEvent();
         event.symbol = symbol;
@@ -108,7 +139,7 @@ public class StockInstrumentReportEvent {
         event.riseReason = riseReason;
         event.fallReason = fallReason;
         event.createdBy = createdBy;
-        event.createdAt = LocalDateTime.now();
+        event.createdAt = createdAt == null ? LocalDateTime.now() : createdAt;
         return event;
     }
 }

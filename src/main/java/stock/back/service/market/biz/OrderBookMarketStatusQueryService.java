@@ -1,14 +1,13 @@
 package stock.back.service.market.biz;
 
-import lombok.RequiredArgsConstructor;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
+import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import stock.back.service.database.entity.ExecutionSource;
-import stock.back.service.database.entity.MarketSessionStatus;
 import stock.back.service.database.entity.MarketType;
 import stock.back.service.database.entity.OrderStatus;
-import stock.back.service.database.entity.StockOrderBookMarketConfig;
 import stock.back.service.database.repository.StockExecutionMarketViewRepository;
 import stock.back.service.database.repository.StockOrderBookInstrumentRepository;
 import stock.back.service.database.repository.StockOrderBookMarketConfigRepository;
@@ -16,21 +15,34 @@ import stock.back.service.database.repository.StockOrderRepository;
 import stock.back.service.market.vo.OrderBookMarketStatusResponse;
 import stock.back.service.market.vo.SymbolMarketConfigResponse;
 
-import java.sql.ResultSet;
-import java.sql.SQLException;
-import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 
 @Service
-@RequiredArgsConstructor
 public class OrderBookMarketStatusQueryService {
 
-    private final JdbcTemplate jdbcTemplate;
+    private final JdbcClient jdbcClient;
     private final StockOrderBookMarketConfigRepository stockOrderBookMarketConfigRepository;
     private final StockOrderBookInstrumentRepository stockOrderBookInstrumentRepository;
     private final StockOrderRepository stockOrderRepository;
     private final StockExecutionMarketViewRepository stockExecutionMarketViewRepository;
+    private final SimulationClockService simulationClockService;
+
+    public OrderBookMarketStatusQueryService(
+            JdbcTemplate jdbcTemplate,
+            StockOrderBookMarketConfigRepository stockOrderBookMarketConfigRepository,
+            StockOrderBookInstrumentRepository stockOrderBookInstrumentRepository,
+            StockOrderRepository stockOrderRepository,
+            StockExecutionMarketViewRepository stockExecutionMarketViewRepository,
+            SimulationClockService simulationClockService
+    ) {
+        this.jdbcClient = JdbcClient.create(new NamedParameterJdbcTemplate(jdbcTemplate));
+        this.stockOrderBookMarketConfigRepository = stockOrderBookMarketConfigRepository;
+        this.stockOrderBookInstrumentRepository = stockOrderBookInstrumentRepository;
+        this.stockOrderRepository = stockOrderRepository;
+        this.stockExecutionMarketViewRepository = stockExecutionMarketViewRepository;
+        this.simulationClockService = simulationClockService;
+    }
 
     @Transactional(readOnly = true)
     public OrderBookMarketStatusResponse getOrderBookMarketStatus() {
@@ -49,21 +61,20 @@ public class OrderBookMarketStatusQueryService {
         }
         List<SymbolMarketConfigResponse> configs = stockOrderBookMarketConfigRepository.findAll().stream()
                 .sorted((left, right) -> left.getSymbol().compareTo(right.getSymbol()))
-                .map(this::toOrderBookMarketConfigResponse)
+                .map(OrderBookMarketStatusResponseMapper::toMarketConfig)
                 .toList();
         List<OrderStatus> openStatuses = List.of(OrderStatus.PENDING, OrderStatus.PARTIALLY_FILLED);
         long openOrderCount = stockOrderRepository.countByMarketTypeAndStatusIn(MarketType.ORDER_BOOK, openStatuses);
         long todayExecutionCount = includeTodayExecution
                 ? stockExecutionMarketViewRepository.countExecutionsFromBySource(
-                        LocalDate.now().atStartOfDay(),
+                        simulationClockService.currentMarketDayStart(),
                         ExecutionSource.INTERNAL_ORDER_BOOK
                 )
                 : 0L;
         long configCount = configs.size();
-        long openConfigCount = configs.stream().filter(this::isConfigOpen).count();
+        long openConfigCount = configs.stream().filter(OrderBookMarketStatusResponseMapper::isOpen).count();
         long instrumentCount = stockOrderBookInstrumentRepository.countByEnabledTrue();
-        return new OrderBookMarketStatusResponse(
-                openConfigCount > 0,
+        return OrderBookMarketStatusResponseMapper.toStatus(
                 configCount,
                 openConfigCount,
                 instrumentCount,
@@ -74,12 +85,12 @@ public class OrderBookMarketStatusQueryService {
     }
 
     private OrderBookMarketStatusResponse getOrderBookMarketSummaryStatus(boolean includeTodayExecution) {
-        LocalDateTime todayStart = LocalDate.now().atStartOfDay();
+        LocalDateTime todayStart = simulationClockService.currentMarketDayStart();
         String todayExecutionSql = includeTodayExecution
                 ? """
                          (select count(*)
                             from stock_execution e
-                           where e.executed_at >= ?
+                           where e.executed_at >= :todayStart
                              and e.source = 'INTERNAL_ORDER_BOOK') as today_execution_count
                         """
                 : "0 as today_execution_count";
@@ -98,38 +109,14 @@ public class OrderBookMarketStatusQueryService {
                          where m.enabled = true
                            and m.market_status = 'OPEN') as open_config_count
                 """.formatted(todayExecutionSql);
-        return includeTodayExecution
-                ? jdbcTemplate.queryForObject(sql, (rs, rowNum) -> toOrderBookMarketSummaryStatus(rs), todayStart)
-                : jdbcTemplate.queryForObject(sql, (rs, rowNum) -> toOrderBookMarketSummaryStatus(rs));
-    }
-
-    private OrderBookMarketStatusResponse toOrderBookMarketSummaryStatus(ResultSet rs) throws SQLException {
-        long configCount = rs.getLong("config_count");
-        long openConfigCount = rs.getLong("open_config_count");
-        return new OrderBookMarketStatusResponse(
-                configCount > 0 && openConfigCount > 0,
-                configCount,
-                openConfigCount,
-                rs.getLong("instrument_count"),
-                rs.getLong("open_order_count"),
-                rs.getLong("today_execution_count"),
-                List.of()
-        );
-    }
-
-    private SymbolMarketConfigResponse toOrderBookMarketConfigResponse(StockOrderBookMarketConfig config) {
-        return new SymbolMarketConfigResponse(
-                config.getSymbol(),
-                Boolean.TRUE.equals(config.getEnabled()),
-                normalizeMarketSessionStatus(config.getMarketStatus())
-        );
-    }
-
-    private boolean isConfigOpen(SymbolMarketConfigResponse config) {
-        return config.enabled() && config.marketStatus() == MarketSessionStatus.OPEN;
-    }
-
-    private MarketSessionStatus normalizeMarketSessionStatus(MarketSessionStatus marketStatus) {
-        return marketStatus == null ? MarketSessionStatus.OPEN : marketStatus;
+        if (includeTodayExecution) {
+            return jdbcClient.sql(sql)
+                    .param("todayStart", todayStart)
+                    .query((rs, rowNum) -> OrderBookMarketStatusResponseMapper.toSummaryStatus(rs))
+                    .single();
+        }
+        return jdbcClient.sql(sql)
+                .query((rs, rowNum) -> OrderBookMarketStatusResponseMapper.toSummaryStatus(rs))
+                .single();
     }
 }

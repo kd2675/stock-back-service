@@ -39,4 +39,41 @@ public record AutoParticipantOverviewResponse(
         LocalDateTime updatedAt,
         LocalDateTime withdrawnAt
 ) {
+    public AutoParticipantOverviewResponse withHoldings(List<AutoParticipantHoldingResponse> nextHoldings) {
+        return new AutoParticipantOverviewResponse(
+                userKey,
+                displayName,
+                enabled,
+                profileType,
+                accountId,
+                accountStatus,
+                availableCash,
+                reservedBuyCash,
+                holdingMarketValue,
+                estimatedTotalAsset,
+                netCashFlow,
+                totalProfit,
+                returnRate,
+                holdingCount,
+                totalHoldingQuantity,
+                reservedSellQuantity,
+                nextHoldings,
+                openOrderCount,
+                openBuyOrderCount,
+                openSellOrderCount,
+                openBuyQuantity,
+                openSellQuantity,
+                todayExecutionCount,
+                todayBuyQuantity,
+                todaySellQuantity,
+                todayGrossAmount,
+                strategyCount,
+                enabledStrategyCount,
+                lastOrderAt,
+                lastExecutionAt,
+                createdAt,
+                updatedAt,
+                withdrawnAt
+        );
+    }
 }

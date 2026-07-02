@@ -476,6 +476,15 @@ class StockBackAuthorizationBoundaryTest {
     }
 
     @Test
+    void getAutoParticipants_userPrincipalHeaders_returnsForbidden() throws Exception {
+        mockMvc.perform(get("/api/stock/v1/markets/auto-market/participants")
+                        .header("X-User-Key", "stock-user-key")
+                        .header("X-User-Role", "ROLE_USER"))
+                .andExpect(status().isForbidden())
+                .andExpect(content().string(containsString("Required role: ADMIN")));
+    }
+
+    @Test
     void getAutoParticipantProfileOverviews_userPrincipalHeaders_returnsForbidden() throws Exception {
         mockMvc.perform(get("/api/stock/v1/markets/auto-market/participants/profile-overviews")
                         .header("X-User-Key", "stock-user-key")
@@ -654,6 +663,20 @@ class StockBackAuthorizationBoundaryTest {
                 .andExpect(content().string(containsString("\"netCashFlow\":10000000.00")))
                 .andExpect(content().string(containsString("\"totalProfit\":0.00")))
                 .andExpect(content().string(containsString("\"returnRate\":0")));
+    }
+
+    @Test
+    void getAutoParticipants_adminPrincipalHeaders_isAllowed() throws Exception {
+        seedAutoParticipant("stock-auto-auth-list");
+        seedStockAccount("stock-auto-auth-list");
+
+        mockMvc.perform(get("/api/stock/v1/markets/auto-market/participants")
+                        .header("X-User-Key", "stock-admin-key")
+                        .header("X-User-Role", "ROLE_ADMIN"))
+                .andExpect(status().isOk())
+                .andExpect(content().string(containsString("\"success\":true")))
+                .andExpect(content().string(containsString("\"userKey\":\"stock-auto-auth-list\"")))
+                .andExpect(content().string(containsString("\"displayName\":\"stock-auto-auth-list 참여자\"")));
     }
 
     @Test

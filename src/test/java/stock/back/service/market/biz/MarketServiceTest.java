@@ -6,8 +6,9 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.jdbc.core.ResultSetExtractor;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
+import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import stock.back.service.common.exception.StockException;
 import stock.back.service.database.entity.PortfolioSnapshot;
 import stock.back.service.database.entity.AutoParticipantProfileType;
@@ -60,20 +61,25 @@ import stock.back.service.market.vo.AutoParticipantSymbolConfigRequest;
 import stock.back.service.market.vo.CorporateActionRequest;
 import stock.back.service.market.vo.InstrumentReportRequest;
 import stock.back.service.market.vo.OrderBookInstrumentRequest;
+import stock.back.service.market.vo.AutoMarketStatusResponse;
+import stock.back.service.trading.biz.AccountOrderCleanupService;
+import web.common.core.simulation.SimulationClockSnapshot;
 
 import java.math.BigDecimal;
 import java.sql.ResultSet;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
-import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.AdditionalMatchers.aryEq;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -145,11 +151,30 @@ class MarketServiceTest {
     @Mock
     private JdbcTemplate jdbcTemplate;
 
-    private MarketService marketService;
+    @Mock
+    private NamedParameterJdbcTemplate namedParameterJdbcTemplate;
+
+    @Mock
+    private AccountOrderCleanupService accountOrderCleanupService;
+
+    private JdbcTemplate commandJdbcTemplate;
+    private StubAutoMarketSummaryStatusQuery autoMarketSummaryStatusQuery;
+    private MarketServiceTestFacade marketService;
 
     @BeforeEach
     void setUp() {
-        marketService = new MarketService(
+        commandJdbcTemplate = createCommandJdbcTemplate();
+        autoMarketSummaryStatusQuery = new StubAutoMarketSummaryStatusQuery(jdbcTemplate);
+        SimulationClockService simulationClockService = mock(SimulationClockService.class);
+        lenient().when(simulationClockService.currentMarketDayStart()).thenReturn(SimulationDayClock.currentDayStart());
+        lenient().when(simulationClockService.currentMarketDateTime()).thenAnswer(invocation -> LocalDateTime.now());
+        lenient().when(simulationClockService.currentSnapshot()).thenAnswer(invocation -> currentSimulationClockSnapshot());
+        AutoMarketStatusDataLoader autoMarketStatusDataLoader = new AutoMarketStatusDataLoader(
+                jdbcTemplate,
+                stockAutoParticipantSymbolConfigRepository,
+                new ListingAutoAccountLedgerQueryService(jdbcTemplate)
+        );
+        marketService = new MarketServiceTestFacade(
                 new OrderBookInstrumentCommandService(
                         stockInstrumentRepository,
                         stockPriceRepository,
@@ -158,7 +183,8 @@ class MarketServiceTest {
                         stockOrderBookMarketConfigRepository,
                         stockCorporateActionRepository,
                         stockListingAutoAccountConfigRepository,
-                        jdbcTemplate
+                        commandJdbcTemplate,
+                        simulationClockService
                 ),
                 new MarketCatalogQueryService(
                         stockInstrumentRepository,
@@ -169,16 +195,23 @@ class MarketServiceTest {
                         stockAccountRepository,
                         stockPriceCacheService
                 ),
-                new InstrumentReportService(stockOrderBookInstrumentRepository, stockInstrumentReportEventRepository),
+                new InstrumentReportService(
+                        stockOrderBookInstrumentRepository,
+                        stockInstrumentReportEventRepository,
+                        simulationClockService
+                ),
                 new AutoParticipantCashAdjustmentService(
                         stockAutoParticipantRepository,
                         stockAccountRepository,
-                        stockAccountCashFlowRepository
+                        stockAccountCashFlowRepository,
+                        simulationClockService
                 ),
                 new AutoParticipantManagementService(
                         stockAutoParticipantRepository,
                         stockAccountRepository,
-                        jdbcTemplate
+                        stockAccountCashFlowRepository,
+                        accountOrderCleanupService,
+                        simulationClockService
                 ),
                 new AutoParticipantProfileConfigService(stockAutoParticipantProfileConfigRepository),
                 new AutoParticipantSymbolConfigService(
@@ -197,13 +230,15 @@ class MarketServiceTest {
                         stockVirtualMarketConfigRepository,
                         stockOrderBookMarketConfigRepository,
                         stockOrderRepository,
-                        stockExecutionMarketViewRepository
+                        stockExecutionMarketViewRepository,
+                        simulationClockService
                 ),
                 new CorporateActionCommandService(
                         stockOrderBookInstrumentRepository,
                         stockCorporateActionRepository,
                         stockPriceRepository,
-                        jdbcTemplate
+                        commandJdbcTemplate,
+                        simulationClockService
                 ),
                 new CorporateActionQueryService(
                         stockOrderBookInstrumentRepository,
@@ -211,36 +246,109 @@ class MarketServiceTest {
                         stockAccountRepository,
                         stockCorporateActionEntitlementRepository
                 ),
-                new AdminFlowQueryService(jdbcTemplate, stockOrderBookInstrumentRepository),
-                new AutoParticipantOverviewQueryService(jdbcTemplate),
-                new AutoMarketStatusQueryService(
+                new AdminFlowQueryService(
                         jdbcTemplate,
+                        new AdminSymbolFlowQueryService(jdbcTemplate, stockOrderBookInstrumentRepository),
+                        simulationClockService
+                ),
+                new AutoParticipantOverviewQueryService(
+                        namedParameterJdbcTemplate,
+                        autoMarketStatusDataLoader,
+                        new AutoParticipantHoldingQueryService(namedParameterJdbcTemplate),
+                        new AutoParticipantProfileOverviewQueryService(jdbcTemplate, simulationClockService),
+                        simulationClockService
+                ),
+                new AutoMarketStatusQueryService(
                         stockAutoMarketConfigRepository,
                         stockAutoParticipantProfileConfigRepository,
                         stockAutoParticipantRepository,
-                        stockAutoParticipantSymbolConfigRepository,
                         stockListingAutoAccountConfigRepository,
                         stockOrderRepository,
                         stockExecutionMarketViewRepository,
-                        new ListingAutoAccountLedgerQueryService(jdbcTemplate)
+                        autoMarketStatusDataLoader,
+                        autoMarketSummaryStatusQuery,
+                        simulationClockService
                 ),
                 new OrderBookMarketStatusQueryService(
                         jdbcTemplate,
                         stockOrderBookMarketConfigRepository,
                         stockOrderBookInstrumentRepository,
                         stockOrderRepository,
-                        stockExecutionMarketViewRepository
+                        stockExecutionMarketViewRepository,
+                        simulationClockService
                 ),
-                new OrderBookQueryService(jdbcTemplate, stockOrderBookInstrumentRepository, stockOrderRepository),
-                new OrderBookCandleQueryService(jdbcTemplate, stockOrderBookInstrumentRepository, stockPriceRepository)
+                new OrderBookQueryService(jdbcTemplate, stockOrderBookInstrumentRepository, stockOrderRepository, simulationClockService),
+                new OrderBookCandleQueryService(jdbcTemplate, stockOrderBookInstrumentRepository, stockPriceRepository, simulationClockService)
+        );
+    }
+
+    private SimulationClockSnapshot currentSimulationClockSnapshot() {
+        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime realDayStart = SimulationDayClock.dayStart(now);
+        long elapsedSeconds = java.time.Duration.between(realDayStart, now).toSeconds();
+        long simulationSecondsInDay = elapsedSeconds * 86400L / SimulationDayClock.DAY_DURATION.toSeconds();
+        LocalDate simulationDate = LocalDate.now();
+        return new SimulationClockSnapshot(
+                simulationDate,
+                simulationDate.atStartOfDay().plusSeconds(simulationSecondsInDay),
+                simulationDate.atStartOfDay(),
+                now,
+                realDayStart,
+                (int) SimulationDayClock.DAY_DURATION.toSeconds(),
+                true,
+                false,
+                elapsedSeconds,
+                realDayStart,
+                now
+        );
+    }
+
+    private JdbcTemplate createCommandJdbcTemplate() {
+        JdbcTemplate template = new JdbcTemplate(new DriverManagerDataSource(
+                "jdbc:h2:mem:market_service_command_%d;MODE=MySQL;DB_CLOSE_DELAY=-1;DATABASE_TO_UPPER=false".formatted(System.nanoTime()),
+                "sa",
+                ""
+        ));
+        template.execute("""
+                create table stock_account (
+                    id bigint generated by default as identity primary key,
+                    user_key varchar(64) not null,
+                    status varchar(32) not null,
+                    cash_balance decimal(19, 2) not null,
+                    created_at timestamp not null,
+                    updated_at timestamp not null
+                )
+                """);
+        template.execute("""
+                create table stock_holding (
+                    account_id bigint not null,
+                    symbol varchar(20) not null,
+                    quantity bigint not null,
+                    reserved_quantity bigint not null,
+                    average_price decimal(19, 2) not null,
+                    updated_at timestamp not null
+                )
+                """);
+        template.execute("""
+                create table stock_order (
+                    id bigint generated by default as identity primary key,
+                    symbol varchar(20) not null,
+                    market_type varchar(32) not null,
+                    status varchar(32) not null
+                )
+                """);
+        return template;
+    }
+
+    private void insertOpenOrderBookOrder(String symbol) {
+        commandJdbcTemplate.update(
+                "insert into stock_order(symbol, market_type, status) values (?, 'ORDER_BOOK', 'PENDING')",
+                symbol
         );
     }
 
     private void stubAutoParticipantStatusQuery(AutoParticipantResponse... participants) {
-        when(jdbcTemplate.query(
-                org.mockito.ArgumentMatchers.contains("from stock_auto_participant p"),
-                org.mockito.ArgumentMatchers.<org.springframework.jdbc.core.RowMapper<Object>>any()
-        )).thenAnswer(invocation -> {
+        doAnswer(invocation -> {
             @SuppressWarnings("unchecked")
             org.springframework.jdbc.core.RowMapper<Object> rowMapper = invocation.getArgument(1);
             List<Object> rows = new java.util.ArrayList<>();
@@ -263,7 +371,11 @@ class MarketServiceTest {
                 rows.add(rowMapper.mapRow(resultSet, index));
             }
             return rows;
-        });
+        }).when(jdbcTemplate).query(
+                org.mockito.ArgumentMatchers.contains("from stock_auto_participant p"),
+                org.mockito.ArgumentMatchers.<org.springframework.jdbc.core.RowMapper<Object>>any(),
+                aryEq(new Object[0])
+        );
     }
 
     @Test
@@ -273,11 +385,6 @@ class MarketServiceTest {
         when(stockOrderBookInstrumentRepository.save(any(StockOrderBookInstrument.class)))
                 .thenAnswer(invocation -> invocation.getArgument(0));
         when(stockPriceRepository.findById("ZQ001")).thenReturn(Optional.empty());
-        when(jdbcTemplate.queryForObject(
-                org.mockito.ArgumentMatchers.eq("select id from stock_account where user_key = ?"),
-                org.mockito.ArgumentMatchers.eq(Long.class),
-                org.mockito.ArgumentMatchers.eq("stock-listing-zq001")
-        )).thenReturn(123L);
 
         var response = marketService.createOrderBookInstrument(
                 new OrderBookInstrumentRequest(
@@ -307,21 +414,24 @@ class MarketServiceTest {
         assertThat(actionCaptor.getValue().getIssuePrice()).isEqualByComparingTo(new BigDecimal("70000.00"));
         assertThat(actionCaptor.getValue().getStatus()).isEqualTo(StockCorporateActionStatus.LISTED);
         assertThat(actionCaptor.getValue().getListedAt()).isNotNull();
-        verify(jdbcTemplate).update(
-                org.mockito.ArgumentMatchers.contains("insert into stock_account"),
-                org.mockito.ArgumentMatchers.eq("stock-listing-zq001"),
-                org.mockito.ArgumentMatchers.any(LocalDateTime.class),
-                org.mockito.ArgumentMatchers.any(LocalDateTime.class)
+        Long accountId = commandJdbcTemplate.queryForObject(
+                "select id from stock_account where user_key = ?",
+                Long.class,
+                "stock-listing-zq001"
         );
-        verify(jdbcTemplate).update(
-                org.mockito.ArgumentMatchers.contains("insert into stock_holding"),
-                org.mockito.ArgumentMatchers.eq(123L),
-                org.mockito.ArgumentMatchers.eq("ZQ001"),
-                org.mockito.ArgumentMatchers.eq(100000L),
-                org.mockito.ArgumentMatchers.eq(0L),
-                org.mockito.ArgumentMatchers.eq(new BigDecimal("70000.00")),
-                org.mockito.ArgumentMatchers.any(LocalDateTime.class)
-        );
+        assertThat(accountId).isNotNull();
+        assertThat(commandJdbcTemplate.queryForObject(
+                "select quantity from stock_holding where account_id = ? and symbol = ?",
+                Long.class,
+                accountId,
+                "ZQ001"
+        )).isEqualTo(100000L);
+        assertThat(commandJdbcTemplate.queryForObject(
+                "select average_price from stock_holding where account_id = ? and symbol = ?",
+                BigDecimal.class,
+                accountId,
+                "ZQ001"
+        )).isEqualByComparingTo(new BigDecimal("70000.00"));
         assertThat(listingConfigCaptor.getValue().getSymbol()).isEqualTo("ZQ001");
         assertThat(listingConfigCaptor.getValue().getUserKey()).isEqualTo("stock-listing-zq001");
         assertThat(listingConfigCaptor.getValue().getDisplayName()).isEqualTo("제로큐 주문장 상장주관사");
@@ -362,44 +472,6 @@ class MarketServiceTest {
         assertThat(response.get(1).symbol()).isEqualTo("ZQ002");
         assertThat(response.get(1).currentPrice()).isEqualByComparingTo(new BigDecimal("30500.00"));
         verify(stockPriceRepository, never()).findById(any());
-    }
-
-    @Test
-    void getOrderBookMarketStatus_withoutConfigExpansion_returnsCountsWithoutLoadingConfigs() {
-        stubOrderBookMarketSummaryQuery(2L, 3L, 5L, 7L, 1L, true);
-
-        var response = marketService.getOrderBookMarketStatus(false);
-
-        assertThat(response.enabled()).isTrue();
-        assertThat(response.configCount()).isEqualTo(2L);
-        assertThat(response.openConfigCount()).isEqualTo(1L);
-        assertThat(response.instrumentCount()).isEqualTo(3L);
-        assertThat(response.openOrderCount()).isEqualTo(5L);
-        assertThat(response.todayExecutionCount()).isEqualTo(7L);
-        assertThat(response.configs()).isEmpty();
-        verify(stockOrderBookMarketConfigRepository, never()).findAll();
-        verify(stockOrderBookMarketConfigRepository, never()).count();
-        verify(stockOrderBookInstrumentRepository, never()).countByEnabledTrue();
-        verify(stockOrderBookMarketConfigRepository, never()).existsByEnabledTrueAndMarketStatus(any());
-        verify(stockOrderRepository, never()).countByMarketTypeAndStatusIn(any(), any());
-        verify(stockExecutionMarketViewRepository, never()).countExecutionsFromBySource(any(), any());
-    }
-
-    @Test
-    void getOrderBookMarketStatus_withoutTodayExecution_skipsTodayExecutionCount() {
-        stubOrderBookMarketSummaryQuery(2L, 3L, 5L, 0L, 1L, false);
-
-        var response = marketService.getOrderBookMarketStatus(false, false);
-
-        assertThat(response.enabled()).isTrue();
-        assertThat(response.configCount()).isEqualTo(2L);
-        assertThat(response.openConfigCount()).isEqualTo(1L);
-        assertThat(response.instrumentCount()).isEqualTo(3L);
-        assertThat(response.openOrderCount()).isEqualTo(5L);
-        assertThat(response.todayExecutionCount()).isZero();
-        assertThat(response.configs()).isEmpty();
-        verify(stockExecutionMarketViewRepository, never()).countExecutionsFromBySource(any(), any());
-        verify(stockOrderRepository, never()).countByMarketTypeAndStatusIn(any(), any());
     }
 
     @Test
@@ -566,43 +638,21 @@ class MarketServiceTest {
 
     @Test
     void getAutoMarketStatus_summaryOnlyWithoutSalaryEligibility_skipsSalaryEligibilitySql() {
-        when(jdbcTemplate.queryForObject(
-                any(String.class),
-                org.mockito.ArgumentMatchers.<org.springframework.jdbc.core.RowMapper<Object>>any()
-        )).thenAnswer(invocation -> {
-            @SuppressWarnings("unchecked")
-            org.springframework.jdbc.core.RowMapper<Object> rowMapper = invocation.getArgument(1);
-            ResultSet resultSet = org.mockito.Mockito.mock(ResultSet.class);
-            when(resultSet.getLong("config_count")).thenReturn(3L);
-            when(resultSet.getLong("enabled_config_count")).thenReturn(1L);
-            when(resultSet.getLong("participant_count")).thenReturn(40L);
-            when(resultSet.getLong("enabled_participant_count")).thenReturn(31L);
-            when(resultSet.getLong("listing_auto_account_count")).thenReturn(2L);
-            when(resultSet.getLong("salary_eligible_participant_count")).thenReturn(0L);
-            when(resultSet.getLong("open_auto_order_count")).thenReturn(0L);
-            when(resultSet.getLong("today_auto_execution_count")).thenReturn(0L);
-            return rowMapper.mapRow(resultSet, 0);
-        });
+        stubAutoMarketSummaryQuery(3L, 1L, 40L, 31L, 2L, 0L, 0L, false);
+        autoMarketSummaryStatusQuery.salaryEligibleParticipantCount = 0L;
 
         var response = marketService.getAutoMarketStatus(false, false, false, false, false, false, false, null);
 
-        ArgumentCaptor<String> sqlCaptor = ArgumentCaptor.forClass(String.class);
-        verify(jdbcTemplate).queryForObject(
-                sqlCaptor.capture(),
-                org.mockito.ArgumentMatchers.<org.springframework.jdbc.core.RowMapper<Object>>any()
-        );
         assertThat(response.salaryEligibleParticipantCount()).isZero();
-        assertThat(sqlCaptor.getValue())
-                .contains("0 as salary_eligible_participant_count")
-                .doesNotContain("join stock_account a on a.user_key = p.user_key and a.status = 'ACTIVE'");
+        assertThat(autoMarketSummaryStatusQuery.lastIncludeSalaryEligibility).isFalse();
     }
 
     @Test
-    void getAutoParticipantOverviews_scopedUserKeys_useScopedParticipantsCteForAggregates() {
-        when(jdbcTemplate.query(
+    void getAutoParticipantOverviews_scopedUserKeys_queryParticipantSeedsBeforeAggregates() {
+        when(namedParameterJdbcTemplate.query(
                 org.mockito.ArgumentMatchers.any(String.class),
-                org.mockito.ArgumentMatchers.<org.springframework.jdbc.core.RowMapper<Object>>any(),
-                any(), any(), any(), any(), any(), any()
+                org.mockito.ArgumentMatchers.<org.springframework.jdbc.core.namedparam.SqlParameterSource>any(),
+                org.mockito.ArgumentMatchers.<org.springframework.jdbc.core.RowMapper<Object>>any()
         )).thenReturn(List.of());
 
         var response = marketService.getAutoParticipantOverviews(
@@ -611,162 +661,33 @@ class MarketServiceTest {
         );
 
         ArgumentCaptor<String> sqlCaptor = ArgumentCaptor.forClass(String.class);
-        verify(jdbcTemplate).query(
+        verify(namedParameterJdbcTemplate).query(
                 sqlCaptor.capture(),
-                org.mockito.ArgumentMatchers.<org.springframework.jdbc.core.RowMapper<Object>>any(),
-                any(), any(), any(), any(), any(), any()
+                org.mockito.ArgumentMatchers.<org.springframework.jdbc.core.namedparam.SqlParameterSource>any(),
+                org.mockito.ArgumentMatchers.<org.springframework.jdbc.core.RowMapper<Object>>any()
         );
         assertThat(response).isEmpty();
         assertThat(sqlCaptor.getValue())
-                .contains("with scoped_participants as")
-                .contains("p.user_key in (?,?)")
-                .contains("join scoped_participants op on op.account_id = o.account_id")
-                .contains("sum(case when o.status in ('PENDING', 'PARTIALLY_FILLED') then 1 else 0 end) as open_order_count")
-                .contains("max(o.created_at) as last_order_at")
-                .contains("join scoped_participants hp on hp.account_id = h.account_id")
-                .contains("join scoped_participants fp on fp.account_id = f.account_id")
-                .contains("join scoped_participants ep on ep.account_id = e.account_id")
-                .contains("sum(case when e.executed_at >= ? then 1 else 0 end) as today_execution_count")
-                .contains("max(e.executed_at) as last_execution_at")
-                .contains("join scoped_participants spc on spc.user_key = sc.user_key")
-                .doesNotContain("join scoped_participants lop")
-                .doesNotContain("join scoped_participants lep")
-                .doesNotContain("oa.user_key in")
-                .doesNotContain("ha.user_key in")
-                .doesNotContain("fa.user_key in")
-                .doesNotContain("ea.user_key in")
-                .doesNotContain("sc.user_key in");
+                .contains("p.user_key in (:userKeys)")
+                .doesNotContain("with scoped_participants as")
+                .doesNotContain("join scoped_participants");
         verify(stockAccountRepository, never()).findAllByUserKeyIn(org.mockito.ArgumentMatchers.anyCollection());
     }
 
     @Test
-    void getAutoParticipantProfileOverviews_usesScopedParticipantsCteForAggregates() {
-        when(jdbcTemplate.query(
-                org.mockito.ArgumentMatchers.any(String.class),
-                org.mockito.ArgumentMatchers.<org.springframework.jdbc.core.ResultSetExtractor<Object>>any(),
-                any()
-        )).thenReturn(List.of());
+    void getAutoParticipantProfileOverviews_splitsHeavyAggregatesAndGroupsByProfile() {
+        JdbcTemplate realJdbcTemplate = createAutoParticipantProfileOverviewJdbcTemplate();
+        SimulationClockService simulationClockService = mock(SimulationClockService.class);
+        when(simulationClockService.currentMarketDayStart()).thenReturn(SimulationDayClock.currentDayStart());
+        AutoParticipantProfileOverviewQueryService service = new AutoParticipantProfileOverviewQueryService(realJdbcTemplate, simulationClockService);
+        LocalDateTime simulationDayStart = SimulationDayClock.currentDayStart();
+        LocalDateTime lastOrderAt = simulationDayStart.plusMinutes(15);
+        LocalDateTime lastTerminalOrderAt = lastOrderAt.plusMinutes(5);
+        LocalDateTime lastExecutionAt = simulationDayStart.plusMinutes(20);
 
-        var response = marketService.getAutoParticipantProfileOverviews();
+        insertProfileOverviewFixture(realJdbcTemplate, lastOrderAt, lastTerminalOrderAt, lastExecutionAt);
 
-        ArgumentCaptor<String> profileSqlCaptor = ArgumentCaptor.forClass(String.class);
-        verify(jdbcTemplate).query(
-                profileSqlCaptor.capture(),
-                org.mockito.ArgumentMatchers.<org.springframework.jdbc.core.ResultSetExtractor<Object>>any(),
-                any()
-        );
-        assertThat(response).isEmpty();
-        assertThat(profileSqlCaptor.getValue())
-                .contains("with scoped_participants as")
-                .contains("holding_rows as")
-                .contains("join scoped_participants op on op.account_id = o.account_id")
-                .contains("group by op.profile_type")
-                .contains("sum(case when o.status in ('PENDING', 'PARTIALLY_FILLED') then 1 else 0 end) as open_order_count")
-                .contains("and o.status in ('PENDING', 'PARTIALLY_FILLED')")
-                .contains("select max(o.created_at)")
-                .contains("lo.last_order_at")
-                .contains("from holding_rows")
-                .contains("group by profile_type")
-                .contains("join scoped_participants fp on fp.account_id = f.account_id")
-                .contains("group by fp.profile_type")
-                .contains("join scoped_participants ep on ep.account_id = e.account_id")
-                .contains("group by ep.profile_type")
-                .contains("and e.executed_at >= ?")
-                .contains("count(*) as today_execution_count")
-                .contains("select max(e.executed_at)")
-                .contains("le.last_execution_at")
-                .contains("join scoped_participants sp on sp.user_key = sc.user_key")
-                .contains("group by sp.profile_type")
-                .contains("row_number() over(partition by grouped.profile_type order by grouped.market_value desc, grouped.symbol asc) as holding_rank")
-                .contains("group by profile_type, symbol")
-                .contains("sh.symbol as holding_symbol")
-                .doesNotContain("join scoped_participants lop")
-                .doesNotContain("join scoped_participants lep")
-                .doesNotContain("group by o.account_id")
-                .doesNotContain("group by e.account_id")
-                .doesNotContain("join stock_auto_participant op")
-                .doesNotContain("join stock_auto_participant hp")
-                .doesNotContain("join stock_auto_participant fp")
-                .doesNotContain("join stock_auto_participant ep");
-    }
-
-    @Test
-    void getAutoParticipantProfileOverviews_groupsSymbolHoldingsByProfile() throws Exception {
-        ResultSet resultSet = mock(ResultSet.class);
-        AtomicInteger rowIndex = new AtomicInteger(-1);
-        LocalDateTime lastOrderAt = LocalDateTime.of(2026, 6, 30, 9, 15);
-        LocalDateTime lastExecutionAt = LocalDateTime.of(2026, 6, 30, 9, 20);
-
-        when(resultSet.next()).thenAnswer(invocation -> rowIndex.incrementAndGet() < 2);
-        when(resultSet.getString(any(String.class))).thenAnswer(invocation -> {
-            String column = invocation.getArgument(0);
-            int row = rowIndex.get();
-            return switch (column) {
-                case "profile_type" -> AutoParticipantProfileType.MOMENTUM_FOLLOWER.name();
-                case "holding_symbol" -> row == 0 ? "STOCK001" : "STOCK002";
-                default -> null;
-            };
-        });
-        when(resultSet.getLong(any(String.class))).thenAnswer(invocation -> {
-            String column = invocation.getArgument(0);
-            int row = rowIndex.get();
-            return switch (column) {
-                case "total_count" -> 3L;
-                case "enabled_count" -> 2L;
-                case "account_count" -> 2L;
-                case "holding_count" -> 2L;
-                case "total_holding_quantity" -> 150L;
-                case "reserved_sell_quantity" -> 10L;
-                case "open_order_count" -> 4L;
-                case "open_buy_order_count" -> 3L;
-                case "open_sell_order_count" -> 1L;
-                case "open_buy_quantity" -> 30L;
-                case "open_sell_quantity" -> 5L;
-                case "today_execution_count" -> 7L;
-                case "today_buy_quantity" -> 80L;
-                case "today_sell_quantity" -> 20L;
-                case "strategy_count" -> 5L;
-                case "enabled_strategy_count" -> 4L;
-                case "holding_holder_count" -> row == 0 ? 2L : 1L;
-                case "holding_quantity" -> row == 0 ? 100L : 50L;
-                case "holding_reserved_quantity" -> row == 0 ? 8L : 2L;
-                case "holding_available_quantity" -> row == 0 ? 92L : 48L;
-                default -> 0L;
-            };
-        });
-        when(resultSet.getBigDecimal(any(String.class))).thenAnswer(invocation -> {
-            String column = invocation.getArgument(0);
-            int row = rowIndex.get();
-            return switch (column) {
-                case "available_cash" -> new BigDecimal("1000.00");
-                case "reserved_buy_cash" -> new BigDecimal("50.00");
-                case "holding_market_value" -> new BigDecimal("450.00");
-                case "net_cash_flow" -> new BigDecimal("1200.00");
-                case "today_gross_amount" -> new BigDecimal("900.00");
-                case "holding_market_value_detail" -> row == 0 ? new BigDecimal("300.00") : new BigDecimal("150.00");
-                case "holding_unrealized_profit" -> row == 0 ? new BigDecimal("30.00") : new BigDecimal("-10.00");
-                default -> BigDecimal.ZERO;
-            };
-        });
-        when(resultSet.getObject(any(String.class), eq(LocalDateTime.class))).thenAnswer(invocation -> {
-            String column = invocation.getArgument(0);
-            return switch (column) {
-                case "last_order_at" -> lastOrderAt;
-                case "last_execution_at" -> lastExecutionAt;
-                default -> null;
-            };
-        });
-        doAnswer(invocation -> {
-            @SuppressWarnings("unchecked")
-            ResultSetExtractor<List<AutoParticipantProfileOverviewResponse>> extractor = invocation.getArgument(1);
-            return extractor.extractData(resultSet);
-        }).when(jdbcTemplate).query(
-                any(String.class),
-                org.mockito.ArgumentMatchers.<ResultSetExtractor<List<AutoParticipantProfileOverviewResponse>>>any(),
-                any()
-        );
-
-        List<AutoParticipantProfileOverviewResponse> response = marketService.getAutoParticipantProfileOverviews();
+        List<AutoParticipantProfileOverviewResponse> response = service.getAutoParticipantProfileOverviews();
 
         assertThat(response).hasSize(1);
         AutoParticipantProfileOverviewResponse overview = response.get(0);
@@ -774,10 +695,21 @@ class MarketServiceTest {
         assertThat(overview.totalCount()).isEqualTo(3);
         assertThat(overview.disabledCount()).isEqualTo(1);
         assertThat(overview.estimatedTotalAsset()).isEqualByComparingTo(new BigDecimal("1500.00"));
-        assertThat(overview.totalProfit()).isEqualByComparingTo(new BigDecimal("300.00"));
-        assertThat(overview.returnRate()).isEqualByComparingTo(new BigDecimal("25.0000"));
-        assertThat(overview.lastOrderAt()).isEqualTo(lastOrderAt);
+        assertThat(overview.netCashFlow()).isEqualByComparingTo(new BigDecimal("1100.00"));
+        assertThat(overview.totalProfit()).isEqualByComparingTo(new BigDecimal("400.00"));
+        assertThat(overview.returnRate()).isEqualByComparingTo(new BigDecimal("36.3636"));
+        assertThat(overview.lastOrderAt()).isEqualTo(lastTerminalOrderAt);
+        assertThat(overview.reservedBuyCash()).isEqualByComparingTo(new BigDecimal("50.00"));
+        assertThat(overview.openOrderCount()).isEqualTo(2);
+        assertThat(overview.openBuyOrderCount()).isEqualTo(1);
+        assertThat(overview.openSellOrderCount()).isEqualTo(1);
+        assertThat(overview.openBuyQuantity()).isEqualTo(15);
+        assertThat(overview.openSellQuantity()).isEqualTo(5);
         assertThat(overview.lastExecutionAt()).isEqualTo(lastExecutionAt);
+        assertThat(overview.todayExecutionCount()).isEqualTo(2);
+        assertThat(overview.todayBuyQuantity()).isEqualTo(80);
+        assertThat(overview.todaySellQuantity()).isEqualTo(20);
+        assertThat(overview.todayGrossAmount()).isEqualByComparingTo(new BigDecimal("900.00"));
         assertThat(overview.symbolHoldings()).hasSize(2);
         assertThat(overview.symbolHoldings().get(0).symbol()).isEqualTo("STOCK001");
         assertThat(overview.symbolHoldings().get(0).quantity()).isEqualTo(100);
@@ -786,116 +718,82 @@ class MarketServiceTest {
     }
 
     @Test
-    void getAutoParticipantHoldings_usesSingleScopedQueryAndPreservesEmptyGroups() throws Exception {
-        ResultSet resultSet = mock(ResultSet.class);
-        AtomicInteger rowIndex = new AtomicInteger(-1);
-
-        when(resultSet.next()).thenAnswer(invocation -> rowIndex.incrementAndGet() < 2);
-        when(resultSet.getString(any(String.class))).thenAnswer(invocation -> {
-            String column = invocation.getArgument(0);
-            int row = rowIndex.get();
-            return switch (column) {
-                case "user_key" -> row == 0 ? "stock-auto-001" : "stock-auto-002";
-                case "symbol" -> row == 0 ? "STOCK001" : null;
-                default -> null;
-            };
-        });
-        when(resultSet.getObject(eq("account_id"), eq(Long.class))).thenAnswer(invocation -> rowIndex.get() == 0 ? 11L : null);
-        when(resultSet.getLong(any(String.class))).thenAnswer(invocation -> {
-            String column = invocation.getArgument(0);
-            return switch (column) {
-                case "quantity" -> 100L;
-                case "reserved_quantity" -> 10L;
-                case "available_quantity" -> 90L;
-                default -> 0L;
-            };
-        });
-        when(resultSet.getBigDecimal(any(String.class))).thenAnswer(invocation -> {
-            String column = invocation.getArgument(0);
-            return switch (column) {
-                case "average_price" -> new BigDecimal("1000.00");
-                case "current_price" -> new BigDecimal("1100.00");
-                case "market_value" -> new BigDecimal("110000.00");
-                case "unrealized_profit" -> new BigDecimal("10000.00");
-                default -> BigDecimal.ZERO;
-            };
-        });
-        doAnswer(invocation -> {
-            @SuppressWarnings("unchecked")
-            ResultSetExtractor<List<AutoParticipantHoldingGroupResponse>> extractor = invocation.getArgument(1);
-            return extractor.extractData(resultSet);
-        }).when(jdbcTemplate).query(
-                any(String.class),
-                org.mockito.ArgumentMatchers.<ResultSetExtractor<List<AutoParticipantHoldingGroupResponse>>>any(),
-                any(), any(), any(), any()
+    void getAutoParticipantHoldings_preservesRequestOrderAndEmptyGroups() {
+        JdbcTemplate realJdbcTemplate = createAutoParticipantHoldingJdbcTemplate();
+        AutoParticipantHoldingQueryService service = new AutoParticipantHoldingQueryService(
+                new NamedParameterJdbcTemplate(realJdbcTemplate)
         );
 
-        List<AutoParticipantHoldingGroupResponse> response = marketService.getAutoParticipantHoldings(List.of(
-                " stock-auto-001 ",
+        List<AutoParticipantHoldingGroupResponse> response = service.getAutoParticipantHoldings(List.of(
                 "stock-auto-002",
+                " stock-auto-001 ",
                 "stock-auto-001"
         ));
 
-        ArgumentCaptor<String> sqlCaptor = ArgumentCaptor.forClass(String.class);
-        verify(jdbcTemplate).query(
-                sqlCaptor.capture(),
-                org.mockito.ArgumentMatchers.<ResultSetExtractor<List<AutoParticipantHoldingGroupResponse>>>any(),
-                eq("stock-auto-001"), eq(0), eq("stock-auto-002"), eq(1)
-        );
-        assertThat(sqlCaptor.getValue())
-                .contains("select concat('', ?) as user_key, (? + 0) as request_order")
-                .contains("join stock_auto_participant p on p.user_key = r.user_key and p.withdrawn_at is null")
-                .contains("left join stock_account a on a.user_key = p.user_key")
-                .contains("left join stock_holding h")
-                .contains("left join stock_price sp on sp.symbol = h.symbol")
-                .contains("order by r.request_order asc, h.symbol asc");
-        verify(stockAutoParticipantRepository, never()).findByUserKeyInAndWithdrawnAtIsNull(org.mockito.ArgumentMatchers.anyList());
-        verify(stockAccountRepository, never()).findAllByUserKeyIn(org.mockito.ArgumentMatchers.anyCollection());
         assertThat(response).hasSize(2);
-        assertThat(response.get(0).userKey()).isEqualTo("stock-auto-001");
-        assertThat(response.get(0).accountId()).isEqualTo(11L);
-        assertThat(response.get(0).holdings()).hasSize(1);
-        assertThat(response.get(0).holdings().get(0).symbol()).isEqualTo("STOCK001");
-        assertThat(response.get(0).holdings().get(0).availableQuantity()).isEqualTo(90);
-        assertThat(response.get(1).userKey()).isEqualTo("stock-auto-002");
-        assertThat(response.get(1).accountId()).isNull();
-        assertThat(response.get(1).holdings()).isEmpty();
+        assertThat(response.get(0).userKey()).isEqualTo("stock-auto-002");
+        assertThat(response.get(0).accountId()).isNull();
+        assertThat(response.get(0).holdings()).isEmpty();
+        assertThat(response.get(1).userKey()).isEqualTo("stock-auto-001");
+        assertThat(response.get(1).accountId()).isEqualTo(11L);
+        assertThat(response.get(1).holdings()).hasSize(1);
+        assertThat(response.get(1).holdings().get(0).symbol()).isEqualTo("STOCK001");
+        assertThat(response.get(1).holdings().get(0).availableQuantity()).isEqualTo(90);
+        assertThat(response.get(1).holdings().get(0).marketValue()).isEqualByComparingTo(new BigDecimal("110000.00"));
+        assertThat(response.get(1).holdings().get(0).unrealizedProfit()).isEqualByComparingTo(new BigDecimal("10000.00"));
+    }
+
+    private JdbcTemplate createAutoParticipantHoldingJdbcTemplate() {
+        JdbcTemplate template = new JdbcTemplate(new DriverManagerDataSource(
+                "jdbc:h2:mem:auto_participant_holding_%d;MODE=MySQL;DB_CLOSE_DELAY=-1;DATABASE_TO_UPPER=false".formatted(System.nanoTime()),
+                "sa",
+                ""
+        ));
+        template.execute("""
+                create table stock_auto_participant (
+                    user_key varchar(64) not null,
+                    withdrawn_at timestamp null
+                )
+                """);
+        template.execute("""
+                create table stock_account (
+                    id bigint not null,
+                    user_key varchar(64) not null
+                )
+                """);
+        template.execute("""
+                create table stock_holding (
+                    account_id bigint not null,
+                    symbol varchar(20) not null,
+                    quantity bigint not null,
+                    reserved_quantity bigint not null,
+                    average_price decimal(19, 2) not null
+                )
+                """);
+        template.execute("""
+                create table stock_price (
+                    symbol varchar(20) not null,
+                    current_price decimal(19, 2) not null
+                )
+                """);
+        template.update("insert into stock_auto_participant(user_key, withdrawn_at) values (?, null)", "stock-auto-001");
+        template.update("insert into stock_auto_participant(user_key, withdrawn_at) values (?, null)", "stock-auto-002");
+        template.update("insert into stock_account(id, user_key) values (?, ?)", 11L, "stock-auto-001");
+        template.update(
+                "insert into stock_holding(account_id, symbol, quantity, reserved_quantity, average_price) values (?, ?, ?, ?, ?)",
+                11L,
+                "STOCK001",
+                100L,
+                10L,
+                new BigDecimal("1000.00")
+        );
+        template.update("insert into stock_price(symbol, current_price) values (?, ?)", "STOCK001", new BigDecimal("1100.00"));
+        return template;
     }
 
     @Test
-    void getAdminFundFlowSummary_usesActiveAccountsCteForAggregates() {
-        when(jdbcTemplate.queryForObject(
-                org.mockito.ArgumentMatchers.any(String.class),
-                org.mockito.ArgumentMatchers.<org.springframework.jdbc.core.RowMapper<Object>>any()
-        )).thenAnswer(invocation -> {
-            @SuppressWarnings("unchecked")
-            org.springframework.jdbc.core.RowMapper<Object> rowMapper = invocation.getArgument(1);
-            ResultSet resultSet = org.mockito.Mockito.mock(ResultSet.class);
-            when(resultSet.getLong("active_account_count")).thenReturn(2L);
-            when(resultSet.getBigDecimal("total_cash_balance")).thenReturn(BigDecimal.valueOf(1000));
-            when(resultSet.getBigDecimal("total_reserved_buy_cash")).thenReturn(BigDecimal.valueOf(200));
-            when(resultSet.getBigDecimal("total_holding_market_value")).thenReturn(BigDecimal.valueOf(300));
-            when(resultSet.getBigDecimal("external_deposit_amount")).thenReturn(BigDecimal.valueOf(1500));
-            when(resultSet.getBigDecimal("external_withdraw_amount")).thenReturn(BigDecimal.valueOf(100));
-            when(resultSet.getBigDecimal("dividend_income_amount")).thenReturn(BigDecimal.valueOf(50));
-            when(resultSet.getBigDecimal("buy_net_amount")).thenReturn(BigDecimal.valueOf(700));
-            when(resultSet.getBigDecimal("sell_net_amount")).thenReturn(BigDecimal.valueOf(900));
-            when(resultSet.getBigDecimal("total_fee_amount")).thenReturn(BigDecimal.valueOf(10));
-            when(resultSet.getBigDecimal("total_tax_amount")).thenReturn(BigDecimal.valueOf(5));
-            when(resultSet.getBigDecimal("realized_profit")).thenReturn(BigDecimal.valueOf(200));
-            when(resultSet.getLong("execution_count")).thenReturn(7L);
-            return rowMapper.mapRow(resultSet, 0);
-        });
-
-        var response = marketService.getAdminFundFlowSummary();
-
-        ArgumentCaptor<String> sqlCaptor = ArgumentCaptor.forClass(String.class);
-        verify(jdbcTemplate).queryForObject(
-                sqlCaptor.capture(),
-                org.mockito.ArgumentMatchers.<org.springframework.jdbc.core.RowMapper<Object>>any()
-        );
-        assertThat(response.activeAccountCount()).isEqualTo(2L);
-        assertThat(sqlCaptor.getValue())
+    void adminFundFlowSummarySql_usesActiveAccountsCteForAggregates() {
+        assertThat(AdminFlowQueryService.FUND_FLOW_SUMMARY_SQL)
                 .contains("with active_accounts as")
                 .contains("from active_accounts")
                 .contains("join active_accounts aa on aa.id = h.account_id")
@@ -907,41 +805,41 @@ class MarketServiceTest {
     }
 
     @Test
-    void getAdminFlowOverview_corporateActionTodayCountUsesIndexedDatePredicate() throws Exception {
-        when(stockOrderBookInstrumentRepository.count()).thenReturn(0L);
-        when(jdbcTemplate.queryForObject(
-                org.mockito.ArgumentMatchers.any(String.class),
-                org.mockito.ArgumentMatchers.<org.springframework.jdbc.core.RowMapper<Object>>any(),
-                any()
-        )).thenAnswer(invocation -> {
-            @SuppressWarnings("unchecked")
-            org.springframework.jdbc.core.RowMapper<Object> rowMapper = invocation.getArgument(1);
-            ResultSet resultSet = org.mockito.Mockito.mock(ResultSet.class);
-            when(resultSet.getLong(org.mockito.ArgumentMatchers.anyString())).thenReturn(0L);
-            return rowMapper.mapRow(resultSet, 0);
-        });
-        when(jdbcTemplate.query(
-                org.mockito.ArgumentMatchers.any(String.class),
-                org.mockito.ArgumentMatchers.<org.springframework.jdbc.core.RowMapper<Object>>any()
-        )).thenReturn(List.of());
-
-        marketService.getAdminFlowOverview(0, false, false);
-
-        ArgumentCaptor<String> sqlCaptor = ArgumentCaptor.forClass(String.class);
-        verify(jdbcTemplate, org.mockito.Mockito.times(2)).queryForObject(
-                sqlCaptor.capture(),
-                org.mockito.ArgumentMatchers.<org.springframework.jdbc.core.RowMapper<Object>>any(),
-                any()
-        );
-        String corporateActionSql = sqlCaptor.getAllValues().stream()
-                .filter(sql -> sql.contains("from stock_corporate_action"))
-                .filter(sql -> sql.contains("today_created_count"))
-                .findFirst()
-                .orElseThrow();
-        assertThat(corporateActionSql)
+    void adminCorporateActionFlowSummarySql_todayCountUsesIndexedDatePredicate() {
+        assertThat(AdminFlowQueryService.CORPORATE_ACTION_FLOW_SUMMARY_SQL)
                 .contains("cross join")
                 .contains("where created_at >= ?")
                 .doesNotContain("sum(case when created_at >= ?");
+    }
+
+    @Test
+    void adminOrderFlowSummarySql_todayCountUsesIndexedDatePredicate() {
+        assertThat(AdminFlowQueryService.ORDER_FLOW_SUMMARY_SQL)
+                .contains("cross join")
+                .contains("where market_type = 'ORDER_BOOK'")
+                .contains("and created_at >= ?")
+                .doesNotContain("sum(case when created_at >= ?");
+    }
+
+    @Test
+    void autoParticipantOrderAggregateSql_scopesOpenOrderAggregateByStatusPredicate() {
+        assertThat(AutoParticipantAggregateQuerySupport.OPEN_ORDER_AGGREGATE_SQL)
+                .contains("and market_type = 'ORDER_BOOK'")
+                .contains("and status in ('PENDING', 'PARTIALLY_FILLED')")
+                .doesNotContain("sum(case when status in");
+        assertThat(AutoParticipantAggregateQuerySupport.LAST_ORDER_AGGREGATE_SQL)
+                .contains("max(created_at) as last_order_at")
+                .doesNotContain("status in ('PENDING', 'PARTIALLY_FILLED')");
+    }
+
+    @Test
+    void autoParticipantExecutionAggregateSql_todayCountUsesIndexedDatePredicate() {
+        assertThat(AutoParticipantAggregateQuerySupport.TODAY_EXECUTION_AGGREGATE_SQL)
+                .contains("and executed_at >= :todayStart")
+                .doesNotContain("sum(case when executed_at >= :todayStart");
+        assertThat(AutoParticipantAggregateQuerySupport.LAST_EXECUTION_AGGREGATE_SQL)
+                .contains("max(executed_at) as last_execution_at")
+                .doesNotContain("todayStart");
     }
 
     @Test
@@ -977,7 +875,8 @@ class MarketServiceTest {
     void getAdminSymbolFlows_fullViewKeepsAllSymbolAggregatePath() {
         when(jdbcTemplate.query(
                 org.mockito.ArgumentMatchers.any(String.class),
-                org.mockito.ArgumentMatchers.<org.springframework.jdbc.core.RowMapper<Object>>any()
+                org.mockito.ArgumentMatchers.<org.springframework.jdbc.core.RowMapper<Object>>any(),
+                aryEq(new Object[0])
         )).thenReturn(List.of());
 
         var response = marketService.getAdminSymbolFlows(0);
@@ -985,7 +884,8 @@ class MarketServiceTest {
         ArgumentCaptor<String> sqlCaptor = ArgumentCaptor.forClass(String.class);
         verify(jdbcTemplate).query(
                 sqlCaptor.capture(),
-                org.mockito.ArgumentMatchers.<org.springframework.jdbc.core.RowMapper<Object>>any()
+                org.mockito.ArgumentMatchers.<org.springframework.jdbc.core.RowMapper<Object>>any(),
+                aryEq(new Object[0])
         );
         assertThat(response.totalCount()).isZero();
         assertThat(response.symbolFlows()).isEmpty();
@@ -1002,19 +902,19 @@ class MarketServiceTest {
     @Test
     void getOrderBookCandles_usesExecutionRowsOnlyForPriceAndVolume() {
         when(stockOrderBookInstrumentRepository.existsBySymbolAndEnabledTrue("ZQ001")).thenReturn(true);
-        when(jdbcTemplate.query(
+        doAnswer(invocation -> List.of()).when(jdbcTemplate).query(
                 org.mockito.ArgumentMatchers.any(String.class),
                 org.mockito.ArgumentMatchers.<org.springframework.jdbc.core.RowMapper<Object>>any(),
                 org.mockito.ArgumentMatchers.eq("ZQ001"),
                 org.mockito.ArgumentMatchers.any(LocalDateTime.class),
                 org.mockito.ArgumentMatchers.any(LocalDateTime.class)
-        )).thenReturn(List.of());
-        when(jdbcTemplate.query(
+        );
+        doAnswer(invocation -> List.of(new BigDecimal("70000.00"))).when(jdbcTemplate).query(
                 org.mockito.ArgumentMatchers.any(String.class),
-                org.mockito.ArgumentMatchers.<org.springframework.jdbc.core.ResultSetExtractor<BigDecimal>>any(),
+                org.mockito.ArgumentMatchers.<org.springframework.jdbc.core.RowMapper<Object>>any(),
                 org.mockito.ArgumentMatchers.eq("ZQ001"),
                 org.mockito.ArgumentMatchers.any(LocalDateTime.class)
-        )).thenReturn(new BigDecimal("70000.00"));
+        );
 
         var candles = marketService.getOrderBookCandles("zq001", "1M");
 
@@ -1136,7 +1036,8 @@ class MarketServiceTest {
         when(stockExecutionMarketViewRepository.countAutoExecutionsFrom(any())).thenReturn(0L);
         when(jdbcTemplate.query(
                 org.mockito.ArgumentMatchers.contains("from stock_listing_auto_account_config c"),
-                org.mockito.ArgumentMatchers.<org.springframework.jdbc.core.RowMapper<Object>>any()
+                org.mockito.ArgumentMatchers.<org.springframework.jdbc.core.RowMapper<Object>>any(),
+                aryEq(new Object[0])
         )).thenAnswer(invocation -> {
             @SuppressWarnings("unchecked")
             org.springframework.jdbc.core.RowMapper<Object> rowMapper = invocation.getArgument(1);
@@ -1165,8 +1066,144 @@ class MarketServiceTest {
         assertThat(listingAccount.marketValue()).isEqualByComparingTo(new BigDecimal("7200000000.00"));
         verify(jdbcTemplate).query(
                 org.mockito.ArgumentMatchers.contains("from stock_listing_auto_account_config c"),
-                org.mockito.ArgumentMatchers.<org.springframework.jdbc.core.RowMapper<Object>>any()
+                org.mockito.ArgumentMatchers.<org.springframework.jdbc.core.RowMapper<Object>>any(),
+                aryEq(new Object[0])
         );
+    }
+
+    private JdbcTemplate createAutoParticipantProfileOverviewJdbcTemplate() {
+        JdbcTemplate template = new JdbcTemplate(new DriverManagerDataSource(
+                "jdbc:h2:mem:auto_participant_profile_overview_%d;MODE=MySQL;DB_CLOSE_DELAY=-1;DATABASE_TO_UPPER=false".formatted(System.nanoTime()),
+                "sa",
+                ""
+        ));
+        template.execute("""
+                create table stock_auto_participant (
+                    user_key varchar(64) not null,
+                    enabled boolean not null,
+                    profile_type varchar(40) not null,
+                    withdrawn_at timestamp null
+                )
+                """);
+        template.execute("""
+                create table stock_account (
+                    id bigint not null,
+                    user_key varchar(64) not null,
+                    cash_balance decimal(19, 2) not null
+                )
+                """);
+        template.execute("""
+                create table stock_order (
+                    account_id bigint not null,
+                    market_type varchar(30) not null,
+                    side varchar(10) not null,
+                    status varchar(20) not null,
+                    quantity bigint not null,
+                    filled_quantity bigint not null,
+                    reserved_cash decimal(19, 2) not null,
+                    created_at timestamp not null
+                )
+                """);
+        template.execute("""
+                create table stock_holding (
+                    account_id bigint not null,
+                    symbol varchar(20) not null,
+                    quantity bigint not null,
+                    reserved_quantity bigint not null,
+                    average_price decimal(19, 2) not null
+                )
+                """);
+        template.execute("""
+                create table stock_price (
+                    symbol varchar(20) not null,
+                    current_price decimal(19, 2) not null
+                )
+                """);
+        template.execute("""
+                create table stock_account_cash_flow (
+                    account_id bigint not null,
+                    flow_type varchar(20) not null,
+                    amount decimal(19, 2) not null,
+                    reason varchar(40) not null
+                )
+                """);
+        template.execute("""
+                create table stock_execution (
+                    account_id bigint not null,
+                    side varchar(10) not null,
+                    quantity bigint not null,
+                    gross_amount decimal(19, 2) not null,
+                    source varchar(30) not null,
+                    executed_at timestamp not null
+                )
+                """);
+        template.execute("""
+                create table stock_auto_participant_symbol_config (
+                    user_key varchar(64) not null,
+                    enabled boolean not null
+                )
+                """);
+        return template;
+    }
+
+    private void insertProfileOverviewFixture(
+            JdbcTemplate template,
+            LocalDateTime lastOrderAt,
+            LocalDateTime lastTerminalOrderAt,
+            LocalDateTime lastExecutionAt
+    ) {
+        template.update("insert into stock_auto_participant(user_key, enabled, profile_type, withdrawn_at) values (?, true, ?, null)", "stock-auto-001", AutoParticipantProfileType.MOMENTUM_FOLLOWER.name());
+        template.update("insert into stock_auto_participant(user_key, enabled, profile_type, withdrawn_at) values (?, true, ?, null)", "stock-auto-002", AutoParticipantProfileType.MOMENTUM_FOLLOWER.name());
+        template.update("insert into stock_auto_participant(user_key, enabled, profile_type, withdrawn_at) values (?, false, ?, null)", "stock-auto-003", AutoParticipantProfileType.MOMENTUM_FOLLOWER.name());
+        template.update("insert into stock_account(id, user_key, cash_balance) values (?, ?, ?)", 11L, "stock-auto-001", new BigDecimal("600.00"));
+        template.update("insert into stock_account(id, user_key, cash_balance) values (?, ?, ?)", 12L, "stock-auto-002", new BigDecimal("400.00"));
+        template.update(
+                "insert into stock_order(account_id, market_type, side, status, quantity, filled_quantity, reserved_cash, created_at) values (?, 'ORDER_BOOK', ?, ?, ?, ?, ?, ?)",
+                11L,
+                "BUY",
+                "PENDING",
+                20L,
+                5L,
+                new BigDecimal("50.00"),
+                lastOrderAt
+        );
+        template.update(
+                "insert into stock_order(account_id, market_type, side, status, quantity, filled_quantity, reserved_cash, created_at) values (?, 'ORDER_BOOK', ?, ?, ?, ?, ?, ?)",
+                12L,
+                "SELL",
+                "PARTIALLY_FILLED",
+                10L,
+                5L,
+                BigDecimal.ZERO,
+                lastOrderAt.minusMinutes(1)
+        );
+        template.update(
+                "insert into stock_order(account_id, market_type, side, status, quantity, filled_quantity, reserved_cash, created_at) values (?, 'ORDER_BOOK', ?, ?, ?, ?, ?, ?)",
+                11L,
+                "BUY",
+                "FILLED",
+                99L,
+                99L,
+                BigDecimal.ZERO,
+                lastTerminalOrderAt
+        );
+        template.update("insert into stock_price(symbol, current_price) values (?, ?)", "STOCK001", new BigDecimal("3.00"));
+        template.update("insert into stock_price(symbol, current_price) values (?, ?)", "STOCK002", new BigDecimal("3.00"));
+        template.update("insert into stock_holding(account_id, symbol, quantity, reserved_quantity, average_price) values (?, ?, ?, ?, ?)", 11L, "STOCK001", 60L, 8L, new BigDecimal("2.70"));
+        template.update("insert into stock_holding(account_id, symbol, quantity, reserved_quantity, average_price) values (?, ?, ?, ?, ?)", 12L, "STOCK001", 40L, 0L, new BigDecimal("2.70"));
+        template.update("insert into stock_holding(account_id, symbol, quantity, reserved_quantity, average_price) values (?, ?, ?, ?, ?)", 12L, "STOCK002", 50L, 2L, new BigDecimal("3.20"));
+        template.update("insert into stock_account_cash_flow(account_id, flow_type, amount, reason) values (?, 'DEPOSIT', ?, 'ADMIN_DEPOSIT')", 11L, new BigDecimal("700.00"));
+        template.update("insert into stock_account_cash_flow(account_id, flow_type, amount, reason) values (?, 'DEPOSIT', ?, 'ADMIN_DEPOSIT')", 12L, new BigDecimal("500.00"));
+        template.update("insert into stock_account_cash_flow(account_id, flow_type, amount, reason) values (?, 'DEPOSIT', ?, 'DIVIDEND_PAYMENT')", 12L, new BigDecimal("200.00"));
+        template.update("insert into stock_account_cash_flow(account_id, flow_type, amount, reason) values (?, 'WITHDRAW', ?, 'ADMIN_WITHDRAW')", 12L, new BigDecimal("100.00"));
+        template.update("insert into stock_execution(account_id, side, quantity, gross_amount, source, executed_at) values (?, ?, ?, ?, 'INTERNAL_ORDER_BOOK', ?)", 11L, "BUY", 80L, new BigDecimal("600.00"), lastExecutionAt);
+        template.update("insert into stock_execution(account_id, side, quantity, gross_amount, source, executed_at) values (?, ?, ?, ?, 'INTERNAL_ORDER_BOOK', ?)", 12L, "SELL", 20L, new BigDecimal("300.00"), lastExecutionAt.minusMinutes(1));
+        template.update("insert into stock_execution(account_id, side, quantity, gross_amount, source, executed_at) values (?, ?, ?, ?, 'INTERNAL_ORDER_BOOK', ?)", 12L, "BUY", 1L, BigDecimal.ONE, lastExecutionAt.minusHours(3));
+        template.update("insert into stock_auto_participant_symbol_config(user_key, enabled) values (?, true)", "stock-auto-001");
+        template.update("insert into stock_auto_participant_symbol_config(user_key, enabled) values (?, true)", "stock-auto-002");
+        template.update("insert into stock_auto_participant_symbol_config(user_key, enabled) values (?, false)", "stock-auto-002");
+        template.update("insert into stock_auto_participant_symbol_config(user_key, enabled) values (?, true)", "stock-auto-003");
+        template.update("insert into stock_auto_participant_symbol_config(user_key, enabled) values (?, false)", "stock-auto-003");
     }
 
     @Test
@@ -1354,8 +1391,6 @@ class MarketServiceTest {
                 100000L
         );
         when(stockOrderBookInstrumentRepository.findById("ZQ001")).thenReturn(Optional.of(instrument));
-        when(jdbcTemplate.queryForObject(any(String.class), org.mockito.ArgumentMatchers.eq(Long.class), org.mockito.ArgumentMatchers.eq("ZQ001")))
-                .thenReturn(0L);
         when(stockPriceRepository.findById("ZQ001")).thenReturn(Optional.of(StockPrice.initial("ZQ001", new BigDecimal("70000.00"))));
 
         var response = marketService.applyCorporateAction(
@@ -1395,8 +1430,6 @@ class MarketServiceTest {
                 100000L
         );
         when(stockOrderBookInstrumentRepository.findById("ZQ001")).thenReturn(Optional.of(instrument));
-        when(jdbcTemplate.queryForObject(any(String.class), org.mockito.ArgumentMatchers.eq(Long.class), org.mockito.ArgumentMatchers.eq("ZQ001")))
-                .thenReturn(0L);
         when(stockPriceRepository.findById("ZQ001")).thenReturn(Optional.empty());
 
         var response = marketService.applyCorporateAction(
@@ -1435,8 +1468,6 @@ class MarketServiceTest {
                 100000L
         );
         when(stockOrderBookInstrumentRepository.findById("ZQ001")).thenReturn(Optional.of(instrument));
-        when(jdbcTemplate.queryForObject(any(String.class), org.mockito.ArgumentMatchers.eq(Long.class), org.mockito.ArgumentMatchers.eq("ZQ001")))
-                .thenReturn(0L);
 
         assertThatThrownBy(() -> marketService.applyCorporateAction(
                 "ZQ001",
@@ -1512,7 +1543,6 @@ class MarketServiceTest {
 
         ArgumentCaptor<StockCorporateAction> actionCaptor = ArgumentCaptor.forClass(StockCorporateAction.class);
         verify(stockCorporateActionRepository).save(actionCaptor.capture());
-        verify(jdbcTemplate, never()).queryForObject(any(String.class), org.mockito.ArgumentMatchers.eq(Long.class), any());
         assertThat(response.enabled()).isTrue();
         assertThat(actionCaptor.getValue().getActionType()).isEqualTo(StockCorporateActionType.DELISTING);
         assertThat(actionCaptor.getValue().getStatus().name()).isEqualTo("ANNOUNCED");
@@ -1530,8 +1560,7 @@ class MarketServiceTest {
                 100000L
         );
         when(stockOrderBookInstrumentRepository.findById("ZQ001")).thenReturn(Optional.of(instrument));
-        when(jdbcTemplate.queryForObject(any(String.class), org.mockito.ArgumentMatchers.eq(Long.class), org.mockito.ArgumentMatchers.eq("ZQ001")))
-                .thenReturn(2L);
+        insertOpenOrderBookOrder("ZQ001");
 
         assertThatThrownBy(() -> marketService.applyCorporateAction(
                 "ZQ001",
@@ -1632,8 +1661,6 @@ class MarketServiceTest {
                 100000L
         );
         when(stockOrderBookInstrumentRepository.findById("ZQ001")).thenReturn(Optional.of(instrument));
-        when(jdbcTemplate.queryForObject(any(String.class), org.mockito.ArgumentMatchers.eq(Long.class), org.mockito.ArgumentMatchers.eq("ZQ001")))
-                .thenReturn(0L);
         when(stockPriceRepository.findById("ZQ001")).thenReturn(Optional.empty());
 
         var response = marketService.applyCorporateAction(
@@ -1672,8 +1699,6 @@ class MarketServiceTest {
                 100000L
         );
         when(stockOrderBookInstrumentRepository.findById("ZQ001")).thenReturn(Optional.of(instrument));
-        when(jdbcTemplate.queryForObject(any(String.class), org.mockito.ArgumentMatchers.eq(Long.class), org.mockito.ArgumentMatchers.eq("ZQ001")))
-                .thenReturn(0L);
         when(stockPriceRepository.findById("ZQ001")).thenReturn(Optional.of(StockPrice.initial("ZQ001", new BigDecimal("70000.00"))));
 
         var response = marketService.applyCorporateAction(
@@ -1712,8 +1737,6 @@ class MarketServiceTest {
                 100000L
         );
         when(stockOrderBookInstrumentRepository.findById("ZQ001")).thenReturn(Optional.of(instrument));
-        when(jdbcTemplate.queryForObject(any(String.class), org.mockito.ArgumentMatchers.eq(Long.class), org.mockito.ArgumentMatchers.eq("ZQ001")))
-                .thenReturn(0L);
         when(stockPriceRepository.findById("ZQ001")).thenReturn(Optional.of(StockPrice.initial("ZQ001", new BigDecimal("70000.00"))));
 
         var response = marketService.applyCorporateAction(
@@ -1752,8 +1775,6 @@ class MarketServiceTest {
                 100000L
         );
         when(stockOrderBookInstrumentRepository.findById("ZQ001")).thenReturn(Optional.of(instrument));
-        when(jdbcTemplate.queryForObject(any(String.class), org.mockito.ArgumentMatchers.eq(Long.class), org.mockito.ArgumentMatchers.eq("ZQ001")))
-                .thenReturn(0L);
         when(stockPriceRepository.findById("ZQ001")).thenReturn(Optional.of(StockPrice.initial("ZQ001", new BigDecimal("70000.00"))));
 
         var response = marketService.applyCorporateAction(
@@ -1786,8 +1807,8 @@ class MarketServiceTest {
     void getPrices_cachedPriceExists_usesRedisPriceAndProvider() {
         when(stockPriceRepository.findVirtualMarketPrices())
                 .thenReturn(List.of(StockPrice.initial("005930", new BigDecimal("70000.00"))));
-        when(stockPriceCacheService.getCachedPrice("005930"))
-                .thenReturn(Optional.of(new CachedStockPrice(new BigDecimal("71000.00"), "redis-cache")));
+        when(stockPriceCacheService.getCachedPrices(List.of("005930")))
+                .thenReturn(Map.of("005930", new CachedStockPrice(new BigDecimal("71000.00"), "redis-cache")));
 
         var prices = marketService.getPrices();
 
@@ -1878,7 +1899,7 @@ class MarketServiceTest {
     void getPrices_cachedPriceMissing_usesDatabasePrice() {
         when(stockPriceRepository.findVirtualMarketPrices())
                 .thenReturn(List.of(StockPrice.initial("005930", new BigDecimal("70000.00"))));
-        when(stockPriceCacheService.getCachedPrice("005930")).thenReturn(Optional.empty());
+        when(stockPriceCacheService.getCachedPrices(List.of("005930"))).thenReturn(Map.of());
 
         var prices = marketService.getPrices();
 
@@ -2051,39 +2072,6 @@ class MarketServiceTest {
         return level;
     }
 
-    private void stubOrderBookMarketSummaryQuery(
-            long configCount,
-            long instrumentCount,
-            long openOrderCount,
-            long todayExecutionCount,
-            long openConfigCount,
-            boolean includeTodayExecution
-    ) {
-        org.mockito.stubbing.Answer<Object> answer = invocation -> {
-            @SuppressWarnings("unchecked")
-            org.springframework.jdbc.core.RowMapper<Object> rowMapper = invocation.getArgument(1);
-            ResultSet resultSet = org.mockito.Mockito.mock(ResultSet.class);
-            when(resultSet.getLong("config_count")).thenReturn(configCount);
-            when(resultSet.getLong("instrument_count")).thenReturn(instrumentCount);
-            when(resultSet.getLong("open_order_count")).thenReturn(openOrderCount);
-            when(resultSet.getLong("today_execution_count")).thenReturn(todayExecutionCount);
-            when(resultSet.getLong("open_config_count")).thenReturn(openConfigCount);
-            return rowMapper.mapRow(resultSet, 0);
-        };
-        if (includeTodayExecution) {
-            when(jdbcTemplate.queryForObject(
-                    any(String.class),
-                    org.mockito.ArgumentMatchers.<org.springframework.jdbc.core.RowMapper<Object>>any(),
-                    any()
-            )).thenAnswer(answer);
-            return;
-        }
-        when(jdbcTemplate.queryForObject(
-                any(String.class),
-                org.mockito.ArgumentMatchers.<org.springframework.jdbc.core.RowMapper<Object>>any()
-        )).thenAnswer(answer);
-    }
-
     private void stubAutoMarketSummaryQuery(
             long configCount,
             long enabledConfigCount,
@@ -2094,32 +2082,61 @@ class MarketServiceTest {
             long todayAutoExecutionCount,
             boolean includeRuntimeMetrics
     ) {
-        org.mockito.stubbing.Answer<Object> answer = invocation -> {
-            @SuppressWarnings("unchecked")
-            org.springframework.jdbc.core.RowMapper<Object> rowMapper = invocation.getArgument(1);
-            ResultSet resultSet = org.mockito.Mockito.mock(ResultSet.class);
-            when(resultSet.getLong("config_count")).thenReturn(configCount);
-            when(resultSet.getLong("enabled_config_count")).thenReturn(enabledConfigCount);
-            when(resultSet.getLong("participant_count")).thenReturn(participantCount);
-            when(resultSet.getLong("enabled_participant_count")).thenReturn(enabledParticipantCount);
-            when(resultSet.getLong("listing_auto_account_count")).thenReturn(listingAutoAccountCount);
-            when(resultSet.getLong("salary_eligible_participant_count")).thenReturn(11L);
-            when(resultSet.getLong("open_auto_order_count")).thenReturn(openAutoOrderCount);
-            when(resultSet.getLong("today_auto_execution_count")).thenReturn(todayAutoExecutionCount);
-            return rowMapper.mapRow(resultSet, 0);
-        };
-        if (includeRuntimeMetrics) {
-            when(jdbcTemplate.queryForObject(
-                    any(String.class),
-                    org.mockito.ArgumentMatchers.<org.springframework.jdbc.core.RowMapper<Object>>any(),
-                    any()
-            )).thenAnswer(answer);
-            return;
+        autoMarketSummaryStatusQuery.configCount = configCount;
+        autoMarketSummaryStatusQuery.enabledConfigCount = enabledConfigCount;
+        autoMarketSummaryStatusQuery.participantCount = participantCount;
+        autoMarketSummaryStatusQuery.enabledParticipantCount = enabledParticipantCount;
+        autoMarketSummaryStatusQuery.listingAutoAccountCount = listingAutoAccountCount;
+        autoMarketSummaryStatusQuery.salaryEligibleParticipantCount = 11L;
+        autoMarketSummaryStatusQuery.openAutoOrderCount = openAutoOrderCount;
+        autoMarketSummaryStatusQuery.todayAutoExecutionCount = todayAutoExecutionCount;
+        autoMarketSummaryStatusQuery.expectedIncludeRuntimeMetrics = includeRuntimeMetrics;
+    }
+
+    private static class StubAutoMarketSummaryStatusQuery extends AutoMarketSummaryStatusQuery {
+        private long configCount;
+        private long enabledConfigCount;
+        private long participantCount;
+        private long enabledParticipantCount;
+        private long listingAutoAccountCount;
+        private long salaryEligibleParticipantCount;
+        private long openAutoOrderCount;
+        private long todayAutoExecutionCount;
+        private Boolean expectedIncludeRuntimeMetrics;
+        private Boolean lastIncludeSalaryEligibility;
+
+        private StubAutoMarketSummaryStatusQuery(JdbcTemplate jdbcTemplate) {
+            super(jdbcTemplate, mock(SimulationClockService.class));
         }
-        when(jdbcTemplate.queryForObject(
-                any(String.class),
-                org.mockito.ArgumentMatchers.<org.springframework.jdbc.core.RowMapper<Object>>any()
-        )).thenAnswer(answer);
+
+        @Override
+        AutoMarketStatusResponse getSummaryStatus(boolean includeRuntimeMetrics, boolean includeSalaryEligibility) {
+            if (expectedIncludeRuntimeMetrics != null) {
+                assertThat(includeRuntimeMetrics).isEqualTo(expectedIncludeRuntimeMetrics);
+            }
+            lastIncludeSalaryEligibility = includeSalaryEligibility;
+            return new AutoMarketStatusResponse(
+                    enabledParticipantCount > 0 && enabledConfigCount > 0,
+                    configCount,
+                    participantCount,
+                    AutoParticipantProfileType.values().length,
+                    listingAutoAccountCount,
+                    enabledParticipantCount,
+                    includeSalaryEligibility ? salaryEligibleParticipantCount : 0L,
+                    includeRuntimeMetrics ? openAutoOrderCount : 0L,
+                    includeRuntimeMetrics ? todayAutoExecutionCount : 0L,
+                    List.of(),
+                    List.of(),
+                    List.of(),
+                    List.of(),
+                    List.of()
+            );
+        }
+
+        @Override
+        long countSalaryEligibleAutoParticipants() {
+            return salaryEligibleParticipantCount;
+        }
     }
 
     private PortfolioSnapshot snapshot(String userKey, String totalAsset, String returnRate, LocalDate snapshotDate) {

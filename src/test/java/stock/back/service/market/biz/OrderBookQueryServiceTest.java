@@ -6,6 +6,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import stock.back.service.common.exception.StockException;
 import stock.back.service.database.entity.OrderSide;
 import stock.back.service.database.repository.StockOrderBookInstrumentRepository;
@@ -21,6 +22,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -37,11 +39,15 @@ class OrderBookQueryServiceTest {
     @Mock
     private StockOrderRepository stockOrderRepository;
 
+    @Mock
+    private SimulationClockService simulationClockService;
+
     private OrderBookQueryService service;
 
     @BeforeEach
     void setUp() {
-        service = new OrderBookQueryService(jdbcTemplate, stockOrderBookInstrumentRepository, stockOrderRepository);
+        lenient().when(simulationClockService.currentMarketDayStart()).thenReturn(SimulationDayClock.currentDayStart());
+        service = new OrderBookQueryService(jdbcTemplate, stockOrderBookInstrumentRepository, stockOrderRepository, simulationClockService);
     }
 
     @Test
@@ -70,6 +76,36 @@ class OrderBookQueryServiceTest {
     }
 
     @Test
+    void getOrderBookTradeSummary_readsAggregateWithJdbcClient() {
+        JdbcTemplate realJdbcTemplate = createJdbcTemplate();
+        OrderBookQueryService realService = new OrderBookQueryService(
+                realJdbcTemplate,
+                stockOrderBookInstrumentRepository,
+                stockOrderRepository,
+                simulationClockService
+        );
+        when(stockOrderBookInstrumentRepository.existsBySymbolAndEnabledTrue("ZQ001")).thenReturn(true);
+        insertExecution(realJdbcTemplate, 1L, "ZQ001", "BUY", 2L, "70000.00", "140000.00", 2);
+        insertExecution(realJdbcTemplate, 2L, "ZQ001", "SELL", 1L, "71000.00", "71000.00", 1);
+        insertExecution(realJdbcTemplate, 3L, "OTHER", "BUY", 10L, "1.00", "10.00", 0);
+
+        var summary = realService.getOrderBookTradeSummary("zq001");
+
+        assertThat(summary.symbol()).isEqualTo("ZQ001");
+        assertThat(summary.todayExecutionCount()).isEqualTo(2L);
+        assertThat(summary.todayVolume()).isEqualTo(3L);
+        assertThat(summary.todayTurnover()).isEqualByComparingTo(new BigDecimal("211000.00"));
+        assertThat(summary.vwap()).isEqualByComparingTo(new BigDecimal("70333.3333"));
+        assertThat(summary.highPrice()).isEqualByComparingTo(new BigDecimal("71000.00"));
+        assertThat(summary.lowPrice()).isEqualByComparingTo(new BigDecimal("70000.00"));
+        assertThat(summary.buyVolume()).isEqualTo(2L);
+        assertThat(summary.sellVolume()).isEqualTo(1L);
+        assertThat(summary.executionStrength()).isEqualByComparingTo(new BigDecimal("200.00"));
+        assertThat(summary.lastPrice()).isEqualByComparingTo(new BigDecimal("70000.00"));
+        assertThat(summary.lastExecutedAt()).isEqualTo(SimulationDayClock.currentDayStart().plusMinutes(12));
+    }
+
+    @Test
     void getOrderBook_blankSymbol_throwsBadRequest() {
         assertThatThrownBy(() -> service.getOrderBook(" "))
                 .isInstanceOf(StockException.class)
@@ -93,7 +129,53 @@ class OrderBookQueryServiceTest {
         when(resultSet.getLong("quantity")).thenReturn(quantity);
         when(resultSet.getBigDecimal("price")).thenReturn(new BigDecimal(price));
         when(resultSet.getBigDecimal("gross_amount")).thenReturn(new BigDecimal(grossAmount));
-        when(resultSet.getTimestamp("executed_at")).thenReturn(Timestamp.valueOf(LocalDateTime.of(2026, 6, 30, 9, 30).minusMinutes(rowNum)));
+        when(resultSet.getTimestamp("executed_at")).thenReturn(Timestamp.valueOf(SimulationDayClock.currentDayStart().plusMinutes(30 - rowNum)));
         return rowMapper.mapRow(resultSet, rowNum);
+    }
+
+    private JdbcTemplate createJdbcTemplate() {
+        JdbcTemplate jdbcTemplate = new JdbcTemplate(new DriverManagerDataSource(
+                "jdbc:h2:mem:order_book_query_service_test;MODE=MySQL;DB_CLOSE_DELAY=-1;DATABASE_TO_UPPER=false",
+                "sa",
+                ""
+        ));
+        jdbcTemplate.execute("""
+                create table stock_execution (
+                    id bigint primary key,
+                    symbol varchar(20) not null,
+                    side varchar(10) not null,
+                    quantity bigint not null,
+                    price decimal(19, 2) not null,
+                    gross_amount decimal(19, 2) not null,
+                    source varchar(50) not null,
+                    executed_at timestamp not null
+                )
+                """);
+        return jdbcTemplate;
+    }
+
+    private void insertExecution(
+            JdbcTemplate jdbcTemplate,
+            long id,
+            String symbol,
+            String side,
+            long quantity,
+            String price,
+            String grossAmount,
+            long minute
+    ) {
+        jdbcTemplate.update(
+                """
+                insert into stock_execution(id, symbol, side, quantity, price, gross_amount, source, executed_at)
+                values (?, ?, ?, ?, ?, ?, 'INTERNAL_ORDER_BOOK', ?)
+                """,
+                id,
+                symbol,
+                side,
+                quantity,
+                new BigDecimal(price),
+                new BigDecimal(grossAmount),
+                SimulationDayClock.currentDayStart().plusMinutes(10 + minute)
+        );
     }
 }

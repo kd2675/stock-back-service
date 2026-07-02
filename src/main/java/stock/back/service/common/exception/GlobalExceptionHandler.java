@@ -1,6 +1,7 @@
 package stock.back.service.common.exception;
 
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.QueryTimeoutException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.BindingResult;
@@ -40,6 +41,15 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(AsyncRequestNotUsableException.class)
     public void handleDisconnectedClient(AsyncRequestNotUsableException ex) {
         log.debug("Stock API client disconnected before async response completed: {}", ex.getMessage());
+    }
+
+    @ExceptionHandler(QueryTimeoutException.class)
+    public ResponseEntity<ResponseErrorDTO> handleQueryTimeoutException(QueryTimeoutException ex) {
+        log.warn("Stock API database query timed out: {}", ex.getMessage());
+        return new ResponseEntity<>(
+                ResponseErrorDTO.of(Code.DATA_ACCESS_ERROR, "Database query timed out"),
+                Code.DATA_ACCESS_ERROR.getHttpStatus()
+        );
     }
 
     @ExceptionHandler(Exception.class)

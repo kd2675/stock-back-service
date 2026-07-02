@@ -7,6 +7,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import stock.back.service.common.exception.StockException;
 import stock.back.service.database.entity.StockCorporateAction;
 import stock.back.service.database.entity.StockCorporateActionType;
@@ -19,14 +20,17 @@ import stock.back.service.market.vo.CorporateActionRequest;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -41,18 +45,23 @@ class CorporateActionCommandServiceTest {
     @Mock
     private StockPriceRepository stockPriceRepository;
 
-    @Mock
     private JdbcTemplate jdbcTemplate;
 
+    private SimulationClockService simulationClockService;
     private CorporateActionCommandService service;
+    private final LocalDateTime simulationNow = LocalDateTime.of(2026, 7, 1, 10, 0);
 
     @BeforeEach
     void setUp() {
+        jdbcTemplate = createJdbcTemplate();
+        simulationClockService = mock(SimulationClockService.class);
+        lenient().when(simulationClockService.currentMarketDateTime()).thenReturn(simulationNow);
         service = new CorporateActionCommandService(
                 stockOrderBookInstrumentRepository,
                 stockCorporateActionRepository,
                 stockPriceRepository,
-                jdbcTemplate
+                jdbcTemplate,
+                simulationClockService
         );
     }
 
@@ -68,7 +77,6 @@ class CorporateActionCommandServiceTest {
                 new BigDecimal("30.00")
         );
         when(stockOrderBookInstrumentRepository.findById("ZQ001")).thenReturn(Optional.of(instrument));
-        when(jdbcTemplate.queryForObject(any(String.class), eq(Long.class), eq("ZQ001"))).thenReturn(0L);
         when(stockPriceRepository.findById("ZQ001"))
                 .thenReturn(Optional.of(StockPrice.initial("ZQ001", new BigDecimal("70000.00"))));
 
@@ -96,6 +104,7 @@ class CorporateActionCommandServiceTest {
         assertThat(actionCaptor.getValue().getActionType()).isEqualTo(StockCorporateActionType.PAID_IN_CAPITAL_INCREASE);
         assertThat(actionCaptor.getValue().getTheoreticalExRightsPrice()).isEqualByComparingTo(new BigDecimal("68181.82"));
         assertThat(actionCaptor.getValue().getDescription()).isEqualTo("유상증자");
+        assertThat(actionCaptor.getValue().getCreatedAt()).isEqualTo(simulationNow);
     }
 
     @Test
@@ -110,7 +119,18 @@ class CorporateActionCommandServiceTest {
                 new BigDecimal("30.00")
         );
         when(stockOrderBookInstrumentRepository.findById("ZQ001")).thenReturn(Optional.of(instrument));
-        when(jdbcTemplate.queryForObject(any(String.class), eq(Long.class), eq("ZQ001"))).thenReturn(3L);
+        jdbcTemplate.update(
+                "insert into stock_order(symbol, market_type, status) values (?, 'ORDER_BOOK', 'PENDING')",
+                "ZQ001"
+        );
+        jdbcTemplate.update(
+                "insert into stock_order(symbol, market_type, status) values (?, 'ORDER_BOOK', 'PARTIALLY_FILLED')",
+                "ZQ001"
+        );
+        jdbcTemplate.update(
+                "insert into stock_order(symbol, market_type, status) values (?, 'SPECIFIC_PRICE', 'PENDING')",
+                "ZQ001"
+        );
 
         assertThatThrownBy(() -> service.applyCorporateAction(
                 "ZQ001",
@@ -136,6 +156,14 @@ class CorporateActionCommandServiceTest {
 
     @Test
     void applyCorporateAction_delisting_skipsOpenOrderPrecondition() {
+        JdbcTemplate unusedJdbcTemplate = mock(JdbcTemplate.class);
+        CorporateActionCommandService delistingService = new CorporateActionCommandService(
+                stockOrderBookInstrumentRepository,
+                stockCorporateActionRepository,
+                stockPriceRepository,
+                unusedJdbcTemplate,
+                simulationClockService
+        );
         StockOrderBookInstrument instrument = StockOrderBookInstrument.listed(
                 "ZQ001",
                 "테스트",
@@ -147,7 +175,7 @@ class CorporateActionCommandServiceTest {
         );
         when(stockOrderBookInstrumentRepository.findById("ZQ001")).thenReturn(Optional.of(instrument));
 
-        var response = service.applyCorporateAction(
+        var response = delistingService.applyCorporateAction(
                 "ZQ001",
                 new CorporateActionRequest(
                         StockCorporateActionType.DELISTING,
@@ -168,6 +196,23 @@ class CorporateActionCommandServiceTest {
         verify(stockCorporateActionRepository).save(actionCaptor.capture());
         assertThat(response.symbol()).isEqualTo("ZQ001");
         assertThat(actionCaptor.getValue().getActionType()).isEqualTo(StockCorporateActionType.DELISTING);
-        verify(jdbcTemplate, never()).queryForObject(any(String.class), eq(Long.class), eq("ZQ001"));
+        verifyNoInteractions(unusedJdbcTemplate);
+    }
+
+    private JdbcTemplate createJdbcTemplate() {
+        JdbcTemplate template = new JdbcTemplate(new DriverManagerDataSource(
+                "jdbc:h2:mem:corporate_action_command_%d;MODE=MySQL;DB_CLOSE_DELAY=-1;DATABASE_TO_UPPER=false".formatted(System.nanoTime()),
+                "sa",
+                ""
+        ));
+        template.execute("""
+                create table stock_order (
+                    id bigint generated by default as identity primary key,
+                    symbol varchar(20) not null,
+                    market_type varchar(32) not null,
+                    status varchar(32) not null
+                )
+                """);
+        return template;
     }
 }

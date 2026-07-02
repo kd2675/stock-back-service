@@ -5,7 +5,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import stock.back.service.common.exception.StockException;
 import stock.back.service.database.entity.ExecutionSource;
-import stock.back.service.database.entity.MarketSessionStatus;
 import stock.back.service.database.entity.MarketType;
 import stock.back.service.database.entity.OrderSide;
 import stock.back.service.database.entity.OrderStatus;
@@ -13,19 +12,8 @@ import stock.back.service.database.entity.OrderType;
 import stock.back.service.database.entity.StockAccount;
 import stock.back.service.database.entity.StockHolding;
 import stock.back.service.database.entity.StockOrder;
-import stock.back.service.database.entity.StockOrderBookInstrument;
-import stock.back.service.database.entity.StockOrderBookMarketConfig;
-import stock.back.service.database.entity.StockPrice;
-import stock.back.service.database.entity.StockVirtualMarketConfig;
-import stock.back.service.database.repository.StockHoldingRepository;
-import stock.back.service.database.repository.StockInstrumentRepository;
-import stock.back.service.database.repository.StockOrderBookInstrumentRepository;
-import stock.back.service.database.repository.StockOrderBookMarketConfigRepository;
 import stock.back.service.database.repository.StockOrderRepository;
-import stock.back.service.database.repository.StockPriceRepository;
-import stock.back.service.database.repository.StockVirtualMarketConfigRepository;
-import stock.back.service.market.cache.CachedStockPrice;
-import stock.back.service.market.cache.StockPriceCacheService;
+import stock.back.service.market.biz.SimulationClockService;
 import stock.back.service.trading.vo.ExecutionResponse;
 import stock.back.service.trading.vo.FundFlowResponse;
 import stock.back.service.trading.vo.HoldingResponse;
@@ -38,72 +26,53 @@ import stock.back.service.trading.vo.PortfolioSnapshotResponse;
 import stock.back.service.trading.vo.ProfitSummaryResponse;
 
 import java.math.BigDecimal;
-import java.math.RoundingMode;
+import java.time.LocalDateTime;
 import java.util.List;
-import java.util.Locale;
 import java.util.Optional;
-import java.util.UUID;
-import java.util.regex.Pattern;
 
 @Service
 @RequiredArgsConstructor
 public class TradingService {
 
-    private static final int CLIENT_ORDER_ID_MAX_LENGTH = 64;
-    private static final Pattern CLIENT_ORDER_ID_PATTERN = Pattern.compile("[A-Za-z0-9._:-]+");
-    private static final BigDecimal DEFAULT_TICK_SIZE = BigDecimal.ONE;
-    private static final BigDecimal DEFAULT_PRICE_LIMIT_RATE = BigDecimal.valueOf(30);
-    private static final BigDecimal ONE_HUNDRED = BigDecimal.valueOf(100);
-
     private final AccountService accountService;
-    private final StockInstrumentRepository stockInstrumentRepository;
-    private final StockOrderBookInstrumentRepository stockOrderBookInstrumentRepository;
-    private final StockVirtualMarketConfigRepository stockVirtualMarketConfigRepository;
-    private final StockOrderBookMarketConfigRepository stockOrderBookMarketConfigRepository;
-    private final StockPriceRepository stockPriceRepository;
     private final StockOrderRepository stockOrderRepository;
-    private final StockHoldingRepository stockHoldingRepository;
-    private final StockPriceCacheService stockPriceCacheService;
     private final TradingQueryService tradingQueryService;
+    private final TradingMarketRuleService tradingMarketRuleService;
+    private final TradingReservationService tradingReservationService;
+    private final SimulationClockService simulationClockService;
 
     @Transactional
     public OrderResponse placeOrder(String userKey, OrderRequest request) {
-        String symbol = normalizeSymbol(request);
-        validateOrderRequest(request, symbol);
-        String clientOrderId = normalizeClientOrderId(request);
+        String symbol = TradingOrderRequestPolicy.normalizeSymbol(request);
+        TradingOrderRequestPolicy.validateOrderRequest(request, symbol);
+        String clientOrderId = TradingOrderRequestPolicy.normalizeClientOrderId(request);
         Optional<OrderResponse> existingOrder = findExistingClientOrder(userKey, clientOrderId);
         if (existingOrder.isPresent()) {
             return existingOrder.get();
         }
 
-        MarketType marketType = normalizeMarketType(request);
-        validateSymbolExists(symbol, marketType);
-        validateMarketOpen(symbol, marketType);
-        validateLimitPriceRule(symbol, marketType, request.orderType(), request.limitPrice());
+        MarketType marketType = TradingOrderRequestPolicy.normalizeMarketType(request);
+        tradingMarketRuleService.validateSymbolExists(symbol, marketType);
+        tradingMarketRuleService.validateMarketOpen(symbol, marketType);
+        tradingMarketRuleService.validateLimitPriceRule(symbol, marketType, request.orderType(), request.limitPrice());
 
-        BigDecimal reservedCash = calculateReservedCash(request, symbol);
+        BigDecimal reservedCash = tradingMarketRuleService.calculateReservedCash(request, symbol);
         StockAccount account = accountService.requireAccountForUpdate(userKey);
+        LocalDateTime orderedAt = simulationClockService.currentMarketDateTime();
 
         if (request.side() == OrderSide.BUY) {
             existingOrder = findExistingClientOrder(account.getId(), clientOrderId);
             if (existingOrder.isPresent()) {
                 return existingOrder.get();
             }
-            if (account.getCashBalance().compareTo(reservedCash) < 0) {
-                throw StockException.conflict("Not enough cash balance");
-            }
-            account.reserveCash(reservedCash);
+            tradingReservationService.reserveBuyOrder(account, reservedCash, orderedAt);
         } else {
-            StockHolding holding = stockHoldingRepository.findByAccountIdAndSymbolForUpdate(account.getId(), symbol)
-                    .orElseThrow(() -> StockException.conflict("Not enough holding quantity"));
+            StockHolding holding = tradingReservationService.findSellHoldingForUpdate(account.getId(), symbol);
             existingOrder = findExistingClientOrder(account.getId(), clientOrderId);
             if (existingOrder.isPresent()) {
                 return existingOrder.get();
             }
-            if (holding.getAvailableQuantity() < request.quantity()) {
-                throw StockException.conflict("Not enough holding quantity");
-            }
-            holding.reserveQuantity(request.quantity());
+            tradingReservationService.reserveSellOrder(holding, request.quantity(), orderedAt);
         }
 
         StockOrder order = StockOrder.pending(
@@ -115,7 +84,8 @@ public class TradingService {
                 request.orderType(),
                 request.orderType() == OrderType.LIMIT ? request.limitPrice() : null,
                 request.quantity(),
-                reservedCash
+                reservedCash,
+                orderedAt
         );
 
         return TradingResponseMapper.toOrderResponse(stockOrderRepository.save(order));
@@ -132,14 +102,9 @@ public class TradingService {
         if (order.getStatus() != OrderStatus.PENDING && order.getStatus() != OrderStatus.PARTIALLY_FILLED) {
             throw StockException.conflict("Only pending orders can be cancelled");
         }
-        if (order.getSide() == OrderSide.BUY && order.getReservedCash().compareTo(BigDecimal.ZERO) > 0) {
-            accountService.requireAccountForUpdate(userKey).releaseCash(order.getReservedCash());
-        }
-        if (order.getSide() == OrderSide.SELL) {
-            stockHoldingRepository.findByAccountIdAndSymbolForUpdate(account.getId(), order.getSymbol())
-                    .ifPresent(holding -> holding.releaseReservedQuantity(order.getQuantity() - order.getFilledQuantity()));
-        }
-        order.cancel();
+        LocalDateTime cancelledAt = simulationClockService.currentMarketDateTime();
+        tradingReservationService.releaseOnCancel(userKey, account.getId(), order, cancelledAt);
+        order.cancel(cancelledAt);
         return TradingResponseMapper.toOrderResponse(order);
     }
 
@@ -158,17 +123,18 @@ public class TradingService {
         if (nextLimitPrice == null || nextLimitPrice.compareTo(BigDecimal.ZERO) <= 0) {
             throw StockException.badRequest("Limit price must be positive");
         }
-        validateLimitPriceRule(order.getSymbol(), order.getMarketType(), order.getOrderType(), nextLimitPrice);
+        tradingMarketRuleService.validateLimitPriceRule(order.getSymbol(), order.getMarketType(), order.getOrderType(), nextLimitPrice);
 
         long nextQuantity = request.quantity() == null ? order.getQuantity() : request.quantity();
         if (nextQuantity <= order.getFilledQuantity()) {
             throw StockException.badRequest("Amended quantity must be greater than filled quantity");
         }
 
+        LocalDateTime amendedAt = simulationClockService.currentMarketDateTime();
         if (order.getSide() == OrderSide.BUY) {
-            amendBuyLimitOrder(userKey, order, nextQuantity, nextLimitPrice);
+            tradingReservationService.amendBuyLimitOrder(userKey, order, nextQuantity, nextLimitPrice, amendedAt);
         } else {
-            amendSellLimitOrder(account.getId(), order, nextQuantity, nextLimitPrice);
+            tradingReservationService.amendSellLimitOrder(account.getId(), order, nextQuantity, nextLimitPrice, amendedAt);
         }
         return TradingResponseMapper.toOrderResponse(order);
     }
@@ -186,21 +152,20 @@ public class TradingService {
             throw StockException.badRequest("Cancel quantity cannot exceed remaining quantity");
         }
         if (request.quantity() == remainingQuantity) {
-            releaseAllRemainingReservation(userKey, account.getId(), order);
-            order.cancel();
+            LocalDateTime cancelledAt = simulationClockService.currentMarketDateTime();
+            tradingReservationService.releaseAllRemainingReservation(userKey, account.getId(), order, cancelledAt);
+            order.cancel(cancelledAt);
             return TradingResponseMapper.toOrderResponse(order);
         }
 
-        if (order.getSide() == OrderSide.BUY) {
-            BigDecimal release = calculateReservedCashForCancel(order, request.quantity(), remainingQuantity);
-            accountService.requireAccountForUpdate(userKey).releaseCash(release);
-            order.reduceOpenQuantity(request.quantity(), order.getReservedCash().subtract(release).max(BigDecimal.ZERO));
-        } else {
-            StockHolding holding = stockHoldingRepository.findByAccountIdAndSymbolForUpdate(account.getId(), order.getSymbol())
-                    .orElseThrow(() -> StockException.conflict("Not enough holding quantity"));
-            holding.releaseReservedQuantity(request.quantity());
-            order.reduceOpenQuantity(request.quantity(), BigDecimal.ZERO);
-        }
+        tradingReservationService.releasePartialReservation(
+                userKey,
+                account.getId(),
+                order,
+                request.quantity(),
+                remainingQuantity,
+                simulationClockService.currentMarketDateTime()
+        );
         return TradingResponseMapper.toOrderResponse(order);
     }
 
@@ -210,8 +175,18 @@ public class TradingService {
     }
 
     @Transactional(readOnly = true)
+    public List<OrderResponse> getOrders(String userKey, MarketType marketType, String symbol, Integer limit) {
+        return tradingQueryService.getOrders(userKey, marketType, symbol, limit);
+    }
+
+    @Transactional(readOnly = true)
     public List<ExecutionResponse> getExecutions(String userKey, ExecutionSource source) {
         return tradingQueryService.getExecutions(userKey, source);
+    }
+
+    @Transactional(readOnly = true)
+    public List<ExecutionResponse> getExecutions(String userKey, ExecutionSource source, String symbol, Integer limit) {
+        return tradingQueryService.getExecutions(userKey, source, symbol, limit);
     }
 
     @Transactional(readOnly = true)
@@ -237,129 +212,6 @@ public class TradingService {
     @Transactional(readOnly = true)
     public FundFlowResponse getFundFlow(String userKey) {
         return tradingQueryService.getFundFlow(userKey);
-    }
-
-    private String normalizeSymbol(OrderRequest request) {
-        if (request == null || request.symbol() == null) {
-            return "";
-        }
-        return request.symbol().trim().toUpperCase(Locale.ROOT);
-    }
-
-    private void validateOrderRequest(OrderRequest request, String symbol) {
-        if (request == null) {
-            throw StockException.badRequest("Order request is required");
-        }
-        if (symbol.isBlank()) {
-            throw StockException.badRequest("Symbol is required");
-        }
-        if (request.side() == null) {
-            throw StockException.badRequest("Order side is required");
-        }
-        normalizeMarketType(request);
-        if (request.orderType() == null) {
-            throw StockException.badRequest("Order type is required");
-        }
-        if (request.quantity() <= 0) {
-            throw StockException.badRequest("Quantity must be positive");
-        }
-        if (request.orderType() == OrderType.LIMIT) {
-            if (request.limitPrice() == null) {
-                throw StockException.badRequest("Limit price is required for limit orders");
-            }
-            if (request.limitPrice().compareTo(BigDecimal.ZERO) <= 0) {
-                throw StockException.badRequest("Limit price must be positive");
-            }
-        }
-    }
-
-    private String normalizeClientOrderId(OrderRequest request) {
-        if (request.clientOrderId() == null || request.clientOrderId().isBlank()) {
-            return UUID.randomUUID().toString();
-        }
-        String clientOrderId = request.clientOrderId().trim();
-        if (clientOrderId.length() > CLIENT_ORDER_ID_MAX_LENGTH) {
-            throw StockException.badRequest("Client order id must be 64 characters or less");
-        }
-        if (!CLIENT_ORDER_ID_PATTERN.matcher(clientOrderId).matches()) {
-            throw StockException.badRequest("Client order id contains invalid characters");
-        }
-        return clientOrderId;
-    }
-
-    private MarketType normalizeMarketType(OrderRequest request) {
-        if (request == null || request.marketType() == null) {
-            return MarketType.VIRTUAL_PRICE;
-        }
-        return request.marketType();
-    }
-
-    private void validateSymbolExists(String symbol, MarketType marketType) {
-        boolean exists = marketType == MarketType.ORDER_BOOK
-                ? stockOrderBookInstrumentRepository.existsBySymbolAndEnabledTrue(symbol)
-                : stockInstrumentRepository.existsById(symbol);
-        if (!exists) {
-            throw StockException.notFound("Unknown stock symbol: " + symbol);
-        }
-    }
-
-    private void validateMarketOpen(String symbol, MarketType marketType) {
-        if (marketType == MarketType.ORDER_BOOK) {
-            StockOrderBookMarketConfig config = stockOrderBookMarketConfigRepository.findById(symbol)
-                    .orElseThrow(() -> StockException.conflict("Market is not open: " + symbol));
-            if (!Boolean.TRUE.equals(config.getEnabled()) || normalizeMarketSessionStatus(config.getMarketStatus()) != MarketSessionStatus.OPEN) {
-                throw StockException.conflict("Market is not open: " + symbol);
-            }
-            return;
-        }
-
-        StockVirtualMarketConfig config = stockVirtualMarketConfigRepository.findById(symbol)
-                .orElseThrow(() -> StockException.conflict("Market is not open: " + symbol));
-        if (!Boolean.TRUE.equals(config.getEnabled()) || normalizeMarketSessionStatus(config.getMarketStatus()) != MarketSessionStatus.OPEN) {
-            throw StockException.conflict("Market is not open: " + symbol);
-        }
-    }
-
-    private MarketSessionStatus normalizeMarketSessionStatus(MarketSessionStatus marketStatus) {
-        return marketStatus == null ? MarketSessionStatus.OPEN : marketStatus;
-    }
-
-    private void validateLimitPriceRule(String symbol, MarketType marketType, OrderType orderType, BigDecimal limitPrice) {
-        if (orderType != OrderType.LIMIT || limitPrice == null) {
-            return;
-        }
-        MarketPriceRule rule = resolveMarketPriceRule(symbol, marketType);
-        if (limitPrice.remainder(rule.tickSize()).compareTo(BigDecimal.ZERO) != 0) {
-            throw StockException.badRequest("Limit price must match tick size " + rule.tickSize().stripTrailingZeros().toPlainString());
-        }
-
-        BigDecimal lowerLimit = rule.basePrice()
-                .multiply(ONE_HUNDRED.subtract(rule.priceLimitRate()))
-                .divide(ONE_HUNDRED, 2, RoundingMode.HALF_UP);
-        BigDecimal upperLimit = rule.basePrice()
-                .multiply(ONE_HUNDRED.add(rule.priceLimitRate()))
-                .divide(ONE_HUNDRED, 2, RoundingMode.HALF_UP);
-        if (limitPrice.compareTo(lowerLimit) < 0 || limitPrice.compareTo(upperLimit) > 0) {
-            throw StockException.badRequest(
-                    "Limit price must be between " + lowerLimit.toPlainString() + " and " + upperLimit.toPlainString()
-            );
-        }
-    }
-
-    private MarketPriceRule resolveMarketPriceRule(String symbol, MarketType marketType) {
-        if (marketType != MarketType.ORDER_BOOK) {
-            StockPrice price = stockPriceRepository.findById(symbol)
-                    .orElseThrow(() -> StockException.notFound("Price not found: " + symbol));
-            return new MarketPriceRule(price.getPreviousClose(), DEFAULT_TICK_SIZE, DEFAULT_PRICE_LIMIT_RATE);
-        }
-        StockOrderBookInstrument instrument = stockOrderBookInstrumentRepository.findById(symbol)
-                .orElseThrow(() -> StockException.notFound("Unknown stock symbol: " + symbol));
-        BigDecimal basePrice = stockPriceRepository.findById(symbol)
-                .map(StockPrice::getPreviousClose)
-                .orElse(instrument.getInitialPrice());
-        BigDecimal tickSize = instrument.getTickSize() == null ? DEFAULT_TICK_SIZE : instrument.getTickSize();
-        BigDecimal priceLimitRate = instrument.getPriceLimitRate() == null ? DEFAULT_PRICE_LIMIT_RATE : instrument.getPriceLimitRate();
-        return new MarketPriceRule(basePrice, tickSize, priceLimitRate);
     }
 
     private Optional<OrderResponse> findExistingClientOrder(Long accountId, String clientOrderId) {
@@ -397,90 +249,4 @@ public class TradingService {
         return order;
     }
 
-    private void amendBuyLimitOrder(String userKey, StockOrder order, long nextQuantity, BigDecimal nextLimitPrice) {
-        long nextRemainingQuantity = nextQuantity - order.getFilledQuantity();
-        BigDecimal nextReservedCash = nextLimitPrice.multiply(BigDecimal.valueOf(nextRemainingQuantity));
-        BigDecimal reserveDiff = nextReservedCash.subtract(order.getReservedCash());
-        StockAccount account = accountService.requireAccountForUpdate(userKey);
-        if (reserveDiff.compareTo(BigDecimal.ZERO) > 0) {
-            if (account.getCashBalance().compareTo(reserveDiff) < 0) {
-                throw StockException.conflict("Not enough cash balance");
-            }
-            account.reserveCash(reserveDiff);
-        } else if (reserveDiff.compareTo(BigDecimal.ZERO) < 0) {
-            account.releaseCash(reserveDiff.abs());
-        }
-        order.amendLimitOrder(nextQuantity, nextLimitPrice, nextReservedCash);
-    }
-
-    private void amendSellLimitOrder(Long accountId, StockOrder order, long nextQuantity, BigDecimal nextLimitPrice) {
-        long currentRemainingQuantity = order.getQuantity() - order.getFilledQuantity();
-        long nextRemainingQuantity = nextQuantity - order.getFilledQuantity();
-        long reserveDiff = nextRemainingQuantity - currentRemainingQuantity;
-        StockHolding holding = stockHoldingRepository.findByAccountIdAndSymbolForUpdate(accountId, order.getSymbol())
-                .orElseThrow(() -> StockException.conflict("Not enough holding quantity"));
-        if (reserveDiff > 0) {
-            if (holding.getAvailableQuantity() < reserveDiff) {
-                throw StockException.conflict("Not enough holding quantity");
-            }
-            holding.reserveQuantity(reserveDiff);
-        } else if (reserveDiff < 0) {
-            holding.releaseReservedQuantity(Math.abs(reserveDiff));
-        }
-        order.amendLimitOrder(nextQuantity, nextLimitPrice, BigDecimal.ZERO);
-    }
-
-    private void releaseAllRemainingReservation(String userKey, Long accountId, StockOrder order) {
-        if (order.getSide() == OrderSide.BUY && order.getReservedCash().compareTo(BigDecimal.ZERO) > 0) {
-            accountService.requireAccountForUpdate(userKey).releaseCash(order.getReservedCash());
-            return;
-        }
-        if (order.getSide() == OrderSide.SELL) {
-            StockHolding holding = stockHoldingRepository.findByAccountIdAndSymbolForUpdate(accountId, order.getSymbol())
-                    .orElseThrow(() -> StockException.conflict("Not enough holding quantity"));
-            holding.releaseReservedQuantity(order.getQuantity() - order.getFilledQuantity());
-        }
-    }
-
-    private BigDecimal calculateReservedCashForCancel(StockOrder order, long cancelQuantity, long remainingQuantity) {
-        if (order.getOrderType() == OrderType.LIMIT && order.getLimitPrice() != null) {
-            return order.getLimitPrice().multiply(BigDecimal.valueOf(cancelQuantity));
-        }
-        if (remainingQuantity == cancelQuantity) {
-            return order.getReservedCash();
-        }
-        BigDecimal reservedPerShare = order.getReservedCash()
-                .divide(BigDecimal.valueOf(remainingQuantity), 2, RoundingMode.HALF_UP);
-        return reservedPerShare.multiply(BigDecimal.valueOf(cancelQuantity)).min(order.getReservedCash());
-    }
-
-    private BigDecimal calculateReservedCash(OrderRequest request, String symbol) {
-        if (request.side() == OrderSide.SELL) {
-            return BigDecimal.ZERO;
-        }
-        BigDecimal price = request.orderType() == OrderType.MARKET ? resolveReferencePrice(symbol) : request.limitPrice();
-        return price.multiply(BigDecimal.valueOf(request.quantity()));
-    }
-
-    private record MarketPriceRule(
-            BigDecimal basePrice,
-            BigDecimal tickSize,
-            BigDecimal priceLimitRate
-    ) {
-    }
-
-    private BigDecimal resolveReferencePrice(String symbol) {
-        return resolveCurrentPrice(symbol)
-                .orElseThrow(() -> StockException.notFound("Price not found: " + symbol));
-    }
-
-    private java.util.Optional<BigDecimal> resolveCurrentPrice(String symbol) {
-        Optional<BigDecimal> cachedPrice = stockPriceCacheService.getCachedPrice(symbol)
-                .map(CachedStockPrice::currentPrice);
-        if (cachedPrice.isPresent()) {
-            return cachedPrice;
-        }
-        return stockPriceRepository.findById(symbol)
-                .map(StockPrice::getCurrentPrice);
-    }
 }

@@ -1,7 +1,7 @@
 package stock.back.service.market.biz;
 
-import lombok.RequiredArgsConstructor;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import stock.back.service.common.exception.StockException;
@@ -16,25 +16,35 @@ import stock.back.service.market.vo.CorporateActionRequest;
 import stock.back.service.market.vo.OrderBookInstrumentResponse;
 
 import java.math.BigDecimal;
-import java.math.RoundingMode;
 import java.time.LocalDate;
-import java.util.Locale;
+import java.time.LocalDateTime;
 
 @Service
-@RequiredArgsConstructor
 public class CorporateActionCommandService {
 
     private final StockOrderBookInstrumentRepository stockOrderBookInstrumentRepository;
     private final StockCorporateActionRepository stockCorporateActionRepository;
     private final StockPriceRepository stockPriceRepository;
-    private final JdbcTemplate jdbcTemplate;
+    private final JdbcClient jdbcClient;
+    private final SimulationClockService simulationClockService;
+
+    public CorporateActionCommandService(
+            StockOrderBookInstrumentRepository stockOrderBookInstrumentRepository,
+            StockCorporateActionRepository stockCorporateActionRepository,
+            StockPriceRepository stockPriceRepository,
+            JdbcTemplate jdbcTemplate,
+            SimulationClockService simulationClockService
+    ) {
+        this.stockOrderBookInstrumentRepository = stockOrderBookInstrumentRepository;
+        this.stockCorporateActionRepository = stockCorporateActionRepository;
+        this.stockPriceRepository = stockPriceRepository;
+        this.jdbcClient = JdbcClient.create(jdbcTemplate);
+        this.simulationClockService = simulationClockService;
+    }
 
     @Transactional
     public OrderBookInstrumentResponse applyCorporateAction(String symbol, CorporateActionRequest request) {
-        String normalizedSymbol = normalizeSymbol(symbol);
-        if (normalizedSymbol.isBlank()) {
-            throw StockException.badRequest("Symbol is required");
-        }
+        String normalizedSymbol = CorporateActionPolicy.requireSymbol(symbol);
         if (request == null || request.actionType() == null) {
             throw StockException.badRequest("Corporate action type is required");
         }
@@ -59,14 +69,8 @@ public class CorporateActionCommandService {
     }
 
     private OrderBookInstrumentResponse applyShareIssue(StockOrderBookInstrument instrument, CorporateActionRequest request) {
-        long shares = request.shareQuantity() == null ? 0L : request.shareQuantity();
-        if (shares <= 0) {
-            throw StockException.badRequest("Share quantity must be positive");
-        }
-        BigDecimal issuePrice = request.issuePrice();
-        if (issuePrice == null || issuePrice.compareTo(BigDecimal.ZERO) <= 0) {
-            throw StockException.badRequest("Share issue requires a positive issue price");
-        }
+        long shares = CorporateActionPolicy.requirePositiveShareQuantity(request.shareQuantity());
+        BigDecimal issuePrice = CorporateActionPolicy.requirePositiveIssuePrice(request.issuePrice());
 
         if (request.actionType() == StockCorporateActionType.PAID_IN_CAPITAL_INCREASE) {
             return announcePaidInCapitalIncrease(instrument, request, shares, issuePrice);
@@ -84,17 +88,13 @@ public class CorporateActionCommandService {
         LocalDate exRightsDate = request.exRightsDate();
         LocalDate paymentDate = request.paymentDate();
         LocalDate listingDate = request.listingDate();
-        if (exRightsDate == null || paymentDate == null || listingDate == null) {
-            throw StockException.badRequest("Paid-in capital increase requires ex-rights, payment, and listing dates");
-        }
-        if (paymentDate.isBefore(exRightsDate) || listingDate.isBefore(paymentDate)) {
-            throw StockException.badRequest("Paid-in capital increase dates must be ordered by ex-rights, payment, listing");
-        }
+        CorporateActionPolicy.requirePaidInCapitalIncreaseDates(exRightsDate, paymentDate, listingDate);
 
         StockPrice price = stockPriceRepository.findById(instrument.getSymbol())
                 .orElseThrow(() -> StockException.notFound("Price not found: " + instrument.getSymbol()));
         BigDecimal basePrice = price.getCurrentPrice();
-        BigDecimal theoreticalExRightsPrice = calculateTheoreticalExRightsPrice(
+        LocalDateTime createdAt = simulationClockService.currentMarketDateTime();
+        BigDecimal theoreticalExRightsPrice = CorporateActionPolicy.calculateTheoreticalExRightsPrice(
                 instrument.getIssuedShares(),
                 basePrice,
                 shares,
@@ -109,7 +109,8 @@ public class CorporateActionCommandService {
                 exRightsDate,
                 paymentDate,
                 listingDate,
-                normalizeNullableDescription(request.description())
+                CorporateActionPolicy.normalizeNullableDescription(request.description()),
+                createdAt
         ));
         return OrderBookInstrumentResponseMapper.toResponse(instrument, price);
     }
@@ -120,50 +121,29 @@ public class CorporateActionCommandService {
             long shares,
             BigDecimal issuePrice
     ) {
-        LocalDate listingDate = request.listingDate();
-        if (listingDate == null) {
-            throw StockException.badRequest("Additional issue requires a listing date");
-        }
+        LocalDate listingDate = CorporateActionPolicy.requireAdditionalIssueListingDate(request.listingDate());
         stockCorporateActionRepository.save(StockCorporateAction.additionalIssue(
                 instrument.getSymbol(),
                 shares,
                 issuePrice,
                 listingDate,
-                normalizeNullableDescription(request.description())
+                CorporateActionPolicy.normalizeNullableDescription(request.description()),
+                simulationClockService.currentMarketDateTime()
         ));
         return OrderBookInstrumentResponseMapper.toResponse(instrument, findPrice(instrument));
     }
 
-    private BigDecimal calculateTheoreticalExRightsPrice(
-            long existingShares,
-            BigDecimal basePrice,
-            long newShares,
-            BigDecimal issuePrice
-    ) {
-        BigDecimal existingValue = basePrice.multiply(BigDecimal.valueOf(existingShares));
-        BigDecimal issueValue = issuePrice.multiply(BigDecimal.valueOf(newShares));
-        return existingValue.add(issueValue)
-                .divide(BigDecimal.valueOf(existingShares + newShares), 2, RoundingMode.HALF_UP);
-    }
-
     private OrderBookInstrumentResponse applyFreeShareDistribution(StockOrderBookInstrument instrument, CorporateActionRequest request) {
-        long shares = request.shareQuantity() == null ? 0L : request.shareQuantity();
-        if (shares <= 0) {
-            throw StockException.badRequest("Share quantity must be positive");
-        }
+        long shares = CorporateActionPolicy.requirePositiveShareQuantity(request.shareQuantity());
         LocalDate exRightsDate = request.exRightsDate();
         LocalDate listingDate = request.listingDate();
-        if (exRightsDate == null || listingDate == null) {
-            throw StockException.badRequest("Free share distribution requires ex-rights and listing dates");
-        }
-        if (listingDate.isBefore(exRightsDate)) {
-            throw StockException.badRequest("Free share distribution listing date must be on or after ex-rights date");
-        }
+        CorporateActionPolicy.requireFreeShareDistributionDates(exRightsDate, listingDate);
 
         StockPrice price = stockPriceRepository.findById(instrument.getSymbol())
                 .orElseThrow(() -> StockException.notFound("Price not found: " + instrument.getSymbol()));
         BigDecimal basePrice = price.getCurrentPrice();
-        BigDecimal theoreticalExRightsPrice = calculateTheoreticalFreeSharePrice(
+        LocalDateTime createdAt = simulationClockService.currentMarketDateTime();
+        BigDecimal theoreticalExRightsPrice = CorporateActionPolicy.calculateTheoreticalFreeSharePrice(
                 instrument.getIssuedShares(),
                 basePrice,
                 shares
@@ -176,7 +156,8 @@ public class CorporateActionCommandService {
                         theoreticalExRightsPrice,
                         exRightsDate,
                         listingDate,
-                        normalizeNullableDescription(request.description())
+                        CorporateActionPolicy.normalizeNullableDescription(request.description()),
+                        createdAt
                 )
                 : StockCorporateAction.stockDividend(
                         instrument.getSymbol(),
@@ -185,61 +166,39 @@ public class CorporateActionCommandService {
                         theoreticalExRightsPrice,
                         exRightsDate,
                         listingDate,
-                        normalizeNullableDescription(request.description())
+                        CorporateActionPolicy.normalizeNullableDescription(request.description()),
+                        createdAt
                 );
         stockCorporateActionRepository.save(action);
         return OrderBookInstrumentResponseMapper.toResponse(instrument, price);
     }
 
-    private BigDecimal calculateTheoreticalFreeSharePrice(
-            long existingShares,
-            BigDecimal basePrice,
-            long newShares
-    ) {
-        BigDecimal existingValue = basePrice.multiply(BigDecimal.valueOf(existingShares));
-        return existingValue.divide(BigDecimal.valueOf(existingShares + newShares), 2, RoundingMode.HALF_UP);
-    }
-
     private OrderBookInstrumentResponse applyStockSplit(StockOrderBookInstrument instrument, CorporateActionRequest request) {
         Integer splitFrom = request.splitFrom();
         Integer splitTo = request.splitTo();
-        if (splitFrom == null || splitTo == null || splitFrom <= 0 || splitTo <= 0 || splitTo <= splitFrom) {
-            throw StockException.badRequest("Stock split ratio must be positive and greater than 1:1");
-        }
-        if (splitTo % splitFrom != 0) {
-            throw StockException.badRequest("Only integer share split ratios are supported");
-        }
-        LocalDate listingDate = request.listingDate();
-        if (listingDate == null) {
-            throw StockException.badRequest("Stock split requires an effective date");
-        }
+        CorporateActionPolicy.requireSupportedStockSplitRatio(splitFrom, splitTo);
+        LocalDate listingDate = CorporateActionPolicy.requireStockSplitListingDate(request.listingDate());
         stockCorporateActionRepository.save(StockCorporateAction.stockSplit(
                 instrument.getSymbol(),
                 splitFrom,
                 splitTo,
                 listingDate,
-                normalizeNullableDescription(request.description())
+                CorporateActionPolicy.normalizeNullableDescription(request.description()),
+                simulationClockService.currentMarketDateTime()
         ));
         return OrderBookInstrumentResponseMapper.toResponse(instrument, findPrice(instrument));
     }
 
     private OrderBookInstrumentResponse applyCashDividend(StockOrderBookInstrument instrument, CorporateActionRequest request) {
-        BigDecimal dividendAmount = request.dividendAmount();
-        if (dividendAmount == null || dividendAmount.compareTo(BigDecimal.ZERO) <= 0) {
-            throw StockException.badRequest("Cash dividend amount must be positive");
-        }
+        BigDecimal dividendAmount = CorporateActionPolicy.requirePositiveDividendAmount(request.dividendAmount());
         LocalDate exRightsDate = request.exRightsDate();
         LocalDate paymentDate = request.paymentDate();
-        if (exRightsDate == null || paymentDate == null) {
-            throw StockException.badRequest("Cash dividend requires ex-dividend and payment dates");
-        }
-        if (paymentDate.isBefore(exRightsDate)) {
-            throw StockException.badRequest("Cash dividend payment date must be on or after ex-dividend date");
-        }
+        CorporateActionPolicy.requireCashDividendDates(exRightsDate, paymentDate);
 
         StockPrice price = stockPriceRepository.findById(instrument.getSymbol())
                 .orElseThrow(() -> StockException.notFound("Price not found: " + instrument.getSymbol()));
         BigDecimal basePrice = price.getCurrentPrice();
+        LocalDateTime createdAt = simulationClockService.currentMarketDateTime();
 
         stockCorporateActionRepository.save(StockCorporateAction.cashDividend(
                 instrument.getSymbol(),
@@ -248,61 +207,42 @@ public class CorporateActionCommandService {
                 basePrice,
                 exRightsDate,
                 paymentDate,
-                normalizeNullableDescription(request.description())
+                CorporateActionPolicy.normalizeNullableDescription(request.description()),
+                createdAt
         ));
         return OrderBookInstrumentResponseMapper.toResponse(instrument, price);
     }
 
     private OrderBookInstrumentResponse applyDelisting(StockOrderBookInstrument instrument, CorporateActionRequest request) {
-        LocalDate delistingDate = request.delistingDate();
-        if (delistingDate == null) {
-            throw StockException.badRequest("Delisting requires a delisting date");
-        }
+        LocalDate delistingDate = CorporateActionPolicy.requireDelistingDate(request.delistingDate());
         stockCorporateActionRepository.save(StockCorporateAction.delisting(
                 instrument.getSymbol(),
                 delistingDate,
-                normalizeNullableDescription(request.description())
+                CorporateActionPolicy.normalizeNullableDescription(request.description()),
+                simulationClockService.currentMarketDateTime()
         ));
         return OrderBookInstrumentResponseMapper.toResponse(instrument, findPrice(instrument));
     }
 
     private void assertNoOpenOrderBookOrders(String symbol) {
-        Long openOrderCount = jdbcTemplate.queryForObject(
-                """
+        Long openOrderCount = jdbcClient.sql(
+                        """
                 select count(*)
                   from stock_order
                  where symbol = ?
                    and market_type = 'ORDER_BOOK'
                    and status in ('PENDING', 'PARTIALLY_FILLED')
-                """,
-                Long.class,
-                symbol
-        );
-        if (openOrderCount != null && openOrderCount > 0) {
+                """
+                )
+                .param(symbol)
+                .query(Long.class)
+                .single();
+        if (openOrderCount > 0) {
             throw StockException.conflict("Corporate action requires no open order book orders: " + symbol);
         }
     }
 
-    private String normalizeNullableDescription(String value) {
-        String description = normalizeText(value);
-        if (description.isBlank()) {
-            return null;
-        }
-        if (description.length() > 255) {
-            throw StockException.badRequest("Description must be 255 characters or less");
-        }
-        return description;
-    }
-
     private StockPrice findPrice(StockOrderBookInstrument instrument) {
         return stockPriceRepository.findById(instrument.getSymbol()).orElse(null);
-    }
-
-    private String normalizeSymbol(String symbol) {
-        return symbol == null ? "" : symbol.trim().toUpperCase(Locale.ROOT);
-    }
-
-    private String normalizeText(String value) {
-        return value == null ? "" : value.trim();
     }
 }

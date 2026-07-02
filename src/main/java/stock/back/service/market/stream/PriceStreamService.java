@@ -1,5 +1,11 @@
 package stock.back.service.market.stream;
 
+import java.io.IOException;
+import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
+import java.util.Set;
+import java.util.concurrent.CopyOnWriteArraySet;
+
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -8,11 +14,7 @@ import org.springframework.data.redis.connection.MessageListener;
 import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
-import java.io.IOException;
-import java.math.BigDecimal;
-import java.nio.charset.StandardCharsets;
-import java.util.Set;
-import java.util.concurrent.CopyOnWriteArraySet;
+import stock.back.service.market.biz.SimulationClockService;
 
 @Slf4j
 @Service
@@ -23,6 +25,7 @@ public class PriceStreamService implements MessageListener {
     private static final String PRICE_CHANNEL_PREFIX = "stock.price.";
 
     private final ObjectMapper objectMapper;
+    private final SimulationClockService simulationClockService;
     private final Set<SseEmitter> emitters = new CopyOnWriteArraySet<>();
 
     public SseEmitter connect() {
@@ -86,7 +89,11 @@ public class PriceStreamService implements MessageListener {
             if (symbol.isBlank()) {
                 return null;
             }
-            return PriceStreamEvent.legacy(symbol, new BigDecimal(payload.trim()));
+            return PriceStreamEvent.legacy(
+                    symbol,
+                    new BigDecimal(payload.trim()),
+                    simulationClockService.currentMarketDateTime().toString()
+            );
         } catch (RuntimeException | IOException ex) {
             log.debug("Redis price stream message skipped: channel={}, reason={}", channel, ex.getMessage());
             return null;

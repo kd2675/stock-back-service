@@ -16,6 +16,7 @@ import stock.back.service.database.repository.StockAutoParticipantRepository;
 import stock.back.service.market.vo.AutoParticipantCashAdjustmentRequest;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -23,6 +24,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -37,14 +39,19 @@ class AutoParticipantCashAdjustmentServiceTest {
     @Mock
     private StockAccountCashFlowRepository stockAccountCashFlowRepository;
 
+    @Mock
+    private SimulationClockService simulationClockService;
+
     private AutoParticipantCashAdjustmentService service;
 
     @BeforeEach
     void setUp() {
+        lenient().when(simulationClockService.currentMarketDateTime()).thenReturn(LocalDateTime.of(2026, 7, 1, 10, 0));
         service = new AutoParticipantCashAdjustmentService(
                 stockAutoParticipantRepository,
                 stockAccountRepository,
-                stockAccountCashFlowRepository
+                stockAccountCashFlowRepository,
+                simulationClockService
         );
     }
 

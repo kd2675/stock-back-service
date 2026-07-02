@@ -15,8 +15,6 @@ import stock.back.service.database.repository.StockOrderBookInstrumentRepository
 import stock.back.service.market.vo.AutoParticipantSymbolConfigRequest;
 import stock.back.service.market.vo.AutoParticipantSymbolConfigResponse;
 
-import java.util.Locale;
-
 @Service
 @RequiredArgsConstructor
 public class AutoParticipantSymbolConfigService {
@@ -32,8 +30,8 @@ public class AutoParticipantSymbolConfigService {
             String symbol,
             AutoParticipantSymbolConfigRequest request
     ) {
-        String normalizedUserKey = normalizeText(userKey);
-        String normalizedSymbol = normalizeSymbol(symbol);
+        String normalizedUserKey = MarketTextNormalizer.text(userKey);
+        String normalizedSymbol = MarketTextNormalizer.symbol(symbol);
         if (normalizedUserKey.isBlank()) {
             throw StockException.badRequest("Auto participant user key is required");
         }
@@ -77,17 +75,4 @@ public class AutoParticipantSymbolConfigService {
         );
     }
 
-    private String normalizeSymbol(String symbol) {
-        if (symbol == null) {
-            return "";
-        }
-        return symbol.trim().toUpperCase(Locale.ROOT);
-    }
-
-    private String normalizeText(String value) {
-        if (value == null) {
-            return "";
-        }
-        return value.trim();
-    }
 }

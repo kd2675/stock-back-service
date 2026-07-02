@@ -8,6 +8,7 @@ import java.sql.ResultSet;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.AdditionalMatchers.aryEq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -20,7 +21,8 @@ class ListingAutoAccountLedgerQueryServiceTest {
     void findLedgersBySymbol_mapsAvailableQuantityAndMarketValue() throws Exception {
         when(jdbcTemplate.query(
                 org.mockito.ArgumentMatchers.contains("from stock_listing_auto_account_config c"),
-                org.mockito.ArgumentMatchers.<org.springframework.jdbc.core.RowMapper<Object>>any()
+                org.mockito.ArgumentMatchers.<org.springframework.jdbc.core.RowMapper<Object>>any(),
+                aryEq(new Object[0])
         )).thenAnswer(invocation -> {
             @SuppressWarnings("unchecked")
             org.springframework.jdbc.core.RowMapper<Object> rowMapper = invocation.getArgument(1);

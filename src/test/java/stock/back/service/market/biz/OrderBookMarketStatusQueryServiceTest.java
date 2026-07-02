@@ -6,6 +6,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import stock.back.service.database.entity.ExecutionSource;
 import stock.back.service.database.entity.MarketSessionStatus;
 import stock.back.service.database.entity.MarketType;
@@ -16,14 +17,13 @@ import stock.back.service.database.repository.StockOrderBookInstrumentRepository
 import stock.back.service.database.repository.StockOrderBookMarketConfigRepository;
 import stock.back.service.database.repository.StockOrderRepository;
 
-import java.sql.ResultSet;
 import java.time.LocalDateTime;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -46,22 +46,35 @@ class OrderBookMarketStatusQueryServiceTest {
     @Mock
     private StockExecutionMarketViewRepository stockExecutionMarketViewRepository;
 
+    @Mock
+    private SimulationClockService simulationClockService;
+
     private OrderBookMarketStatusQueryService service;
 
     @BeforeEach
     void setUp() {
+        lenient().when(simulationClockService.currentMarketDayStart()).thenReturn(SimulationDayClock.currentDayStart());
         service = new OrderBookMarketStatusQueryService(
                 jdbcTemplate,
                 stockOrderBookMarketConfigRepository,
                 stockOrderBookInstrumentRepository,
                 stockOrderRepository,
-                stockExecutionMarketViewRepository
+                stockExecutionMarketViewRepository,
+                simulationClockService
         );
     }
 
     @Test
     void getOrderBookMarketStatus_withoutConfigExpansion_returnsCountsWithoutLoadingConfigs() {
-        stubOrderBookMarketSummaryQuery(2L, 3L, 5L, 7L, 1L, true);
+        service = new OrderBookMarketStatusQueryService(
+                createSummaryJdbcTemplate("order_book_market_status_summary_with_today_test"),
+                stockOrderBookMarketConfigRepository,
+                stockOrderBookInstrumentRepository,
+                stockOrderRepository,
+                stockExecutionMarketViewRepository,
+                simulationClockService
+        );
+        seedSummaryRows(true);
 
         var response = service.getOrderBookMarketStatus(false);
 
@@ -69,8 +82,8 @@ class OrderBookMarketStatusQueryServiceTest {
         assertThat(response.configCount()).isEqualTo(2L);
         assertThat(response.openConfigCount()).isEqualTo(1L);
         assertThat(response.instrumentCount()).isEqualTo(3L);
-        assertThat(response.openOrderCount()).isEqualTo(5L);
-        assertThat(response.todayExecutionCount()).isEqualTo(7L);
+        assertThat(response.openOrderCount()).isEqualTo(3L);
+        assertThat(response.todayExecutionCount()).isEqualTo(2L);
         assertThat(response.configs()).isEmpty();
         verify(stockOrderBookMarketConfigRepository, never()).findAll();
         verify(stockOrderBookMarketConfigRepository, never()).count();
@@ -82,7 +95,15 @@ class OrderBookMarketStatusQueryServiceTest {
 
     @Test
     void getOrderBookMarketStatus_withoutTodayExecution_skipsTodayExecutionCount() {
-        stubOrderBookMarketSummaryQuery(2L, 3L, 5L, 0L, 1L, false);
+        service = new OrderBookMarketStatusQueryService(
+                createSummaryJdbcTemplate("order_book_market_status_summary_without_today_test"),
+                stockOrderBookMarketConfigRepository,
+                stockOrderBookInstrumentRepository,
+                stockOrderRepository,
+                stockExecutionMarketViewRepository,
+                simulationClockService
+        );
+        seedSummaryRows(true);
 
         var response = service.getOrderBookMarketStatus(false, false);
 
@@ -90,7 +111,7 @@ class OrderBookMarketStatusQueryServiceTest {
         assertThat(response.configCount()).isEqualTo(2L);
         assertThat(response.openConfigCount()).isEqualTo(1L);
         assertThat(response.instrumentCount()).isEqualTo(3L);
-        assertThat(response.openOrderCount()).isEqualTo(5L);
+        assertThat(response.openOrderCount()).isEqualTo(3L);
         assertThat(response.todayExecutionCount()).isZero();
         assertThat(response.configs()).isEmpty();
         verify(stockExecutionMarketViewRepository, never()).countExecutionsFromBySource(any(), any());
@@ -125,39 +146,94 @@ class OrderBookMarketStatusQueryServiceTest {
                 MarketSessionStatus.OPEN,
                 MarketSessionStatus.CLOSED
         );
-        verify(jdbcTemplate, never()).queryForObject(any(String.class), org.mockito.ArgumentMatchers.<org.springframework.jdbc.core.RowMapper<Object>>any());
     }
 
-    private void stubOrderBookMarketSummaryQuery(
-            long configCount,
-            long instrumentCount,
-            long openOrderCount,
-            long todayExecutionCount,
-            long openConfigCount,
-            boolean includeTodayExecution
-    ) {
-        org.mockito.stubbing.Answer<Object> answer = invocation -> {
-            @SuppressWarnings("unchecked")
-            org.springframework.jdbc.core.RowMapper<Object> rowMapper = invocation.getArgument(1);
-            ResultSet resultSet = mock(ResultSet.class);
-            when(resultSet.getLong("config_count")).thenReturn(configCount);
-            when(resultSet.getLong("instrument_count")).thenReturn(instrumentCount);
-            when(resultSet.getLong("open_order_count")).thenReturn(openOrderCount);
-            when(resultSet.getLong("today_execution_count")).thenReturn(todayExecutionCount);
-            when(resultSet.getLong("open_config_count")).thenReturn(openConfigCount);
-            return rowMapper.mapRow(resultSet, 0);
-        };
-        if (includeTodayExecution) {
-            when(jdbcTemplate.queryForObject(
-                    any(String.class),
-                    org.mockito.ArgumentMatchers.<org.springframework.jdbc.core.RowMapper<Object>>any(),
-                    any()
-            )).thenAnswer(answer);
+    private JdbcTemplate createSummaryJdbcTemplate(String databaseName) {
+        jdbcTemplate = new JdbcTemplate(new DriverManagerDataSource(
+                "jdbc:h2:mem:" + databaseName + ";MODE=MySQL;DB_CLOSE_DELAY=-1;DATABASE_TO_UPPER=false",
+                "sa",
+                ""
+        ));
+        jdbcTemplate.execute("""
+                create table stock_order_book_market_config (
+                    symbol varchar(20) primary key,
+                    enabled boolean not null,
+                    market_status varchar(20) not null
+                )
+                """);
+        jdbcTemplate.execute("""
+                create table stock_order_book_instrument (
+                    symbol varchar(20) primary key,
+                    enabled boolean not null
+                )
+                """);
+        jdbcTemplate.execute("""
+                create table stock_order (
+                    id bigint primary key,
+                    market_type varchar(30) not null,
+                    status varchar(30) not null
+                )
+                """);
+        jdbcTemplate.execute("""
+                create table stock_execution (
+                    id bigint primary key,
+                    source varchar(50) not null,
+                    executed_at timestamp not null
+                )
+                """);
+        return jdbcTemplate;
+    }
+
+    private void seedSummaryRows(boolean includeTodayExecutionRows) {
+        jdbcTemplate.update(
+                "insert into stock_order_book_market_config(symbol, enabled, market_status) values ('ZQ001', true, 'OPEN')"
+        );
+        jdbcTemplate.update(
+                "insert into stock_order_book_market_config(symbol, enabled, market_status) values ('ZQ002', true, 'CLOSED')"
+        );
+        jdbcTemplate.update(
+                "insert into stock_order_book_instrument(symbol, enabled) values ('ZQ001', true)"
+        );
+        jdbcTemplate.update(
+                "insert into stock_order_book_instrument(symbol, enabled) values ('ZQ002', true)"
+        );
+        jdbcTemplate.update(
+                "insert into stock_order_book_instrument(symbol, enabled) values ('ZQ003', true)"
+        );
+        jdbcTemplate.update(
+                "insert into stock_order(id, market_type, status) values (1, 'ORDER_BOOK', 'PENDING')"
+        );
+        jdbcTemplate.update(
+                "insert into stock_order(id, market_type, status) values (2, 'ORDER_BOOK', 'PARTIALLY_FILLED')"
+        );
+        jdbcTemplate.update(
+                "insert into stock_order(id, market_type, status) values (3, 'ORDER_BOOK', 'FILLED')"
+        );
+        jdbcTemplate.update(
+                "insert into stock_order(id, market_type, status) values (4, 'VIRTUAL_PRICE', 'PENDING')"
+        );
+        jdbcTemplate.update(
+                "insert into stock_order(id, market_type, status) values (5, 'ORDER_BOOK', 'PENDING')"
+        );
+        if (!includeTodayExecutionRows) {
             return;
         }
-        when(jdbcTemplate.queryForObject(
-                any(String.class),
-                org.mockito.ArgumentMatchers.<org.springframework.jdbc.core.RowMapper<Object>>any()
-        )).thenAnswer(answer);
+        LocalDateTime simulationDayStart = SimulationDayClock.currentDayStart();
+        jdbcTemplate.update(
+                "insert into stock_execution(id, source, executed_at) values (1, 'INTERNAL_ORDER_BOOK', ?)",
+                simulationDayStart.plusMinutes(10)
+        );
+        jdbcTemplate.update(
+                "insert into stock_execution(id, source, executed_at) values (2, 'INTERNAL_ORDER_BOOK', ?)",
+                simulationDayStart.plusMinutes(20)
+        );
+        jdbcTemplate.update(
+                "insert into stock_execution(id, source, executed_at) values (3, 'VIRTUAL_PRICE', ?)",
+                simulationDayStart.plusMinutes(30)
+        );
+        jdbcTemplate.update(
+                "insert into stock_execution(id, source, executed_at) values (4, 'INTERNAL_ORDER_BOOK', ?)",
+                simulationDayStart.minusMinutes(1)
+        );
     }
 }

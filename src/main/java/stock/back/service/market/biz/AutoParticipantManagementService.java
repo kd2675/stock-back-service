@@ -1,44 +1,53 @@
 package stock.back.service.market.biz;
 
 import lombok.RequiredArgsConstructor;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import stock.back.service.common.exception.StockException;
 import stock.back.service.database.entity.AutoParticipantProfileType;
 import stock.back.service.database.entity.RecurringCashIntervalUnit;
 import stock.back.service.database.entity.StockAccount;
+import stock.back.service.database.entity.StockAccountCashFlow;
 import stock.back.service.database.entity.StockAccountStatus;
 import stock.back.service.database.entity.StockAutoParticipant;
+import stock.back.service.database.repository.StockAccountCashFlowRepository;
 import stock.back.service.database.repository.StockAccountRepository;
 import stock.back.service.database.repository.StockAutoParticipantRepository;
 import stock.back.service.market.vo.AutoParticipantRequest;
 import stock.back.service.market.vo.AutoParticipantResponse;
+import stock.back.service.trading.biz.AccountOrderCleanupService;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
-import java.util.List;
 import java.util.Locale;
-import java.util.Map;
 
 @Service
 @RequiredArgsConstructor
 public class AutoParticipantManagementService {
 
+    private static final String AUTO_PARTICIPANT_GENERATE_CREATED_BY = "AUTO_PARTICIPANT_GENERATE";
+
     private final StockAutoParticipantRepository stockAutoParticipantRepository;
     private final StockAccountRepository stockAccountRepository;
-    private final JdbcTemplate jdbcTemplate;
+    private final StockAccountCashFlowRepository stockAccountCashFlowRepository;
+    private final AccountOrderCleanupService accountOrderCleanupService;
+    private final SimulationClockService simulationClockService;
 
     @Transactional
     public AutoParticipantResponse upsertAutoParticipant(String userKey, AutoParticipantRequest request) {
-        String normalizedUserKey = normalizeText(userKey);
+        return upsertAutoParticipant(userKey, request, null);
+    }
+
+    @Transactional
+    public AutoParticipantResponse upsertAutoParticipant(String userKey, AutoParticipantRequest request, String adminUserKey) {
+        String normalizedUserKey = MarketTextNormalizer.text(userKey);
         if (normalizedUserKey.isBlank()) {
             throw StockException.badRequest("Auto participant user key is required");
         }
         if (normalizedUserKey.length() > 64) {
             throw StockException.badRequest("Auto participant user key must be 64 characters or less");
         }
-        String displayName = normalizeText(request == null ? null : request.displayName());
+        String displayName = MarketTextNormalizer.text(request == null ? null : request.displayName());
         if (displayName.isBlank()) {
             throw StockException.badRequest("Auto participant display name is required");
         }
@@ -76,12 +85,17 @@ public class AutoParticipantManagementService {
                         recurringCashIntervalValue,
                         recurringCashIntervalUnit
                 ));
-        return toAutoParticipantResponse(stockAutoParticipantRepository.save(participant));
+        StockAutoParticipant savedParticipant = stockAutoParticipantRepository.save(participant);
+        StockAccount account = ensureAccountAndInitialCash(normalizedUserKey, request, adminUserKey);
+        return toAutoParticipantResponse(
+                savedParticipant,
+                account == null ? stockAccountRepository.findByUserKey(savedParticipant.getUserKey()).orElse(null) : account
+        );
     }
 
     @Transactional
     public AutoParticipantResponse withdrawAutoParticipant(String userKey) {
-        String normalizedUserKey = normalizeText(userKey);
+        String normalizedUserKey = MarketTextNormalizer.text(userKey);
         if (normalizedUserKey.isBlank()) {
             throw StockException.badRequest("Auto participant user key is required");
         }
@@ -93,62 +107,56 @@ public class AutoParticipantManagementService {
     }
 
     private void cancelOpenAutoParticipantOrders(String userKey) {
-        Long accountId = stockAccountRepository.findByUserKeyAndStatus(userKey, StockAccountStatus.ACTIVE)
-                .map(StockAccount::getId)
-                .orElse(null);
-        if (accountId == null) {
-            return;
+        stockAccountRepository.findByUserKeyAndStatusForUpdate(userKey, StockAccountStatus.ACTIVE)
+                .ifPresent(accountOrderCleanupService::cancelOpenOrderBookOrders);
+    }
+
+    private StockAccount ensureAccountAndInitialCash(String userKey, AutoParticipantRequest request, String adminUserKey) {
+        BigDecimal initialCashAmount = normalizeInitialCashAmount(request == null ? null : request.initialCashAmount());
+        boolean shouldCreateAccount = Boolean.TRUE.equals(request == null ? null : request.createAccount())
+                || initialCashAmount.compareTo(BigDecimal.ZERO) > 0;
+        if (!shouldCreateAccount) {
+            return null;
         }
-        List<Map<String, Object>> orders = jdbcTemplate.queryForList(
-                """
-                select id, symbol, side, quantity, filled_quantity, reserved_cash
-                from stock_order
-                where account_id = ?
-                  and market_type = 'ORDER_BOOK'
-                  and status in ('PENDING', 'PARTIALLY_FILLED')
-                for update
-                """,
-                accountId
-        );
-        if (orders.isEmpty()) {
-            return;
+
+        LocalDateTime now = simulationClockService.currentMarketDateTime();
+        StockAccount account = findOrCreateActiveAccount(userKey, now);
+        if (initialCashAmount.compareTo(BigDecimal.ZERO) > 0) {
+            account.depositCash(initialCashAmount, now);
         }
-        LocalDateTime now = LocalDateTime.now();
-        for (Map<String, Object> order : orders) {
-            String side = String.valueOf(order.get("side"));
-            BigDecimal reservedCash = toBigDecimal(order.get("reserved_cash"));
-            if ("BUY".equals(side) && reservedCash.compareTo(BigDecimal.ZERO) > 0) {
-                jdbcTemplate.update(
-                        "update stock_account set cash_balance = cash_balance + ?, updated_at = ? where id = ?",
-                        reservedCash,
-                        now,
-                        accountId
-                );
-            }
-            if ("SELL".equals(side)) {
-                long remainingQuantity = toLong(order.get("quantity")) - toLong(order.get("filled_quantity"));
-                if (remainingQuantity > 0) {
-                    jdbcTemplate.update(
-                            """
-                            update stock_holding
-                            set reserved_quantity = case when reserved_quantity >= ? then reserved_quantity - ? else 0 end,
-                                updated_at = ?
-                            where account_id = ? and symbol = ?
-                            """,
-                            remainingQuantity,
-                            remainingQuantity,
-                            now,
-                            accountId,
-                            order.get("symbol")
-                    );
-                }
-            }
-            jdbcTemplate.update(
-                    "update stock_order set status = 'CANCELLED', reserved_cash = 0, updated_at = ? where id = ?",
-                    now,
-                    order.get("id")
-            );
+        StockAccount savedAccount = stockAccountRepository.save(account);
+        if (initialCashAmount.compareTo(BigDecimal.ZERO) > 0) {
+            stockAccountCashFlowRepository.save(StockAccountCashFlow.adminDeposit(
+                    savedAccount.getId(),
+                    initialCashAmount,
+                    createdBy(adminUserKey),
+                    now
+            ));
         }
+        return savedAccount;
+    }
+
+    private StockAccount findOrCreateActiveAccount(String userKey, LocalDateTime now) {
+        if (stockAccountRepository.findByUserKey(userKey).isEmpty()) {
+            return StockAccount.open(userKey, null, null, null, now);
+        }
+        return stockAccountRepository.findByUserKeyAndStatusForUpdate(userKey, StockAccountStatus.ACTIVE)
+                .orElseThrow(() -> StockException.conflict("Auto participant account is not active: " + userKey));
+    }
+
+    private BigDecimal normalizeInitialCashAmount(BigDecimal amount) {
+        if (amount == null) {
+            return BigDecimal.ZERO;
+        }
+        if (amount.compareTo(BigDecimal.ZERO) < 0) {
+            throw StockException.badRequest("Initial cash amount must be zero or greater");
+        }
+        return amount;
+    }
+
+    private String createdBy(String adminUserKey) {
+        String normalized = MarketTextNormalizer.text(adminUserKey);
+        return normalized.isBlank() ? AUTO_PARTICIPANT_GENERATE_CREATED_BY : normalized;
     }
 
     private AutoParticipantResponse toAutoParticipantResponse(StockAutoParticipant participant) {
@@ -179,7 +187,7 @@ public class AutoParticipantManagementService {
     }
 
     private AutoParticipantProfileType parseAutoParticipantProfileType(String value) {
-        String normalized = normalizeText(value);
+        String normalized = MarketTextNormalizer.text(value);
         if (normalized.isBlank()) {
             return AutoParticipantProfileType.defaultType();
         }
@@ -190,27 +198,4 @@ public class AutoParticipantManagementService {
         }
     }
 
-    private BigDecimal toBigDecimal(Object value) {
-        if (value instanceof BigDecimal decimal) {
-            return decimal;
-        }
-        if (value instanceof Number number) {
-            return BigDecimal.valueOf(number.doubleValue());
-        }
-        return value == null ? BigDecimal.ZERO : new BigDecimal(value.toString());
-    }
-
-    private long toLong(Object value) {
-        if (value instanceof Number number) {
-            return number.longValue();
-        }
-        return value == null ? 0L : Long.parseLong(value.toString());
-    }
-
-    private String normalizeText(String value) {
-        if (value == null) {
-            return "";
-        }
-        return value.trim();
-    }
 }

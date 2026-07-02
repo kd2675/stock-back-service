@@ -20,6 +20,7 @@ import stock.back.service.market.cache.StockPriceCacheService;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -72,8 +73,8 @@ class MarketCatalogQueryServiceTest {
     void getPrices_cachedPriceExists_usesCachePriceAndProvider() {
         when(stockPriceRepository.findVirtualMarketPrices())
                 .thenReturn(List.of(StockPrice.initial("005930", new BigDecimal("70000.00"))));
-        when(stockPriceCacheService.getCachedPrice("005930"))
-                .thenReturn(Optional.of(new CachedStockPrice(new BigDecimal("71000.00"), "redis-cache")));
+        when(stockPriceCacheService.getCachedPrices(List.of("005930")))
+                .thenReturn(Map.of("005930", new CachedStockPrice(new BigDecimal("71000.00"), "redis-cache")));
 
         var prices = service.getPrices();
 
@@ -81,6 +82,7 @@ class MarketCatalogQueryServiceTest {
         assertThat(prices.get(0).currentPrice()).isEqualByComparingTo(new BigDecimal("71000.00"));
         assertThat(prices.get(0).changeRate()).isEqualByComparingTo(new BigDecimal("1.4286"));
         assertThat(prices.get(0).provider()).isEqualTo("redis-cache");
+        verify(stockPriceCacheService).getCachedPrices(List.of("005930"));
     }
 
     @Test

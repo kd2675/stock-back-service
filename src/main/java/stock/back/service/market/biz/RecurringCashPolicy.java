@@ -42,7 +42,7 @@ final class RecurringCashPolicy {
     }
 
     static RecurringCashIntervalUnit normalizeIntervalUnit(String value, BigDecimal amount) {
-        String normalized = normalizeText(value);
+        String normalized = MarketTextNormalizer.text(value);
         if (amount == null && normalized.isBlank()) {
             return null;
         }
@@ -73,10 +73,4 @@ final class RecurringCashPolicy {
         return value;
     }
 
-    private static String normalizeText(String value) {
-        if (value == null || value.isBlank()) {
-            return "";
-        }
-        return value.trim();
-    }
 }

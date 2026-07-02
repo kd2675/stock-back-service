@@ -12,7 +12,6 @@ import stock.back.service.market.vo.InstrumentReportRequest;
 import stock.back.service.market.vo.InstrumentReportResponse;
 
 import java.util.List;
-import java.util.Locale;
 
 @Service
 @RequiredArgsConstructor
@@ -20,6 +19,7 @@ public class InstrumentReportService {
 
     private final StockOrderBookInstrumentRepository stockOrderBookInstrumentRepository;
     private final StockInstrumentReportEventRepository stockInstrumentReportEventRepository;
+    private final SimulationClockService simulationClockService;
 
     @Transactional(readOnly = true)
     public List<InstrumentReportResponse> getInstrumentReports(String symbol) {
@@ -44,12 +44,13 @@ public class InstrumentReportService {
         validateInstrumentReportRequest(request);
         StockInstrumentReportEvent event = StockInstrumentReportEvent.publish(
                 normalizedSymbol,
-                normalizeText(request.title()),
-                normalizeText(request.summary()),
+                MarketTextNormalizer.text(request.title()),
+                MarketTextNormalizer.text(request.summary()),
                 request.score(),
-                normalizeOptionalText(request.riseReason()),
-                normalizeOptionalText(request.fallReason()),
-                normalizeText(createdBy)
+                MarketTextNormalizer.optionalText(request.riseReason()),
+                MarketTextNormalizer.optionalText(request.fallReason()),
+                MarketTextNormalizer.text(createdBy),
+                simulationClockService.currentMarketDateTime()
         );
         return toInstrumentReportResponse(stockInstrumentReportEventRepository.save(event));
     }
@@ -63,12 +64,13 @@ public class InstrumentReportService {
                 .orElseThrow(() -> StockException.notFound("Instrument report not found: " + normalizedSymbol));
         StockInstrumentReportEvent event = StockInstrumentReportEvent.update(
                 latest.getSymbol(),
-                normalizeText(request.title()),
-                normalizeText(request.summary()),
+                MarketTextNormalizer.text(request.title()),
+                MarketTextNormalizer.text(request.summary()),
                 request.score(),
-                normalizeOptionalText(request.riseReason()),
-                normalizeOptionalText(request.fallReason()),
-                normalizeText(createdBy)
+                MarketTextNormalizer.optionalText(request.riseReason()),
+                MarketTextNormalizer.optionalText(request.fallReason()),
+                MarketTextNormalizer.text(createdBy),
+                simulationClockService.currentMarketDateTime()
         );
         return toInstrumentReportResponse(stockInstrumentReportEventRepository.save(event));
     }
@@ -82,13 +84,14 @@ public class InstrumentReportService {
         StockInstrumentReportEvent event = StockInstrumentReportEvent.delete(
                 normalizedSymbol,
                 "Deleted by admin",
-                normalizeText(createdBy)
+                MarketTextNormalizer.text(createdBy),
+                simulationClockService.currentMarketDateTime()
         );
         return toInstrumentReportResponse(stockInstrumentReportEventRepository.save(event));
     }
 
     private String requireOrderBookSymbol(String symbol) {
-        String normalizedSymbol = normalizeSymbol(symbol);
+        String normalizedSymbol = MarketTextNormalizer.symbol(symbol);
         if (normalizedSymbol.isBlank()) {
             throw StockException.badRequest("Symbol is required");
         }
@@ -102,10 +105,10 @@ public class InstrumentReportService {
         if (request == null) {
             throw StockException.badRequest("Instrument report is required");
         }
-        if (normalizeText(request.title()).isBlank()) {
+        if (MarketTextNormalizer.text(request.title()).isBlank()) {
             throw StockException.badRequest("Report title is required");
         }
-        if (normalizeText(request.summary()).isBlank()) {
+        if (MarketTextNormalizer.text(request.summary()).isBlank()) {
             throw StockException.badRequest("Report summary is required");
         }
         if (request.score() == null || request.score() < 1 || request.score() > 10) {
@@ -129,22 +132,4 @@ public class InstrumentReportService {
         );
     }
 
-    private String normalizeSymbol(String symbol) {
-        if (symbol == null) {
-            return "";
-        }
-        return symbol.trim().toUpperCase(Locale.ROOT);
-    }
-
-    private String normalizeText(String value) {
-        if (value == null) {
-            return "";
-        }
-        return value.trim();
-    }
-
-    private String normalizeOptionalText(String value) {
-        String normalized = normalizeText(value);
-        return normalized.isBlank() ? null : normalized;
-    }
 }

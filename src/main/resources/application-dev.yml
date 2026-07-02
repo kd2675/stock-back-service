@@ -19,20 +19,28 @@ database:
         password: 1234
         driver-class-name: com.mysql.cj.jdbc.Driver
         configure:
+          pool-name: stock-back-master-pool
           maximum-pool-size: 8
+          minimum-idle: 1
           connection-timeout: 30000
-          max-lifetime: 540000
-          keepalive-time: 300000
+          validation-timeout: 5000
+          idle-timeout: 240000
+          max-lifetime: 300000
+          keepalive-time: 120000
       slave1:
         url: jdbc:mysql://kimd0.iptime.org:23306/STOCK_SERVICE?zeroDateTimeBehavior=convertToNull&useLegacyDatetimeCode=false&serverTimezone=Asia/Seoul&noAccessToProcedureBodies=true&useSSL=false&allowPublicKeyRetrieval=true&connectTimeout=5000&socketTimeout=30000&tcpKeepAlive=true
         username: root
         password: 1234
         driver-class-name: com.mysql.cj.jdbc.Driver
         configure:
+          pool-name: stock-back-slave-pool
           maximum-pool-size: 8
+          minimum-idle: 1
           connection-timeout: 30000
-          max-lifetime: 540000
-          keepalive-time: 300000
+          validation-timeout: 5000
+          idle-timeout: 240000
+          max-lifetime: 300000
+          keepalive-time: 120000
 
 stock:
   batch-client:

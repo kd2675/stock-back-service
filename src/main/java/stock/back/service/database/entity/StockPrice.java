@@ -34,18 +34,26 @@ public class StockPrice {
     private String provider;
 
     public static StockPrice initial(String symbol, BigDecimal price) {
+        return initial(symbol, price, LocalDateTime.now());
+    }
+
+    public static StockPrice initial(String symbol, BigDecimal price, LocalDateTime priceTime) {
         StockPrice stockPrice = new StockPrice();
         stockPrice.symbol = symbol;
         stockPrice.currentPrice = price;
         stockPrice.previousClose = price;
-        stockPrice.priceTime = LocalDateTime.now();
+        stockPrice.priceTime = priceTime == null ? LocalDateTime.now() : priceTime;
         stockPrice.provider = "initial-listing";
         return stockPrice;
     }
 
     public void update(BigDecimal currentPrice, String provider) {
+        update(currentPrice, provider, LocalDateTime.now());
+    }
+
+    public void update(BigDecimal currentPrice, String provider, LocalDateTime priceTime) {
         this.currentPrice = currentPrice;
-        this.priceTime = LocalDateTime.now();
+        this.priceTime = priceTime == null ? LocalDateTime.now() : priceTime;
         this.provider = provider;
     }
 }

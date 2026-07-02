@@ -45,15 +45,20 @@ class MarketStatusServiceTest {
     @Mock
     private StockExecutionMarketViewRepository stockExecutionMarketViewRepository;
 
+    @Mock
+    private SimulationClockService simulationClockService;
+
     private MarketStatusService service;
 
     @BeforeEach
     void setUp() {
+        lenient().when(simulationClockService.currentMarketDayStart()).thenReturn(SimulationDayClock.currentDayStart());
         service = new MarketStatusService(
                 stockVirtualMarketConfigRepository,
                 stockOrderBookMarketConfigRepository,
                 stockOrderRepository,
-                stockExecutionMarketViewRepository
+                stockExecutionMarketViewRepository,
+                simulationClockService
         );
     }
 

@@ -1,6 +1,7 @@
 package stock.back.service.database.repository;
 
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import stock.back.service.database.entity.ExecutionSource;
@@ -10,9 +11,18 @@ import java.math.BigDecimal;
 import java.util.List;
 
 public interface StockExecutionRepository extends JpaRepository<StockExecution, Long> {
-    List<StockExecution> findTop50ByAccountIdOrderByExecutedAtDesc(Long accountId);
+    List<StockExecution> findByAccountIdOrderByExecutedAtDesc(Long accountId, Pageable pageable);
 
-    List<StockExecution> findTop50ByAccountIdAndSourceOrderByExecutedAtDesc(Long accountId, ExecutionSource source);
+    List<StockExecution> findByAccountIdAndSourceOrderByExecutedAtDesc(Long accountId, ExecutionSource source, Pageable pageable);
+
+    List<StockExecution> findByAccountIdAndSymbolOrderByExecutedAtDesc(Long accountId, String symbol, Pageable pageable);
+
+    List<StockExecution> findByAccountIdAndSourceAndSymbolOrderByExecutedAtDesc(
+            Long accountId,
+            ExecutionSource source,
+            String symbol,
+            Pageable pageable
+    );
 
     @Query(value = """
             select

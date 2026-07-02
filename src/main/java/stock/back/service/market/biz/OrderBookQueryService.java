@@ -1,8 +1,8 @@
 package stock.back.service.market.biz;
 
-import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import stock.back.service.common.exception.StockException;
@@ -17,21 +17,28 @@ import stock.back.service.market.vo.OrderBookRecentExecutionResponse;
 import stock.back.service.market.vo.OrderBookResponse;
 import stock.back.service.market.vo.OrderBookTradeSummaryResponse;
 
-import java.math.BigDecimal;
-import java.math.RoundingMode;
-import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
-import java.util.Locale;
-import java.util.stream.IntStream;
 
 @Service
-@RequiredArgsConstructor
 public class OrderBookQueryService {
 
-    private final JdbcTemplate jdbcTemplate;
+    private final JdbcClient jdbcClient;
     private final StockOrderBookInstrumentRepository stockOrderBookInstrumentRepository;
     private final StockOrderRepository stockOrderRepository;
+    private final SimulationClockService simulationClockService;
+
+    public OrderBookQueryService(
+            JdbcTemplate jdbcTemplate,
+            StockOrderBookInstrumentRepository stockOrderBookInstrumentRepository,
+            StockOrderRepository stockOrderRepository,
+            SimulationClockService simulationClockService
+    ) {
+        this.jdbcClient = JdbcClient.create(jdbcTemplate);
+        this.stockOrderBookInstrumentRepository = stockOrderBookInstrumentRepository;
+        this.stockOrderRepository = stockOrderRepository;
+        this.simulationClockService = simulationClockService;
+    }
 
     @Transactional(readOnly = true)
     public OrderBookResponse getOrderBook(String symbol) {
@@ -41,12 +48,12 @@ public class OrderBookQueryService {
         List<OrderBookLevelResponse> bids = stockOrderRepository
                 .findBidLevels(normalizedSymbol, MarketType.ORDER_BOOK, OrderSide.BUY, OrderType.LIMIT, openStatuses, page)
                 .stream()
-                .map(this::toOrderBookLevelResponse)
+                .map(OrderBookResponseMapper::toLevel)
                 .toList();
         List<OrderBookLevelResponse> asks = stockOrderRepository
                 .findAskLevels(normalizedSymbol, MarketType.ORDER_BOOK, OrderSide.SELL, OrderType.LIMIT, openStatuses, page)
                 .stream()
-                .map(this::toOrderBookLevelResponse)
+                .map(OrderBookResponseMapper::toLevel)
                 .toList();
         return new OrderBookResponse(normalizedSymbol, bids, asks);
     }
@@ -54,7 +61,7 @@ public class OrderBookQueryService {
     @Transactional(readOnly = true)
     public OrderBookTradeSummaryResponse getOrderBookTradeSummary(String symbol) {
         String normalizedSymbol = requireEnabledOrderBookSymbol(symbol);
-        LocalDateTime todayStart = LocalDate.now().atStartOfDay();
+        LocalDateTime todayStart = simulationClockService.currentMarketDayStart();
         String sql = """
                 select
                   coalesce(count(*), 0) as today_execution_count,
@@ -83,35 +90,10 @@ public class OrderBookQueryService {
                   and source = 'INTERNAL_ORDER_BOOK'
                   and executed_at >= ?
                 """;
-        return jdbcTemplate.queryForObject(sql, (rs, rowNum) -> {
-            long todayVolume = rs.getLong("today_volume");
-            long sellVolume = rs.getLong("sell_volume");
-            BigDecimal todayTurnover = nullToZero(rs.getBigDecimal("today_turnover"));
-            BigDecimal vwap = todayVolume <= 0
-                    ? BigDecimal.ZERO
-                    : todayTurnover.divide(BigDecimal.valueOf(todayVolume), 4, RoundingMode.HALF_UP);
-            BigDecimal executionStrength = sellVolume <= 0
-                    ? BigDecimal.ZERO
-                    : BigDecimal.valueOf(rs.getLong("buy_volume"))
-                    .multiply(BigDecimal.valueOf(100))
-                    .divide(BigDecimal.valueOf(sellVolume), 2, RoundingMode.HALF_UP);
-            return new OrderBookTradeSummaryResponse(
-                    normalizedSymbol,
-                    rs.getLong("today_execution_count"),
-                    todayVolume,
-                    todayTurnover,
-                    vwap,
-                    nullToZero(rs.getBigDecimal("high_price")),
-                    nullToZero(rs.getBigDecimal("low_price")),
-                    rs.getLong("buy_volume"),
-                    sellVolume,
-                    nullToZero(rs.getBigDecimal("buy_turnover")),
-                    nullToZero(rs.getBigDecimal("sell_turnover")),
-                    executionStrength,
-                    nullToZero(rs.getBigDecimal("last_price")),
-                    rs.getTimestamp("last_executed_at") == null ? null : rs.getTimestamp("last_executed_at").toLocalDateTime()
-            );
-        }, normalizedSymbol, normalizedSymbol, normalizedSymbol, todayStart);
+        return jdbcClient.sql(sql)
+                .params(normalizedSymbol, normalizedSymbol, normalizedSymbol, todayStart)
+                .query((rs, rowNum) -> OrderBookResponseMapper.toTradeSummary(normalizedSymbol, rs))
+                .single();
     }
 
     @Transactional(readOnly = true)
@@ -131,36 +113,15 @@ public class OrderBookQueryService {
                  order by executed_at desc, id desc
                  limit 30
                 """;
-        List<RecentExecutionRow> rows = jdbcTemplate.query(sql, (rs, rowNum) -> new RecentExecutionRow(
-                rs.getLong("id"),
-                rs.getString("symbol"),
-                OrderSide.valueOf(rs.getString("side")),
-                rs.getLong("quantity"),
-                rs.getBigDecimal("price"),
-                rs.getBigDecimal("gross_amount"),
-                rs.getTimestamp("executed_at").toLocalDateTime()
-        ), normalizedSymbol);
-        return IntStream.range(0, rows.size())
-                .mapToObj(index -> {
-                    RecentExecutionRow row = rows.get(index);
-                    BigDecimal previousPrice = index + 1 < rows.size() ? rows.get(index + 1).price() : null;
-                    BigDecimal priceChange = previousPrice == null ? BigDecimal.ZERO : row.price().subtract(previousPrice);
-                    return new OrderBookRecentExecutionResponse(
-                            row.id(),
-                            row.symbol(),
-                            row.side(),
-                            row.quantity(),
-                            row.price(),
-                            row.grossAmount(),
-                            priceChange,
-                            row.executedAt()
-                    );
-                })
-                .toList();
+        List<OrderBookResponseMapper.RecentExecutionRow> rows = jdbcClient.sql(sql)
+                .param(normalizedSymbol)
+                .query((rs, rowNum) -> OrderBookResponseMapper.toRecentExecutionRow(rs))
+                .list();
+        return OrderBookResponseMapper.toRecentExecutions(rows);
     }
 
     private String requireEnabledOrderBookSymbol(String symbol) {
-        String normalizedSymbol = normalizeSymbol(symbol);
+        String normalizedSymbol = MarketTextNormalizer.symbol(symbol);
         if (normalizedSymbol.isBlank()) {
             throw StockException.badRequest("Symbol is required");
         }
@@ -170,33 +131,4 @@ public class OrderBookQueryService {
         return normalizedSymbol;
     }
 
-    private String normalizeSymbol(String symbol) {
-        if (symbol == null) {
-            return "";
-        }
-        return symbol.trim().toUpperCase(Locale.ROOT);
-    }
-
-    private OrderBookLevelResponse toOrderBookLevelResponse(StockOrderRepository.OrderBookLevelView level) {
-        return new OrderBookLevelResponse(
-                level.getPrice(),
-                level.getQuantity() == null ? 0L : level.getQuantity(),
-                level.getOrderCount() == null ? 0L : level.getOrderCount()
-        );
-    }
-
-    private BigDecimal nullToZero(BigDecimal value) {
-        return value == null ? BigDecimal.ZERO : value;
-    }
-
-    private record RecentExecutionRow(
-            Long id,
-            String symbol,
-            OrderSide side,
-            long quantity,
-            BigDecimal price,
-            BigDecimal grossAmount,
-            LocalDateTime executedAt
-    ) {
-    }
 }

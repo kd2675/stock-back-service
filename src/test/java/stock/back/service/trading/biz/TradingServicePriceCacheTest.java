@@ -26,6 +26,7 @@ import stock.back.service.database.repository.StockPriceRepository;
 import stock.back.service.database.repository.StockVirtualMarketConfigRepository;
 import stock.back.service.market.cache.CachedStockPrice;
 import stock.back.service.market.cache.StockPriceCacheService;
+import stock.back.service.market.biz.SimulationClockService;
 import stock.back.service.trading.vo.OrderRequest;
 
 import java.math.BigDecimal;
@@ -40,6 +41,7 @@ import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -81,10 +83,14 @@ class TradingServicePriceCacheTest {
     @Mock
     private StockPriceCacheService stockPriceCacheService;
 
+    @Mock
+    private SimulationClockService simulationClockService;
+
     private TradingService tradingService;
 
     @BeforeEach
     void setUp() {
+        lenient().when(simulationClockService.currentMarketDateTime()).thenReturn(LocalDateTime.of(2026, 7, 1, 10, 0));
         TradingQueryService tradingQueryService = new TradingQueryService(
                 accountService,
                 stockOrderRepository,
@@ -97,15 +103,18 @@ class TradingServicePriceCacheTest {
         );
         tradingService = new TradingService(
                 accountService,
-                stockInstrumentRepository,
-                stockOrderBookInstrumentRepository,
-                stockVirtualMarketConfigRepository,
-                stockOrderBookMarketConfigRepository,
-                stockPriceRepository,
                 stockOrderRepository,
-                stockHoldingRepository,
-                stockPriceCacheService,
-                tradingQueryService
+                tradingQueryService,
+                new TradingMarketRuleService(
+                        stockInstrumentRepository,
+                        stockOrderBookInstrumentRepository,
+                        stockVirtualMarketConfigRepository,
+                        stockOrderBookMarketConfigRepository,
+                        stockPriceRepository,
+                        stockPriceCacheService
+                ),
+                new TradingReservationService(accountService, stockHoldingRepository),
+                simulationClockService
         );
     }
 

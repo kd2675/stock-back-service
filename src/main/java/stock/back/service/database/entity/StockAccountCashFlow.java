@@ -49,12 +49,24 @@ public class StockAccountCashFlow {
         return create(accountId, StockAccountCashFlowType.DEPOSIT, amount, StockAccountCashFlowReason.OPENING_GRANT, "SYSTEM");
     }
 
+    public static StockAccountCashFlow openingGrant(Long accountId, BigDecimal amount, LocalDateTime createdAt) {
+        return create(accountId, StockAccountCashFlowType.DEPOSIT, amount, StockAccountCashFlowReason.OPENING_GRANT, "SYSTEM", createdAt);
+    }
+
     public static StockAccountCashFlow adminDeposit(Long accountId, BigDecimal amount, String createdBy) {
         return create(accountId, StockAccountCashFlowType.DEPOSIT, amount, StockAccountCashFlowReason.ADMIN_DEPOSIT, createdBy);
     }
 
+    public static StockAccountCashFlow adminDeposit(Long accountId, BigDecimal amount, String createdBy, LocalDateTime createdAt) {
+        return create(accountId, StockAccountCashFlowType.DEPOSIT, amount, StockAccountCashFlowReason.ADMIN_DEPOSIT, createdBy, createdAt);
+    }
+
     public static StockAccountCashFlow adminWithdraw(Long accountId, BigDecimal amount, String createdBy) {
         return create(accountId, StockAccountCashFlowType.WITHDRAW, amount, StockAccountCashFlowReason.ADMIN_WITHDRAW, createdBy);
+    }
+
+    public static StockAccountCashFlow adminWithdraw(Long accountId, BigDecimal amount, String createdBy, LocalDateTime createdAt) {
+        return create(accountId, StockAccountCashFlowType.WITHDRAW, amount, StockAccountCashFlowReason.ADMIN_WITHDRAW, createdBy, createdAt);
     }
 
     public static StockAccountCashFlow dividendPayment(Long accountId, BigDecimal amount) {
@@ -68,13 +80,24 @@ public class StockAccountCashFlow {
             StockAccountCashFlowReason reason,
             String createdBy
     ) {
+        return create(accountId, flowType, amount, reason, createdBy, LocalDateTime.now());
+    }
+
+    private static StockAccountCashFlow create(
+            Long accountId,
+            StockAccountCashFlowType flowType,
+            BigDecimal amount,
+            StockAccountCashFlowReason reason,
+            String createdBy,
+            LocalDateTime createdAt
+    ) {
         StockAccountCashFlow cashFlow = new StockAccountCashFlow();
         cashFlow.accountId = accountId;
         cashFlow.flowType = flowType;
         cashFlow.amount = amount;
         cashFlow.reason = reason;
         cashFlow.createdBy = createdBy;
-        cashFlow.createdAt = LocalDateTime.now();
+        cashFlow.createdAt = createdAt == null ? LocalDateTime.now() : createdAt;
         return cashFlow;
     }
 }

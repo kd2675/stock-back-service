@@ -8,9 +8,11 @@ public record AutoParticipantRequest(
         String profileType,
         BigDecimal recurringCashAmount,
         BigDecimal recurringCashIntervalValue,
-        String recurringCashIntervalUnit
+        String recurringCashIntervalUnit,
+        Boolean createAccount,
+        BigDecimal initialCashAmount
 ) {
     public AutoParticipantRequest(String displayName, Boolean enabled, String profileType) {
-        this(displayName, enabled, profileType, null, null, null);
+        this(displayName, enabled, profileType, null, null, null, null, null);
     }
 }

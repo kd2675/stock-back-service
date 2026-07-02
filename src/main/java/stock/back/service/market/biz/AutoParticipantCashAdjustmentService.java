@@ -15,6 +15,7 @@ import stock.back.service.market.vo.AutoParticipantCashAdjustmentRequest;
 import stock.back.service.market.vo.AutoParticipantCashAdjustmentResponse;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import java.util.Locale;
 
 @Service
@@ -24,6 +25,7 @@ public class AutoParticipantCashAdjustmentService {
     private final StockAutoParticipantRepository stockAutoParticipantRepository;
     private final StockAccountRepository stockAccountRepository;
     private final StockAccountCashFlowRepository stockAccountCashFlowRepository;
+    private final SimulationClockService simulationClockService;
 
     @Transactional
     public AutoParticipantCashAdjustmentResponse adjustAutoParticipantCash(
@@ -31,7 +33,7 @@ public class AutoParticipantCashAdjustmentService {
             AutoParticipantCashAdjustmentRequest request,
             String adminUserKey
     ) {
-        String normalizedUserKey = normalizeText(userKey);
+        String normalizedUserKey = MarketTextNormalizer.text(userKey);
         if (normalizedUserKey.isBlank()) {
             throw StockException.badRequest("Auto participant user key is required");
         }
@@ -45,20 +47,31 @@ public class AutoParticipantCashAdjustmentService {
         if (amount == null || amount.compareTo(BigDecimal.ZERO) <= 0) {
             throw StockException.badRequest("Adjustment amount must be positive");
         }
-        String adjustmentType = normalizeText(request.adjustmentType()).toUpperCase(Locale.ROOT);
+        String adjustmentType = MarketTextNormalizer.text(request.adjustmentType()).toUpperCase(Locale.ROOT);
         if (!"DEPOSIT".equals(adjustmentType) && !"WITHDRAW".equals(adjustmentType)) {
             throw StockException.badRequest("Adjustment type must be DEPOSIT or WITHDRAW");
         }
 
         StockAccount account = stockAccountRepository.findByUserKeyAndStatusForUpdate(normalizedUserKey, StockAccountStatus.ACTIVE)
                 .orElseThrow(() -> StockException.notFound("Auto participant account is not opened yet: " + normalizedUserKey));
+        LocalDateTime createdAt = simulationClockService.currentMarketDateTime();
         if ("DEPOSIT".equals(adjustmentType)) {
-            account.depositCash(amount);
-            stockAccountCashFlowRepository.save(StockAccountCashFlow.adminDeposit(account.getId(), amount, normalizeText(adminUserKey)));
-        } else if (!account.withdrawCash(amount)) {
+            account.depositCash(amount, createdAt);
+            stockAccountCashFlowRepository.save(StockAccountCashFlow.adminDeposit(
+                    account.getId(),
+                    amount,
+                    MarketTextNormalizer.text(adminUserKey),
+                    createdAt
+            ));
+        } else if (!account.withdrawCash(amount, createdAt)) {
             throw StockException.badRequest("Insufficient auto participant cash balance");
         } else {
-            stockAccountCashFlowRepository.save(StockAccountCashFlow.adminWithdraw(account.getId(), amount, normalizeText(adminUserKey)));
+            stockAccountCashFlowRepository.save(StockAccountCashFlow.adminWithdraw(
+                    account.getId(),
+                    amount,
+                    MarketTextNormalizer.text(adminUserKey),
+                    createdAt
+            ));
         }
         return new AutoParticipantCashAdjustmentResponse(
                 normalizedUserKey,
@@ -69,10 +82,4 @@ public class AutoParticipantCashAdjustmentService {
         );
     }
 
-    private String normalizeText(String value) {
-        if (value == null) {
-            return "";
-        }
-        return value.trim();
-    }
 }

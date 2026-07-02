@@ -51,7 +51,7 @@ public class StockListingAutoAccountConfig {
     private LocalDateTime updatedAt;
 
     public static StockListingAutoAccountConfig defaults(String symbol, String userKey, String displayName, long issuedShares) {
-        int maxOrderQuantity = (int) Math.max(1, Math.min(100, issuedShares / 1000));
+        int maxOrderQuantity = (int) Math.clamp(issuedShares / 1000, 1L, 100L);
         LocalDateTime now = LocalDateTime.now();
         StockListingAutoAccountConfig config = new StockListingAutoAccountConfig();
         config.symbol = symbol;
@@ -60,7 +60,7 @@ public class StockListingAutoAccountConfig {
         config.enabled = true;
         config.positionSide = ListingAutoPosition.SELL_ONLY;
         config.maxOrderQuantity = maxOrderQuantity;
-        config.orderTtlSeconds = 30;
+        config.orderTtlSeconds = 90;
         config.priceOffsetTicks = 3;
         config.createdAt = now;
         config.updatedAt = now;

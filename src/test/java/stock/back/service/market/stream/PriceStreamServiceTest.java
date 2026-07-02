@@ -1,5 +1,11 @@
 package stock.back.service.market.stream;
 
+import java.io.IOException;
+import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
+import java.time.LocalDateTime;
+import java.util.Set;
+
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.redis.connection.DefaultMessage;
@@ -7,16 +13,18 @@ import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.web.context.request.async.AsyncRequestNotUsableException;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
-import java.io.IOException;
-import java.math.BigDecimal;
-import java.nio.charset.StandardCharsets;
-import java.util.Set;
+import stock.back.service.market.biz.SimulationClockService;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 class PriceStreamServiceTest {
 
-    private final PriceStreamService priceStreamService = new PriceStreamService(new ObjectMapper());
+    private static final LocalDateTime SIMULATION_NOW = LocalDateTime.of(2026, 7, 1, 10, 0);
+
+    private final SimulationClockService simulationClockService = mock(SimulationClockService.class);
+    private final PriceStreamService priceStreamService = new PriceStreamService(new ObjectMapper(), simulationClockService);
 
     @Test
     void parseMessage_jsonPayload_returnsPriceStreamEvent() {
@@ -40,11 +48,14 @@ class PriceStreamServiceTest {
 
     @Test
     void parseMessage_plainPricePayload_returnsLegacyPriceStreamEvent() {
+        when(simulationClockService.currentMarketDateTime()).thenReturn(SIMULATION_NOW);
+
         PriceStreamEvent event = priceStreamService.parseMessage(message("stock.price.005930", "70100.00"));
 
         assertThat(event).isNotNull();
         assertThat(event.symbol()).isEqualTo("005930");
         assertThat(event.currentPrice()).isEqualByComparingTo(new BigDecimal("70100.00"));
+        assertThat(event.priceTime()).isEqualTo(SIMULATION_NOW.toString());
         assertThat(event.provider()).isEqualTo("redis-pubsub");
     }
 
