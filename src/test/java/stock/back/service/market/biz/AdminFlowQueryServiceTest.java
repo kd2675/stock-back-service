@@ -66,6 +66,48 @@ class AdminFlowQueryServiceTest {
     }
 
     @Test
+    void getAdminSymbolFlows_recentSimulationDay_excludesOlderExecutions() {
+        JdbcTemplate jdbcTemplate = createJdbcTemplate("admin_flow_query_service_symbol_flow_recent_test");
+        AdminFlowQueryService service = createService(jdbcTemplate);
+        seedSymbolFlow(jdbcTemplate);
+        insertSymbolExecutionAt(jdbcTemplate, 1L, "STOCK001", "BUY", 3L, "300.00", "290.00", SIMULATION_DAY_START.minusMinutes(1));
+        insertSymbolExecutionAt(jdbcTemplate, 2L, "STOCK001", "SELL", 2L, "200.00", "195.00", SIMULATION_NOW.minusMinutes(10));
+
+        var response = service.getAdminSymbolFlows(0);
+
+        assertThat(response.totalCount()).isEqualTo(1L);
+        assertThat(response.symbolFlows()).hasSize(1);
+        var symbolFlow = response.symbolFlows().getFirst();
+        assertThat(symbolFlow.symbol()).isEqualTo("STOCK001");
+        assertThat(symbolFlow.executionCount()).isEqualTo(1L);
+        assertThat(symbolFlow.executionQuantity()).isEqualTo(2L);
+        assertThat(symbolFlow.turnoverAmount()).isEqualByComparingTo(new BigDecimal("200.00"));
+        assertThat(symbolFlow.sellQuantity()).isEqualTo(2L);
+        assertThat(symbolFlow.buyQuantity()).isZero();
+        assertThat(symbolFlow.lastExecutedAt()).isEqualTo(SIMULATION_NOW.minusMinutes(10));
+    }
+
+    @Test
+    void getAdminSymbolFlows_all_includesOlderExecutionsForCumulativeView() {
+        JdbcTemplate jdbcTemplate = createJdbcTemplate("admin_flow_query_service_symbol_flow_all_test");
+        AdminFlowQueryService service = createService(jdbcTemplate);
+        seedSymbolFlow(jdbcTemplate);
+        insertSymbolExecutionAt(jdbcTemplate, 1L, "STOCK001", "BUY", 3L, "300.00", "290.00", SIMULATION_DAY_START.minusMinutes(1));
+        insertSymbolExecutionAt(jdbcTemplate, 2L, "STOCK001", "SELL", 2L, "200.00", "195.00", SIMULATION_NOW.minusMinutes(10));
+
+        var response = service.getAdminSymbolFlows(0, AdminFundFlowScope.ALL);
+
+        assertThat(response.totalCount()).isEqualTo(1L);
+        assertThat(response.symbolFlows()).hasSize(1);
+        var symbolFlow = response.symbolFlows().getFirst();
+        assertThat(symbolFlow.executionCount()).isEqualTo(2L);
+        assertThat(symbolFlow.executionQuantity()).isEqualTo(5L);
+        assertThat(symbolFlow.turnoverAmount()).isEqualByComparingTo(new BigDecimal("500.00"));
+        assertThat(symbolFlow.buyQuantity()).isEqualTo(3L);
+        assertThat(symbolFlow.sellQuantity()).isEqualTo(2L);
+    }
+
+    @Test
     void getAdminCashFlows_readsPageWithJdbcClient() {
         JdbcTemplate jdbcTemplate = createJdbcTemplate("admin_flow_query_service_cash_page_test");
         AdminFlowQueryService service = createService(jdbcTemplate);
@@ -95,7 +137,7 @@ class AdminFlowQueryServiceTest {
         when(simulationClockService.currentMarketDateTime()).thenReturn(SIMULATION_NOW);
         return new AdminFlowQueryService(
                 jdbcTemplate,
-                new AdminSymbolFlowQueryService(jdbcTemplate, stockOrderBookInstrumentRepository),
+                new AdminSymbolFlowQueryService(jdbcTemplate, stockOrderBookInstrumentRepository, simulationClockService),
                 simulationClockService
         );
     }
@@ -118,6 +160,7 @@ class AdminFlowQueryServiceTest {
                 create table stock_order (
                     id bigint primary key,
                     account_id bigint not null,
+                    symbol varchar(20) not null default 'STOCK001',
                     market_type varchar(30) not null,
                     side varchar(10) not null,
                     status varchar(30) not null,
@@ -138,7 +181,31 @@ class AdminFlowQueryServiceTest {
         jdbcTemplate.execute("""
                 create table stock_price (
                     symbol varchar(20) primary key,
-                    current_price decimal(19, 2) not null
+                    current_price decimal(19, 2) not null,
+                    previous_close decimal(19, 2) not null default 0
+                )
+                """);
+        jdbcTemplate.execute("""
+                create table stock_order_book_instrument (
+                    symbol varchar(20) primary key,
+                    name varchar(100) not null,
+                    enabled boolean not null,
+                    issued_shares bigint not null,
+                    tradable_shares bigint not null,
+                    initial_price decimal(19, 2) not null
+                )
+                """);
+        jdbcTemplate.execute("""
+                create table stock_order_book_market_config (
+                    symbol varchar(20) primary key,
+                    market_status varchar(30) not null
+                )
+                """);
+        jdbcTemplate.execute("""
+                create table stock_corporate_action (
+                    id bigint primary key,
+                    symbol varchar(20) not null,
+                    status varchar(30) not null
                 )
                 """);
         jdbcTemplate.execute("""
@@ -158,6 +225,9 @@ class AdminFlowQueryServiceTest {
                     account_id bigint not null,
                     symbol varchar(20) not null,
                     side varchar(10) not null,
+                    source varchar(40) not null default 'INTERNAL_ORDER_BOOK',
+                    quantity bigint not null default 1,
+                    gross_amount decimal(19, 2) not null default 0,
                     net_amount decimal(19, 2) not null,
                     fee_amount decimal(19, 2) not null,
                     tax_amount decimal(19, 2) not null,
@@ -186,6 +256,28 @@ class AdminFlowQueryServiceTest {
         insertExecution(jdbcTemplate, 1L, 1L, "BUY", "700.00", "7.00", "0.00", "0.00");
         insertExecution(jdbcTemplate, 2L, 2L, "SELL", "900.00", "3.00", "5.00", "200.00");
         insertExecution(jdbcTemplate, 3L, 3L, "SELL", "9999.00", "1.00", "1.00", "9999.00");
+    }
+
+    private void seedSymbolFlow(JdbcTemplate jdbcTemplate) {
+        insertAccount(jdbcTemplate, 1L, "symbol-user-1", "ACTIVE", "1000.00");
+        insertAccount(jdbcTemplate, 2L, "symbol-user-2", "ACTIVE", "2000.00");
+        jdbcTemplate.update(
+                """
+                insert into stock_order_book_instrument(
+                    symbol, name, enabled, issued_shares, tradable_shares, initial_price
+                )
+                values ('STOCK001', '테스트주식', true, 100000, 90000, ?)
+                """,
+                new BigDecimal("100.00")
+        );
+        jdbcTemplate.update(
+                "insert into stock_order_book_market_config(symbol, market_status) values ('STOCK001', 'REGULAR')"
+        );
+        jdbcTemplate.update(
+                "insert into stock_price(symbol, current_price, previous_close) values ('STOCK001', ?, ?)",
+                new BigDecimal("110.00"),
+                new BigDecimal("100.00")
+        );
     }
 
     private void insertAccount(JdbcTemplate jdbcTemplate, long id, String userKey, String status, String cashBalance) {
@@ -336,6 +428,34 @@ class AdminFlowQueryServiceTest {
                 new BigDecimal(feeAmount),
                 new BigDecimal(taxAmount),
                 new BigDecimal(realizedProfit),
+                executedAt
+        );
+    }
+
+    private void insertSymbolExecutionAt(
+            JdbcTemplate jdbcTemplate,
+            long id,
+            String symbol,
+            String side,
+            long quantity,
+            String grossAmount,
+            String netAmount,
+            LocalDateTime executedAt
+    ) {
+        jdbcTemplate.update(
+                """
+                insert into stock_execution(
+                    id, account_id, symbol, side, source, quantity, gross_amount, net_amount,
+                    fee_amount, tax_amount, realized_profit, executed_at
+                )
+                values (?, 1, ?, ?, 'INTERNAL_ORDER_BOOK', ?, ?, ?, 0, 0, 0, ?)
+                """,
+                id,
+                symbol,
+                side,
+                quantity,
+                new BigDecimal(grossAmount),
+                new BigDecimal(netAmount),
                 executedAt
         );
     }

@@ -197,7 +197,13 @@ public class AdminFlowQueryService {
 
     @Transactional(readOnly = true)
     public AdminFlowOverviewResponse getAdminFlowOverview(int symbolFlowLimit, boolean includeFundFlow, boolean includeSymbolFlows) {
-        return getAdminFlowOverview(symbolFlowLimit, includeFundFlow, includeSymbolFlows, AdminFundFlowScope.RECENT_SIMULATION_DAY);
+        return getAdminFlowOverview(
+                symbolFlowLimit,
+                includeFundFlow,
+                includeSymbolFlows,
+                AdminFundFlowScope.RECENT_SIMULATION_DAY,
+                AdminFundFlowScope.RECENT_SIMULATION_DAY
+        );
     }
 
     @Transactional(readOnly = true)
@@ -207,12 +213,29 @@ public class AdminFlowQueryService {
             boolean includeSymbolFlows,
             AdminFundFlowScope fundFlowScope
     ) {
+        return getAdminFlowOverview(
+                symbolFlowLimit,
+                includeFundFlow,
+                includeSymbolFlows,
+                fundFlowScope,
+                AdminFundFlowScope.RECENT_SIMULATION_DAY
+        );
+    }
+
+    @Transactional(readOnly = true)
+    public AdminFlowOverviewResponse getAdminFlowOverview(
+            int symbolFlowLimit,
+            boolean includeFundFlow,
+            boolean includeSymbolFlows,
+            AdminFundFlowScope fundFlowScope,
+            AdminFundFlowScope symbolFlowScope
+    ) {
         LocalDateTime todayStart = todayStart();
         AdminSymbolFlowListResponse symbolFlowList = includeSymbolFlows
-                ? getAdminSymbolFlows(symbolFlowLimit)
+                ? getAdminSymbolFlows(symbolFlowLimit, symbolFlowScope)
                 : new AdminSymbolFlowListResponse(adminSymbolFlowQueryService.countSymbols(), List.of());
         return new AdminFlowOverviewResponse(
-                includeFundFlow ? loadAdminFundFlowSummary(normalizeFundFlowScope(fundFlowScope)) : null,
+                includeFundFlow ? loadAdminFundFlowSummary(normalizeFlowScope(fundFlowScope)) : null,
                 loadAdminOrderFlowSummary(todayStart),
                 loadAdminCorporateActionFlowSummary(todayStart),
                 symbolFlowList.totalCount(),
@@ -229,12 +252,17 @@ public class AdminFlowQueryService {
 
     @Transactional(readOnly = true)
     public AdminFundFlowSummaryResponse getAdminFundFlowSummary(AdminFundFlowScope scope) {
-        return loadAdminFundFlowSummary(normalizeFundFlowScope(scope));
+        return loadAdminFundFlowSummary(normalizeFlowScope(scope));
     }
 
     @Transactional(readOnly = true)
     public AdminSymbolFlowListResponse getAdminSymbolFlows(int symbolFlowLimit) {
-        return adminSymbolFlowQueryService.getAdminSymbolFlows(symbolFlowLimit);
+        return getAdminSymbolFlows(symbolFlowLimit, AdminFundFlowScope.RECENT_SIMULATION_DAY);
+    }
+
+    @Transactional(readOnly = true)
+    public AdminSymbolFlowListResponse getAdminSymbolFlows(int symbolFlowLimit, AdminFundFlowScope scope) {
+        return adminSymbolFlowQueryService.getAdminSymbolFlows(symbolFlowLimit, normalizeFlowScope(scope));
     }
 
     @Transactional(readOnly = true)
@@ -303,7 +331,7 @@ public class AdminFlowQueryService {
         return simulationClockService.currentMarketDayStart();
     }
 
-    private AdminFundFlowScope normalizeFundFlowScope(AdminFundFlowScope scope) {
+    private AdminFundFlowScope normalizeFlowScope(AdminFundFlowScope scope) {
         return scope == null ? AdminFundFlowScope.RECENT_SIMULATION_DAY : scope;
     }
 }

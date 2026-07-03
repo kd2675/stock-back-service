@@ -28,9 +28,16 @@ public class MarketAdminController {
             @RequestParam(defaultValue = "0") int symbolFlowLimit,
             @RequestParam(defaultValue = "true") boolean includeFundFlow,
             @RequestParam(defaultValue = "true") boolean includeSymbolFlows,
-            @RequestParam(defaultValue = "RECENT_SIMULATION_DAY") AdminFundFlowScope fundFlowScope
+            @RequestParam(defaultValue = "RECENT_SIMULATION_DAY") AdminFundFlowScope fundFlowScope,
+            @RequestParam(defaultValue = "RECENT_SIMULATION_DAY") AdminFundFlowScope symbolFlowScope
     ) {
-        return ResponseDataDTO.of(adminFlowQueryService.getAdminFlowOverview(symbolFlowLimit, includeFundFlow, includeSymbolFlows, fundFlowScope));
+        return ResponseDataDTO.of(adminFlowQueryService.getAdminFlowOverview(
+                symbolFlowLimit,
+                includeFundFlow,
+                includeSymbolFlows,
+                fundFlowScope,
+                symbolFlowScope
+        ));
     }
 
     @GetMapping("/admin/fund-flow-summary")
@@ -42,9 +49,10 @@ public class MarketAdminController {
 
     @GetMapping("/admin/symbol-flows")
     public ResponseDataDTO<AdminSymbolFlowListResponse> getAdminSymbolFlows(
-            @RequestParam(defaultValue = "0") int limit
+            @RequestParam(defaultValue = "0") int limit,
+            @RequestParam(defaultValue = "RECENT_SIMULATION_DAY") AdminFundFlowScope scope
     ) {
-        return ResponseDataDTO.of(adminFlowQueryService.getAdminSymbolFlows(limit));
+        return ResponseDataDTO.of(adminFlowQueryService.getAdminSymbolFlows(limit, scope));
     }
 
     @GetMapping("/admin/cash-flows")

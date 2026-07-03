@@ -5,9 +5,11 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import stock.back.service.database.repository.StockOrderBookInstrumentRepository;
+import stock.back.service.market.vo.AdminFundFlowScope;
 import stock.back.service.market.vo.AdminSymbolFlowListResponse;
 import stock.back.service.market.vo.AdminSymbolFlowResponse;
 
+import java.time.LocalDateTime;
 import java.util.List;
 
 @Service
@@ -47,19 +49,27 @@ public class AdminSymbolFlowQueryService {
 
     private final JdbcClient jdbcClient;
     private final StockOrderBookInstrumentRepository stockOrderBookInstrumentRepository;
+    private final SimulationClockService simulationClockService;
 
     public AdminSymbolFlowQueryService(
             JdbcTemplate jdbcTemplate,
-            StockOrderBookInstrumentRepository stockOrderBookInstrumentRepository
+            StockOrderBookInstrumentRepository stockOrderBookInstrumentRepository,
+            SimulationClockService simulationClockService
     ) {
         this.jdbcClient = JdbcClient.create(jdbcTemplate);
         this.stockOrderBookInstrumentRepository = stockOrderBookInstrumentRepository;
+        this.simulationClockService = simulationClockService;
     }
 
     @Transactional(readOnly = true)
     public AdminSymbolFlowListResponse getAdminSymbolFlows(int symbolFlowLimit) {
+        return getAdminSymbolFlows(symbolFlowLimit, AdminFundFlowScope.RECENT_SIMULATION_DAY);
+    }
+
+    @Transactional(readOnly = true)
+    public AdminSymbolFlowListResponse getAdminSymbolFlows(int symbolFlowLimit, AdminFundFlowScope scope) {
         int normalizedSymbolFlowLimit = Math.clamp(symbolFlowLimit, 0, 500);
-        List<AdminSymbolFlowResponse> symbolFlows = loadAdminSymbolFlows(normalizedSymbolFlowLimit);
+        List<AdminSymbolFlowResponse> symbolFlows = loadAdminSymbolFlows(normalizedSymbolFlowLimit, normalizeScope(scope));
         long totalCount = normalizedSymbolFlowLimit > 0
                 ? countSymbols()
                 : symbolFlows.size();
@@ -71,14 +81,15 @@ public class AdminSymbolFlowQueryService {
         return stockOrderBookInstrumentRepository.count();
     }
 
-    private List<AdminSymbolFlowResponse> loadAdminSymbolFlows(int limit) {
+    private List<AdminSymbolFlowResponse> loadAdminSymbolFlows(int limit, AdminFundFlowScope scope) {
         if (limit > 0) {
-            return loadLimitedAdminSymbolFlows(limit);
+            return loadLimitedAdminSymbolFlows(limit, scope);
         }
-        return loadAllAdminSymbolFlows();
+        return loadAllAdminSymbolFlows(scope);
     }
 
-    private List<AdminSymbolFlowResponse> loadLimitedAdminSymbolFlows(int limit) {
+    private List<AdminSymbolFlowResponse> loadLimitedAdminSymbolFlows(int limit, AdminFundFlowScope scope) {
+        SymbolFlowExecutionWindow executionWindow = symbolFlowExecutionWindow(scope);
         String sql = """
                 with execution_flow as (
                        select symbol,
@@ -92,6 +103,7 @@ public class AdminSymbolFlowQueryService {
                               max(executed_at) as last_executed_at
                          from stock_execution
                         where source = 'INTERNAL_ORDER_BOOK'
+                """ + executionWindow.predicateSql() + """
                         group by symbol
                   ),
                   selected_symbols as (
@@ -144,13 +156,14 @@ public class AdminSymbolFlowQueryService {
                   left join corporate_action_flow c on c.symbol = i.symbol
                 """ + SYMBOL_FLOW_ORDER_BY_SQL + """
                 """;
-        return jdbcClient.sql(sql)
-                .param(limit)
+        JdbcClient.StatementSpec statement = bindExecutionWindow(jdbcClient.sql(sql), executionWindow);
+        return statement.param(limit)
                 .query((rs, rowNum) -> AdminFlowResponseMapper.toSymbolFlow(rs))
                 .list();
     }
 
-    private List<AdminSymbolFlowResponse> loadAllAdminSymbolFlows() {
+    private List<AdminSymbolFlowResponse> loadAllAdminSymbolFlows(AdminFundFlowScope scope) {
+        SymbolFlowExecutionWindow executionWindow = symbolFlowExecutionWindow(scope);
         String sql = """
                 select
                 """ + SYMBOL_FLOW_SELECT_COLUMNS + """
@@ -169,6 +182,7 @@ public class AdminSymbolFlowQueryService {
                               max(executed_at) as last_executed_at
                          from stock_execution
                         where source = 'INTERNAL_ORDER_BOOK'
+                """ + executionWindow.predicateSql() + """
                         group by symbol
                   ) e on e.symbol = i.symbol
                   left join (
@@ -198,8 +212,58 @@ public class AdminSymbolFlowQueryService {
                   ) c on c.symbol = i.symbol
                 """ + SYMBOL_FLOW_ORDER_BY_SQL + """
                 """;
-        return jdbcClient.sql(sql)
+        return bindExecutionWindow(jdbcClient.sql(sql), executionWindow)
                 .query((rs, rowNum) -> AdminFlowResponseMapper.toSymbolFlow(rs))
                 .list();
+    }
+
+    private JdbcClient.StatementSpec bindExecutionWindow(
+            JdbcClient.StatementSpec statement,
+            SymbolFlowExecutionWindow executionWindow
+    ) {
+        if (executionWindow.unbounded()) {
+            return statement;
+        }
+        return statement
+                .param(executionWindow.rangeStart())
+                .param(executionWindow.rangeEnd());
+    }
+
+    private SymbolFlowExecutionWindow symbolFlowExecutionWindow(AdminFundFlowScope scope) {
+        if (scope == AdminFundFlowScope.ALL) {
+            return SymbolFlowExecutionWindow.all();
+        }
+        return SymbolFlowExecutionWindow.recent(
+                simulationClockService.currentMarketDayStart(),
+                simulationClockService.currentMarketDateTime()
+        );
+    }
+
+    private AdminFundFlowScope normalizeScope(AdminFundFlowScope scope) {
+        return scope == null ? AdminFundFlowScope.RECENT_SIMULATION_DAY : scope;
+    }
+
+    private record SymbolFlowExecutionWindow(
+            boolean unbounded,
+            LocalDateTime rangeStart,
+            LocalDateTime rangeEnd
+    ) {
+        private static SymbolFlowExecutionWindow all() {
+            return new SymbolFlowExecutionWindow(true, null, null);
+        }
+
+        private static SymbolFlowExecutionWindow recent(LocalDateTime rangeStart, LocalDateTime rangeEnd) {
+            return new SymbolFlowExecutionWindow(false, rangeStart, rangeEnd);
+        }
+
+        private String predicateSql() {
+            if (unbounded) {
+                return "";
+            }
+            return """
+                   and executed_at >= ?
+                   and executed_at <= ?
+            """;
+        }
     }
 }

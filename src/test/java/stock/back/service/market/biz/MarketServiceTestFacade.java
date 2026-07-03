@@ -9,6 +9,7 @@ import stock.back.service.market.vo.AdminCashFlowPageResponse;
 import stock.back.service.market.vo.AdminFlowOverviewResponse;
 import stock.back.service.market.vo.AdminFundFlowSummaryResponse;
 import stock.back.service.market.vo.AdminSymbolFlowListResponse;
+import stock.back.service.market.vo.AdminFundFlowScope;
 import stock.back.service.market.vo.AutoParticipantHoldingGroupResponse;
 import stock.back.service.market.vo.AutoParticipantCashAdjustmentRequest;
 import stock.back.service.market.vo.AutoParticipantCashAdjustmentResponse;
@@ -251,6 +252,11 @@ public class MarketServiceTestFacade {
     @Transactional(readOnly = true)
     public AdminSymbolFlowListResponse getAdminSymbolFlows(int symbolFlowLimit) {
         return adminFlowQueryService.getAdminSymbolFlows(symbolFlowLimit);
+    }
+
+    @Transactional(readOnly = true)
+    public AdminSymbolFlowListResponse getAdminSymbolFlows(int symbolFlowLimit, AdminFundFlowScope scope) {
+        return adminFlowQueryService.getAdminSymbolFlows(symbolFlowLimit, scope);
     }
 
     @Transactional(readOnly = true)

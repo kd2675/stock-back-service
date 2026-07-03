@@ -51,6 +51,7 @@ import stock.back.service.database.repository.StockPriceRepository;
 import stock.back.service.database.repository.StockVirtualMarketConfigRepository;
 import stock.back.service.market.cache.CachedStockPrice;
 import stock.back.service.market.cache.StockPriceCacheService;
+import stock.back.service.market.vo.AdminFundFlowScope;
 import stock.back.service.market.vo.AutoParticipantCashAdjustmentRequest;
 import stock.back.service.market.vo.AutoParticipantHoldingGroupResponse;
 import stock.back.service.market.vo.AutoParticipantResponse;
@@ -252,7 +253,7 @@ class MarketServiceTest {
                 ),
                 new AdminFlowQueryService(
                         jdbcTemplate,
-                        new AdminSymbolFlowQueryService(jdbcTemplate, stockOrderBookInstrumentRepository),
+                        new AdminSymbolFlowQueryService(jdbcTemplate, stockOrderBookInstrumentRepository, simulationClockService),
                         simulationClockService
                 ),
                 new AutoParticipantOverviewQueryService(
@@ -897,10 +898,12 @@ class MarketServiceTest {
     }
 
     @Test
-    void getAdminSymbolFlows_limitedPreviewScopesHeavyAggregatesToSelectedSymbols() {
+    void getAdminSymbolFlows_limitedPreviewScopesExecutionsToRecentSimulationDayAndSelectedSymbols() {
         when(jdbcTemplate.query(
                 org.mockito.ArgumentMatchers.any(String.class),
                 org.mockito.ArgumentMatchers.<org.springframework.jdbc.core.RowMapper<Object>>any(),
+                org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(),
                 org.mockito.ArgumentMatchers.eq(8)
         )).thenReturn(List.of());
         when(stockOrderBookInstrumentRepository.count()).thenReturn(42L);
@@ -911,12 +914,16 @@ class MarketServiceTest {
         verify(jdbcTemplate).query(
                 sqlCaptor.capture(),
                 org.mockito.ArgumentMatchers.<org.springframework.jdbc.core.RowMapper<Object>>any(),
+                org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(),
                 org.mockito.ArgumentMatchers.eq(8)
         );
         assertThat(response.totalCount()).isEqualTo(42L);
         assertThat(response.symbolFlows()).isEmpty();
         assertThat(sqlCaptor.getValue())
                 .contains("with execution_flow as")
+                .contains("and executed_at >= ?")
+                .contains("and executed_at <= ?")
                 .contains("selected_symbols as")
                 .contains("limit ?")
                 .contains("join selected_symbols s on s.symbol = o.symbol")
@@ -926,14 +933,14 @@ class MarketServiceTest {
     }
 
     @Test
-    void getAdminSymbolFlows_fullViewKeepsAllSymbolAggregatePath() {
+    void getAdminSymbolFlows_allScopeKeepsAllTimeAggregatePath() {
         when(jdbcTemplate.query(
                 org.mockito.ArgumentMatchers.any(String.class),
                 org.mockito.ArgumentMatchers.<org.springframework.jdbc.core.RowMapper<Object>>any(),
                 aryEq(new Object[0])
         )).thenReturn(List.of());
 
-        var response = marketService.getAdminSymbolFlows(0);
+        var response = marketService.getAdminSymbolFlows(0, AdminFundFlowScope.ALL);
 
         ArgumentCaptor<String> sqlCaptor = ArgumentCaptor.forClass(String.class);
         verify(jdbcTemplate).query(
@@ -945,6 +952,8 @@ class MarketServiceTest {
         assertThat(response.symbolFlows()).isEmpty();
         assertThat(sqlCaptor.getValue())
                 .doesNotContain("selected_symbols")
+                .doesNotContain("and executed_at >= ?")
+                .doesNotContain("and executed_at <= ?")
                 .contains("from stock_order_book_instrument i")
                 .contains("from stock_execution")
                 .contains("from stock_order")
