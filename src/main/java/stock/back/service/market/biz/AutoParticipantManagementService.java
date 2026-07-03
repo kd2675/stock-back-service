@@ -107,7 +107,8 @@ public class AutoParticipantManagementService {
     }
 
     private void cancelOpenAutoParticipantOrders(String userKey) {
-        stockAccountRepository.findByUserKeyAndStatusForUpdate(userKey, StockAccountStatus.ACTIVE)
+        stockAccountRepository.findByUserKeyAndStatus(userKey, StockAccountStatus.ACTIVE)
+                .map(StockAccount::getId)
                 .ifPresent(accountOrderCleanupService::cancelOpenOrderBookOrders);
     }
 

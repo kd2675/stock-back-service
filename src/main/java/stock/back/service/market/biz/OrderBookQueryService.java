@@ -62,6 +62,7 @@ public class OrderBookQueryService {
     public OrderBookTradeSummaryResponse getOrderBookTradeSummary(String symbol) {
         String normalizedSymbol = requireEnabledOrderBookSymbol(symbol);
         LocalDateTime todayStart = simulationClockService.currentMarketDayStart();
+        LocalDateTime todayEnd = simulationClockService.currentMarketDateTime();
         String sql = """
                 select
                   coalesce(count(*), 0) as today_execution_count,
@@ -77,21 +78,24 @@ public class OrderBookQueryService {
                      from stock_execution e
                     where e.symbol = ?
                       and e.source = 'INTERNAL_ORDER_BOOK'
+                      and e.executed_at <= ?
                     order by e.executed_at desc, e.id desc
                     limit 1) as last_price,
                   (select e.executed_at
                      from stock_execution e
                     where e.symbol = ?
                       and e.source = 'INTERNAL_ORDER_BOOK'
+                      and e.executed_at <= ?
                     order by e.executed_at desc, e.id desc
                     limit 1) as last_executed_at
                 from stock_execution
                 where symbol = ?
                   and source = 'INTERNAL_ORDER_BOOK'
                   and executed_at >= ?
+                  and executed_at <= ?
                 """;
         return jdbcClient.sql(sql)
-                .params(normalizedSymbol, normalizedSymbol, normalizedSymbol, todayStart)
+                .params(normalizedSymbol, todayEnd, normalizedSymbol, todayEnd, normalizedSymbol, todayStart, todayEnd)
                 .query((rs, rowNum) -> OrderBookResponseMapper.toTradeSummary(normalizedSymbol, rs))
                 .single();
     }

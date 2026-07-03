@@ -210,7 +210,11 @@ class MarketStatusServiceTest {
                 MarketType.VIRTUAL_PRICE,
                 List.of(OrderStatus.PENDING, OrderStatus.PARTIALLY_FILLED)
         )).thenReturn(3L);
-        when(stockExecutionMarketViewRepository.countExecutionsFromBySource(any(), org.mockito.ArgumentMatchers.eq(ExecutionSource.VIRTUAL_MARKET_PRICE)))
+        when(stockExecutionMarketViewRepository.countExecutionsBetweenBySource(
+                any(),
+                any(),
+                org.mockito.ArgumentMatchers.eq(ExecutionSource.VIRTUAL_MARKET_PRICE)
+        ))
                 .thenReturn(7L);
 
         var response = service.getVirtualMarketStatus();

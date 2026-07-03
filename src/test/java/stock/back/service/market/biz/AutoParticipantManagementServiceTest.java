@@ -216,7 +216,7 @@ class AutoParticipantManagementServiceTest {
         account.assignAccountCodeIfMissing("AC001");
         setAccountId(account, 101L);
         when(stockAutoParticipantRepository.findById("stock-auto-001")).thenReturn(Optional.of(participant));
-        when(stockAccountRepository.findByUserKeyAndStatusForUpdate("stock-auto-001", StockAccountStatus.ACTIVE))
+        when(stockAccountRepository.findByUserKeyAndStatus("stock-auto-001", StockAccountStatus.ACTIVE))
                 .thenReturn(Optional.of(account));
         when(stockAutoParticipantRepository.save(any(StockAutoParticipant.class)))
                 .thenAnswer(invocation -> invocation.getArgument(0));
@@ -226,7 +226,7 @@ class AutoParticipantManagementServiceTest {
 
         assertThat(response.enabled()).isFalse();
         assertThat(response.withdrawnAt()).isNotNull();
-        verify(accountOrderCleanupService).cancelOpenOrderBookOrders(account);
+        verify(accountOrderCleanupService).cancelOpenOrderBookOrders(101L);
     }
 
     private void setAccountId(StockAccount account, Long id) {

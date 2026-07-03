@@ -74,12 +74,50 @@ class AccountOrderCleanupServiceTest {
                 .isEqualTo(1L);
     }
 
+    @Test
+    void cancelOpenOrderBookOrders_accountIdPath_cancelsOrdersBeforeRefundingCash() {
+        JdbcTemplate jdbcTemplate = createJdbcTemplate();
+        StockHoldingRepository stockHoldingRepository = mock(StockHoldingRepository.class);
+        AccountOrderCleanupService cleanupService = createCleanupService(stockHoldingRepository, jdbcTemplate);
+        StockHolding holding = holding(10L, "STOCK001", 10L, 4L, "70000.00");
+        when(stockHoldingRepository.findByAccountIdAndSymbolForUpdate(10L, "STOCK001"))
+                .thenReturn(Optional.of(holding));
+        jdbcTemplate.update(
+                """
+                insert into stock_account(id, cash_balance, updated_at)
+                values (?, ?, ?)
+                """,
+                10L,
+                new BigDecimal("700.00"),
+                LocalDateTime.of(2026, 7, 1, 9, 0)
+        );
+        insertOrder(jdbcTemplate, 10L, "ORDER_BOOK", "BUY", "PENDING", "STOCK001", 1L, 0L, "100.00", 1L);
+        insertOrder(jdbcTemplate, 10L, "ORDER_BOOK", "SELL", "PENDING", "STOCK001", 3L, 1L, "0.00", 2L);
+
+        cleanupService.cancelOpenOrderBookOrders(10L);
+
+        assertThat(decimal(jdbcTemplate, "select cash_balance from stock_account where id = 10"))
+                .isEqualByComparingTo(new BigDecimal("800.00"));
+        assertThat(holding.getReservedQuantity()).isEqualTo(2L);
+        assertThat(count(jdbcTemplate, "select count(*) from stock_order where account_id = 10 and status = 'CANCELLED'"))
+                .isEqualTo(2L);
+        assertThat(decimal(jdbcTemplate, "select coalesce(sum(reserved_cash), 0) from stock_order where account_id = 10"))
+                .isEqualByComparingTo(BigDecimal.ZERO);
+    }
+
     private JdbcTemplate createJdbcTemplate() {
         JdbcTemplate jdbcTemplate = new JdbcTemplate(new DriverManagerDataSource(
                 "jdbc:h2:mem:account_order_cleanup_test_" + System.nanoTime() + ";MODE=MySQL;DB_CLOSE_DELAY=-1;DATABASE_TO_UPPER=false",
                 "sa",
                 ""
         ));
+        jdbcTemplate.execute("""
+                create table stock_account (
+                    id bigint primary key,
+                    cash_balance decimal(19, 2) not null,
+                    updated_at timestamp
+                )
+                """);
         jdbcTemplate.execute("""
                 create table stock_order (
                     id bigint primary key,

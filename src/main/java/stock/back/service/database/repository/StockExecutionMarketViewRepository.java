@@ -14,14 +14,20 @@ public interface StockExecutionMarketViewRepository extends Repository<StockExec
             select count(e)
             from StockExecution e
             where e.executedAt >= :from
+              and e.executedAt <= :to
               and e.source = :source
             """)
-    long countExecutionsFromBySource(@Param("from") LocalDateTime from, @Param("source") ExecutionSource source);
+    long countExecutionsBetweenBySource(
+            @Param("from") LocalDateTime from,
+            @Param("to") LocalDateTime to,
+            @Param("source") ExecutionSource source
+    );
 
     @Query("""
             select count(e)
             from StockExecution e
             where e.executedAt >= :from
+              and e.executedAt <= :to
               and e.accountId in (
                   select a.id
                   from StockAccount a
@@ -30,5 +36,5 @@ public interface StockExecutionMarketViewRepository extends Repository<StockExec
                     and p.withdrawnAt is null
               )
             """)
-    long countAutoExecutionsFrom(@Param("from") LocalDateTime from);
+    long countAutoExecutionsBetween(@Param("from") LocalDateTime from, @Param("to") LocalDateTime to);
 }

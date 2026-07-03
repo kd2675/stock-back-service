@@ -130,6 +130,27 @@ class AdminFlowQueryServiceTest {
         assertThat(page.content().get(1).userKey()).isEqualTo("flow-user-2");
     }
 
+    @Test
+    void getAdminFlowOverview_recentSimulationDay_countsUntilCurrentSimulationTime() {
+        JdbcTemplate jdbcTemplate = createJdbcTemplate("admin_flow_query_service_overview_recent_until_now_test");
+        AdminFlowQueryService service = createService(jdbcTemplate);
+        insertOrderAt(jdbcTemplate, 1L, 1L, "BUY", "FILLED", "0.00", SIMULATION_NOW.minusMinutes(10));
+        insertOrderAt(jdbcTemplate, 2L, 1L, "BUY", "CANCELLED", "0.00", SIMULATION_NOW.minusMinutes(5));
+        insertOrderAt(jdbcTemplate, 3L, 1L, "BUY", "REJECTED", "0.00", SIMULATION_NOW.plusMinutes(5));
+        insertCorporateAction(jdbcTemplate, 1L, "STOCK001", "ANNOUNCED", SIMULATION_NOW.minusMinutes(10));
+        insertCorporateAction(jdbcTemplate, 2L, "STOCK001", "LISTED", SIMULATION_NOW.minusMinutes(5));
+        insertCorporateAction(jdbcTemplate, 3L, "STOCK001", "DELISTED", SIMULATION_NOW.plusMinutes(5));
+
+        var overview = service.getAdminFlowOverview(0, false, false);
+
+        assertThat(overview.orderFlow().todayOrderCount()).isEqualTo(2L);
+        assertThat(overview.orderFlow().todayFilledOrderCount()).isEqualTo(1L);
+        assertThat(overview.orderFlow().todayCancelledOrderCount()).isEqualTo(1L);
+        assertThat(overview.orderFlow().todayRejectedOrderCount()).isZero();
+        assertThat(overview.corporateActionFlow().todayCreatedCount()).isEqualTo(2L);
+        assertThat(overview.generatedAt()).isEqualTo(SIMULATION_NOW);
+    }
+
     private AdminFlowQueryService createService(JdbcTemplate jdbcTemplate) {
         StockOrderBookInstrumentRepository stockOrderBookInstrumentRepository = mock(StockOrderBookInstrumentRepository.class);
         SimulationClockService simulationClockService = mock(SimulationClockService.class);
@@ -205,7 +226,8 @@ class AdminFlowQueryServiceTest {
                 create table stock_corporate_action (
                     id bigint primary key,
                     symbol varchar(20) not null,
-                    status varchar(30) not null
+                    status varchar(30) not null,
+                    created_at timestamp not null
                 )
                 """);
         jdbcTemplate.execute("""
@@ -291,6 +313,18 @@ class AdminFlowQueryServiceTest {
     }
 
     private void insertOrder(JdbcTemplate jdbcTemplate, long id, long accountId, String side, String status, String reservedCash) {
+        insertOrderAt(jdbcTemplate, id, accountId, side, status, reservedCash, LocalDateTime.now());
+    }
+
+    private void insertOrderAt(
+            JdbcTemplate jdbcTemplate,
+            long id,
+            long accountId,
+            String side,
+            String status,
+            String reservedCash,
+            LocalDateTime createdAt
+    ) {
         jdbcTemplate.update(
                 """
                 insert into stock_order(
@@ -303,7 +337,26 @@ class AdminFlowQueryServiceTest {
                 side,
                 status,
                 new BigDecimal(reservedCash),
-                LocalDateTime.now()
+                createdAt
+        );
+    }
+
+    private void insertCorporateAction(
+            JdbcTemplate jdbcTemplate,
+            long id,
+            String symbol,
+            String status,
+            LocalDateTime createdAt
+    ) {
+        jdbcTemplate.update(
+                """
+                insert into stock_corporate_action(id, symbol, status, created_at)
+                values (?, ?, ?, ?)
+                """,
+                id,
+                symbol,
+                status,
+                createdAt
         );
     }
 

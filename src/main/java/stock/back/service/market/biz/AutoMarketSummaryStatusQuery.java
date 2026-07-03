@@ -40,6 +40,7 @@ class AutoMarketSummaryStatusQuery {
 
     AutoMarketStatusResponse getSummaryStatus(boolean includeRuntimeMetrics, boolean includeSalaryEligibility) {
         LocalDateTime todayStart = simulationClockService.currentMarketDayStart();
+        LocalDateTime todayEnd = simulationClockService.currentMarketDateTime();
         String runtimeMetricSql = includeRuntimeMetrics
                 ? """
                        (select count(*)
@@ -57,6 +58,7 @@ class AutoMarketSummaryStatusQuery {
                        (select count(*)
                           from stock_execution e
                          where e.executed_at >= :todayStart
+                           and e.executed_at <= :todayEnd
                            and exists (
                                select 1
                                  from stock_account a
@@ -92,6 +94,7 @@ class AutoMarketSummaryStatusQuery {
         if (includeRuntimeMetrics) {
             return jdbcClient.sql(sql)
                     .param("todayStart", todayStart)
+                    .param("todayEnd", todayEnd)
                     .query((rs, rowNum) -> AutoMarketStatusResponseMapper.toSummaryStatus(rs, AutoParticipantProfileType.values().length))
                     .single();
         }

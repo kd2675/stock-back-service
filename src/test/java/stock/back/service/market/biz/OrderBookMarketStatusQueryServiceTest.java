@@ -57,6 +57,7 @@ class OrderBookMarketStatusQueryServiceTest {
     @BeforeEach
     void setUp() {
         lenient().when(simulationClockService.currentMarketDayStart()).thenReturn(SimulationDayClock.currentDayStart());
+        lenient().when(simulationClockService.currentMarketDateTime()).thenReturn(SimulationDayClock.currentDayStart().plusMinutes(25));
         lenient().when(simulationMarketSessionService.isRegularSession()).thenReturn(true);
         service = new OrderBookMarketStatusQueryService(
                 jdbcTemplate,
@@ -96,7 +97,7 @@ class OrderBookMarketStatusQueryServiceTest {
         verify(stockOrderBookInstrumentRepository, never()).countByEnabledTrue();
         verify(stockOrderBookMarketConfigRepository, never()).existsByEnabledTrueAndMarketStatus(any());
         verify(stockOrderRepository, never()).countByMarketTypeAndStatusIn(any(), any());
-        verify(stockExecutionMarketViewRepository, never()).countExecutionsFromBySource(any(), any());
+        verify(stockExecutionMarketViewRepository, never()).countExecutionsBetweenBySource(any(), any(), any());
     }
 
     @Test
@@ -121,7 +122,7 @@ class OrderBookMarketStatusQueryServiceTest {
         assertThat(response.openOrderCount()).isEqualTo(3L);
         assertThat(response.todayExecutionCount()).isZero();
         assertThat(response.configs()).isEmpty();
-        verify(stockExecutionMarketViewRepository, never()).countExecutionsFromBySource(any(), any());
+        verify(stockExecutionMarketViewRepository, never()).countExecutionsBetweenBySource(any(), any(), any());
         verify(stockOrderRepository, never()).countByMarketTypeAndStatusIn(any(), any());
     }
 
@@ -135,7 +136,11 @@ class OrderBookMarketStatusQueryServiceTest {
                 eq(MarketType.ORDER_BOOK),
                 eq(List.of(OrderStatus.PENDING, OrderStatus.PARTIALLY_FILLED))
         )).thenReturn(4L);
-        when(stockExecutionMarketViewRepository.countExecutionsFromBySource(any(LocalDateTime.class), eq(ExecutionSource.INTERNAL_ORDER_BOOK)))
+        when(stockExecutionMarketViewRepository.countExecutionsBetweenBySource(
+                any(LocalDateTime.class),
+                any(LocalDateTime.class),
+                eq(ExecutionSource.INTERNAL_ORDER_BOOK)
+        ))
                 .thenReturn(6L);
         when(stockOrderBookInstrumentRepository.countByEnabledTrue()).thenReturn(2L);
 
@@ -163,7 +168,11 @@ class OrderBookMarketStatusQueryServiceTest {
                 eq(MarketType.ORDER_BOOK),
                 eq(List.of(OrderStatus.PENDING, OrderStatus.PARTIALLY_FILLED))
         )).thenReturn(4L);
-        when(stockExecutionMarketViewRepository.countExecutionsFromBySource(any(LocalDateTime.class), eq(ExecutionSource.INTERNAL_ORDER_BOOK)))
+        when(stockExecutionMarketViewRepository.countExecutionsBetweenBySource(
+                any(LocalDateTime.class),
+                any(LocalDateTime.class),
+                eq(ExecutionSource.INTERNAL_ORDER_BOOK)
+        ))
                 .thenReturn(6L);
         when(stockOrderBookInstrumentRepository.countByEnabledTrue()).thenReturn(1L);
         when(simulationMarketSessionService.isRegularSession()).thenReturn(false);

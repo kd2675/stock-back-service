@@ -152,7 +152,12 @@ public class AutoMarketStatusQueryService {
                 : 0L;
         List<OrderStatus> openStatuses = List.of(OrderStatus.PENDING, OrderStatus.PARTIALLY_FILLED);
         long openAutoOrderCount = options.includeRuntimeMetrics() ? stockOrderRepository.countOpenAutoOrders(openStatuses, MarketType.ORDER_BOOK) : 0L;
-        long todayAutoExecutionCount = options.includeRuntimeMetrics() ? stockExecutionMarketViewRepository.countAutoExecutionsFrom(simulationClockService.currentMarketDayStart()) : 0L;
+        long todayAutoExecutionCount = options.includeRuntimeMetrics()
+                ? stockExecutionMarketViewRepository.countAutoExecutionsBetween(
+                        simulationClockService.currentMarketDayStart(),
+                        simulationClockService.currentMarketDateTime()
+                )
+                : 0L;
         boolean enabled = simulationMarketSessionService.isRegularSession()
                 && enabledParticipantCount > 0 && (options.shouldLoadConfigs()
                 ? enabledConfigCount > 0

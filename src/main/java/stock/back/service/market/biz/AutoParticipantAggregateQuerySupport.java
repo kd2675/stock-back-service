@@ -54,10 +54,11 @@ final class AutoParticipantAggregateQuerySupport {
                            sum(case when side = 'BUY' then quantity else 0 end) as today_buy_quantity,
                            sum(case when side = 'SELL' then quantity else 0 end) as today_sell_quantity,
                            sum(gross_amount) as today_gross_amount
-                      from stock_execution
+                     from stock_execution
                      where account_id in (:accountIds)
                        and source = 'INTERNAL_ORDER_BOOK'
                        and executed_at >= :todayStart
+                       and executed_at <= :todayEnd
                      group by account_id
                     """;
 
@@ -257,18 +258,20 @@ final class AutoParticipantAggregateQuerySupport {
             ActivityWindow activityWindow,
             Map<Long, T> targetByAccountId
     ) {
-        applyTodayExecutionAggregates(accountIds, todayStart, targetByAccountId);
+        applyTodayExecutionAggregates(accountIds, todayStart, activityWindow.end(), targetByAccountId);
         applyLastExecutionAggregates(accountIds, activityWindow, targetByAccountId);
     }
 
     private <T extends AutoParticipantAggregateTarget> void applyTodayExecutionAggregates(
             List<Long> accountIds,
             LocalDateTime todayStart,
+            LocalDateTime todayEnd,
             Map<Long, T> targetByAccountId
     ) {
         jdbcClient.sql(TODAY_EXECUTION_AGGREGATE_SQL)
                 .param("accountIds", accountIds)
                 .param("todayStart", todayStart)
+                .param("todayEnd", todayEnd)
                 .query(rs -> {
                     T target = targetByAccountId.get(rs.getLong("account_id"));
                     if (target != null) {

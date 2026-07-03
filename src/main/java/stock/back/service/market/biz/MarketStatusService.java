@@ -68,8 +68,9 @@ public class MarketStatusService {
                 .toList();
         List<OrderStatus> openStatuses = List.of(OrderStatus.PENDING, OrderStatus.PARTIALLY_FILLED);
         long openOrderCount = stockOrderRepository.countByMarketTypeAndStatusIn(MarketType.VIRTUAL_PRICE, openStatuses);
-        long todayExecutionCount = stockExecutionMarketViewRepository.countExecutionsFromBySource(
+        long todayExecutionCount = stockExecutionMarketViewRepository.countExecutionsBetweenBySource(
                 simulationClockService.currentMarketDayStart(),
+                simulationClockService.currentMarketDateTime(),
                 ExecutionSource.VIRTUAL_MARKET_PRICE
         );
         return new VirtualMarketStatusResponse(

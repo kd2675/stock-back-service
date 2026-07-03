@@ -45,6 +45,7 @@ public class OrderBookCandleQueryService {
         String normalizedSymbol = requireEnabledOrderBookSymbol(symbol);
         OrderBookCandleInterval candleInterval = OrderBookCandleInterval.parse(interval);
         SimulationClockSnapshot clock = simulationClockService.currentSnapshot();
+        LocalDateTime currentSimulationTime = clock.simulationDateTime();
         LocalDateTime lastBucketStart = candleInterval.floor(clock.simulationDateTime(), clock);
         LocalDateTime firstBucketStart = candleInterval.minus(lastBucketStart, candleInterval.limit() - 1, clock);
         LocalDateTime endExclusive = candleInterval.next(lastBucketStart, clock);
@@ -74,12 +75,13 @@ public class OrderBookCandleQueryService {
                        and side = 'BUY'
                        and executed_at >= ?
                        and executed_at < ?
+                       and executed_at <= ?
                 ) ranked_execution
                 group by bucket_start
                 order by bucket_start asc
                 """.formatted(executionBucket, executionBucket, executionBucket);
         Map<LocalDateTime, ExecutionCandleRow> executionCandlesByBucket = jdbcClient.sql(sql)
-                .params(queryParameters(candleInterval, lastBucketStart, normalizedSymbol, firstBucketStart, endExclusive))
+                .params(queryParameters(candleInterval, lastBucketStart, normalizedSymbol, firstBucketStart, endExclusive, currentSimulationTime))
                 .query((rs, rowNum) -> new ExecutionCandleRow(
                         rs.getTimestamp("bucket_start").toLocalDateTime(),
                         rs.getBigDecimal("open_price"),
@@ -132,7 +134,8 @@ public class OrderBookCandleQueryService {
             LocalDateTime bucketAnchor,
             String symbol,
             LocalDateTime firstBucketStart,
-            LocalDateTime endExclusive
+            LocalDateTime endExclusive,
+            LocalDateTime currentSimulationTime
     ) {
         List<Object> parameters = new ArrayList<>();
         if (candleInterval.usesSimulationClockAnchor()) {
@@ -143,6 +146,7 @@ public class OrderBookCandleQueryService {
         parameters.add(symbol);
         parameters.add(firstBucketStart);
         parameters.add(endExclusive);
+        parameters.add(currentSimulationTime);
         return parameters;
     }
 

@@ -151,6 +151,7 @@ class AutoMarketSummaryStatusQueryTest {
     private SimulationClockService simulationClockService() {
         SimulationClockService simulationClockService = mock(SimulationClockService.class);
         when(simulationClockService.currentMarketDayStart()).thenReturn(SimulationDayClock.currentDayStart());
+        when(simulationClockService.currentMarketDateTime()).thenReturn(SimulationDayClock.currentDayStart().plusMinutes(25));
         return simulationClockService;
     }
 

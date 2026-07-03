@@ -115,6 +115,7 @@ public class AdminFlowQueryService {
               select count(*) as today_created_count
                 from stock_corporate_action
                where created_at >= ?
+                 and created_at <= ?
             ) t
             """;
 
@@ -149,6 +150,7 @@ public class AdminFlowQueryService {
                 from stock_order
                where market_type = 'ORDER_BOOK'
                  and created_at >= ?
+                 and created_at <= ?
             ) t
             """;
 
@@ -231,17 +233,18 @@ public class AdminFlowQueryService {
             AdminFundFlowScope symbolFlowScope
     ) {
         LocalDateTime todayStart = todayStart();
+        LocalDateTime todayEnd = simulationClockService.currentMarketDateTime();
         AdminSymbolFlowListResponse symbolFlowList = includeSymbolFlows
                 ? getAdminSymbolFlows(symbolFlowLimit, symbolFlowScope)
                 : new AdminSymbolFlowListResponse(adminSymbolFlowQueryService.countSymbols(), List.of());
         return new AdminFlowOverviewResponse(
                 includeFundFlow ? loadAdminFundFlowSummary(normalizeFlowScope(fundFlowScope)) : null,
-                loadAdminOrderFlowSummary(todayStart),
-                loadAdminCorporateActionFlowSummary(todayStart),
+                loadAdminOrderFlowSummary(todayStart, todayEnd),
+                loadAdminCorporateActionFlowSummary(todayStart, todayEnd),
                 symbolFlowList.totalCount(),
                 symbolFlowList.symbolFlows(),
                 loadAdminRecentCashFlows(),
-                simulationClockService.currentMarketDateTime()
+                todayEnd
         );
     }
 
@@ -307,16 +310,21 @@ public class AdminFlowQueryService {
                 .single();
     }
 
-    private AdminOrderFlowSummaryResponse loadAdminOrderFlowSummary(LocalDateTime todayStart) {
+    private AdminOrderFlowSummaryResponse loadAdminOrderFlowSummary(LocalDateTime todayStart, LocalDateTime todayEnd) {
         return jdbcClient.sql(ORDER_FLOW_SUMMARY_SQL)
                 .param(todayStart)
+                .param(todayEnd)
                 .query((rs, rowNum) -> AdminFlowResponseMapper.toOrderFlowSummary(rs))
                 .single();
     }
 
-    private AdminCorporateActionFlowSummaryResponse loadAdminCorporateActionFlowSummary(LocalDateTime todayStart) {
+    private AdminCorporateActionFlowSummaryResponse loadAdminCorporateActionFlowSummary(
+            LocalDateTime todayStart,
+            LocalDateTime todayEnd
+    ) {
         return jdbcClient.sql(CORPORATE_ACTION_FLOW_SUMMARY_SQL)
                 .param(todayStart)
+                .param(todayEnd)
                 .query((rs, rowNum) -> AdminFlowResponseMapper.toCorporateActionFlowSummary(rs))
                 .single();
     }

@@ -47,6 +47,7 @@ class OrderBookQueryServiceTest {
     @BeforeEach
     void setUp() {
         lenient().when(simulationClockService.currentMarketDayStart()).thenReturn(SimulationDayClock.currentDayStart());
+        lenient().when(simulationClockService.currentMarketDateTime()).thenReturn(SimulationDayClock.currentDayStart().plusMinutes(15));
         service = new OrderBookQueryService(jdbcTemplate, stockOrderBookInstrumentRepository, stockOrderRepository, simulationClockService);
     }
 
@@ -88,6 +89,7 @@ class OrderBookQueryServiceTest {
         insertExecution(realJdbcTemplate, 1L, "ZQ001", "BUY", 2L, "70000.00", "140000.00", 2);
         insertExecution(realJdbcTemplate, 2L, "ZQ001", "SELL", 1L, "71000.00", "71000.00", 1);
         insertExecution(realJdbcTemplate, 3L, "OTHER", "BUY", 10L, "1.00", "10.00", 0);
+        insertExecution(realJdbcTemplate, 4L, "ZQ001", "BUY", 100L, "99999.00", "9999900.00", 40);
 
         var summary = realService.getOrderBookTradeSummary("zq001");
 

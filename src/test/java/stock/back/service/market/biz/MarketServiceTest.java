@@ -591,7 +591,7 @@ class MarketServiceTest {
         ));
         when(stockAutoParticipantSymbolConfigRepository.findByUserKeyInOrderByUserKeyAscSymbolAsc(List.of("stock-auto-001"))).thenReturn(List.of());
         when(stockOrderRepository.countOpenAutoOrders(any(), any())).thenReturn(0L);
-        when(stockExecutionMarketViewRepository.countAutoExecutionsFrom(any())).thenReturn(0L);
+        when(stockExecutionMarketViewRepository.countAutoExecutionsBetween(any(), any())).thenReturn(0L);
 
         var response = marketService.getAutoMarketStatus();
 
@@ -632,7 +632,7 @@ class MarketServiceTest {
         when(stockAutoMarketConfigRepository.findAll()).thenReturn(List.of(marketConfig));
         stubAutoParticipantStatusQuery(participant);
         when(stockOrderRepository.countOpenAutoOrders(any(), any())).thenReturn(0L);
-        when(stockExecutionMarketViewRepository.countAutoExecutionsFrom(any())).thenReturn(0L);
+        when(stockExecutionMarketViewRepository.countAutoExecutionsBetween(any(), any())).thenReturn(0L);
 
         var response = marketService.getAutoMarketStatus(false);
 
@@ -677,7 +677,7 @@ class MarketServiceTest {
         verify(stockAutoParticipantRepository, never()).countByEnabledTrueAndWithdrawnAtIsNull();
         verify(stockListingAutoAccountConfigRepository, never()).count();
         verify(stockOrderRepository, never()).countOpenAutoOrders(any(), any());
-        verify(stockExecutionMarketViewRepository, never()).countAutoExecutionsFrom(any());
+        verify(stockExecutionMarketViewRepository, never()).countAutoExecutionsBetween(any(), any());
     }
 
     @Test
@@ -863,6 +863,7 @@ class MarketServiceTest {
                 .contains("cross join")
                 .contains("where market_type = 'ORDER_BOOK'")
                 .contains("and created_at >= ?")
+                .contains("and created_at <= ?")
                 .doesNotContain("sum(case when created_at >= ?");
     }
 
@@ -886,6 +887,7 @@ class MarketServiceTest {
     void autoParticipantExecutionAggregateSql_todayCountUsesIndexedDatePredicate() {
         assertThat(AutoParticipantAggregateQuerySupport.TODAY_EXECUTION_AGGREGATE_SQL)
                 .contains("and executed_at >= :todayStart")
+                .contains("and executed_at <= :todayEnd")
                 .doesNotContain("sum(case when executed_at >= :todayStart");
         assertThat(AutoParticipantAggregateQuerySupport.LAST_EXECUTION_AGGREGATE_SQL)
                 .contains("max(executed_at) as last_execution_at")
@@ -970,6 +972,7 @@ class MarketServiceTest {
                 org.mockito.ArgumentMatchers.<org.springframework.jdbc.core.RowMapper<Object>>any(),
                 org.mockito.ArgumentMatchers.eq("ZQ001"),
                 org.mockito.ArgumentMatchers.any(LocalDateTime.class),
+                org.mockito.ArgumentMatchers.any(LocalDateTime.class),
                 org.mockito.ArgumentMatchers.any(LocalDateTime.class)
         );
         doAnswer(invocation -> List.of(new BigDecimal("70000.00"))).when(jdbcTemplate).query(
@@ -987,12 +990,14 @@ class MarketServiceTest {
                 org.mockito.ArgumentMatchers.<org.springframework.jdbc.core.RowMapper<Object>>any(),
                 org.mockito.ArgumentMatchers.eq("ZQ001"),
                 org.mockito.ArgumentMatchers.any(LocalDateTime.class),
+                org.mockito.ArgumentMatchers.any(LocalDateTime.class),
                 org.mockito.ArgumentMatchers.any(LocalDateTime.class)
         );
         assertThat(sqlCaptor.getValue())
                 .contains("from stock_execution")
                 .contains("source = 'INTERNAL_ORDER_BOOK'")
                 .contains("side = 'BUY'")
+                .contains("and executed_at <= ?")
                 .contains("sum(quantity) as volume")
                 .doesNotContain("from stock_price_tick")
                 .doesNotContain("price_time");
@@ -1096,7 +1101,7 @@ class MarketServiceTest {
         stubAutoParticipantStatusQuery();
         when(stockListingAutoAccountConfigRepository.findAllByOrderBySymbolAsc()).thenReturn(List.of(listingConfig));
         when(stockOrderRepository.countOpenAutoOrders(any(), any())).thenReturn(0L);
-        when(stockExecutionMarketViewRepository.countAutoExecutionsFrom(any())).thenReturn(0L);
+        when(stockExecutionMarketViewRepository.countAutoExecutionsBetween(any(), any())).thenReturn(0L);
         when(jdbcTemplate.query(
                 org.mockito.ArgumentMatchers.contains("from stock_listing_auto_account_config c"),
                 org.mockito.ArgumentMatchers.<org.springframework.jdbc.core.RowMapper<Object>>any(),

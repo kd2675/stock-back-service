@@ -69,8 +69,9 @@ public class OrderBookMarketStatusQueryService {
         List<OrderStatus> openStatuses = List.of(OrderStatus.PENDING, OrderStatus.PARTIALLY_FILLED);
         long openOrderCount = stockOrderRepository.countByMarketTypeAndStatusIn(MarketType.ORDER_BOOK, openStatuses);
         long todayExecutionCount = includeTodayExecution
-                ? stockExecutionMarketViewRepository.countExecutionsFromBySource(
+                ? stockExecutionMarketViewRepository.countExecutionsBetweenBySource(
                         simulationClockService.currentMarketDayStart(),
+                        simulationClockService.currentMarketDateTime(),
                         ExecutionSource.INTERNAL_ORDER_BOOK
                 )
                 : 0L;
@@ -89,11 +90,13 @@ public class OrderBookMarketStatusQueryService {
 
     private OrderBookMarketStatusResponse getOrderBookMarketSummaryStatus(boolean includeTodayExecution) {
         LocalDateTime todayStart = simulationClockService.currentMarketDayStart();
+        LocalDateTime todayEnd = simulationClockService.currentMarketDateTime();
         String todayExecutionSql = includeTodayExecution
                 ? """
                          (select count(*)
                             from stock_execution e
                            where e.executed_at >= :todayStart
+                             and e.executed_at <= :todayEnd
                              and e.source = 'INTERNAL_ORDER_BOOK') as today_execution_count
                         """
                 : "0 as today_execution_count";
@@ -115,6 +118,7 @@ public class OrderBookMarketStatusQueryService {
         if (includeTodayExecution) {
             OrderBookMarketStatusResponse response = jdbcClient.sql(sql)
                     .param("todayStart", todayStart)
+                    .param("todayEnd", todayEnd)
                     .query((rs, rowNum) -> OrderBookMarketStatusResponseMapper.toSummaryStatus(rs))
                     .single();
             return withEffectiveSession(response);

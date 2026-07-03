@@ -12,7 +12,10 @@ import stock.back.service.market.biz.SimulationClockService;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.TreeMap;
 
 @Service
 public class AccountOrderCleanupService {
@@ -34,121 +37,134 @@ public class AccountOrderCleanupService {
     }
 
     public void cancelOpenOrdersForDetach(StockAccount account) {
-        cancelOpenOrders(account, null);
+        cancelOpenOrders(account.getId(), account, null);
     }
 
     public void cancelOpenOrderBookOrders(StockAccount account) {
-        cancelOpenOrders(account, MarketType.ORDER_BOOK.name());
+        cancelOpenOrders(account.getId(), account, MarketType.ORDER_BOOK.name());
     }
 
-    private void cancelOpenOrders(StockAccount account, String marketType) {
+    public void cancelOpenOrderBookOrders(long accountId) {
+        cancelOpenOrders(accountId, null, MarketType.ORDER_BOOK.name());
+    }
+
+    private void cancelOpenOrders(long accountId, StockAccount account, String marketType) {
         List<String> openStatuses = List.of(OrderStatus.PENDING.name(), OrderStatus.PARTIALLY_FILLED.name());
         LocalDateTime cancelledAt = simulationClockService.currentMarketDateTime();
-        releaseOpenBuyReservations(account, openStatuses, marketType, cancelledAt);
-        releaseOpenSellReservations(account, openStatuses, marketType, cancelledAt);
-        cancelOpenOrders(account, openStatuses, marketType, cancelledAt);
-    }
-
-    private void releaseOpenBuyReservations(StockAccount account, List<String> openStatuses, String marketType, LocalDateTime cancelledAt) {
-        BigDecimal reservedBuyCash = jdbcClient.sql(
-                marketType == null
-                        ? """
-                        select coalesce(sum(reserved_cash), 0)
-                          from stock_order
-                         where account_id = ?
-                           and side = ?
-                           and status in (?, ?)
-                        """
-                        : """
-                        select coalesce(sum(reserved_cash), 0)
-                          from stock_order
-                         where account_id = ?
-                           and market_type = ?
-                           and side = ?
-                           and status in (?, ?)
-                        """
-        )
-                .params(marketType == null
-                        ? List.of(account.getId(), OrderSide.BUY.name(), openStatuses.get(0), openStatuses.get(1))
-                        : List.of(account.getId(), marketType, OrderSide.BUY.name(), openStatuses.get(0), openStatuses.get(1)))
-                .query(BigDecimal.class)
-                .single();
-        if (reservedBuyCash.compareTo(BigDecimal.ZERO) > 0) {
-            account.releaseCash(reservedBuyCash, cancelledAt);
+        List<OpenOrderReservation> openOrders = findOpenOrdersForUpdate(accountId, openStatuses, marketType);
+        List<OpenOrderReservation> cancelledOrders = new ArrayList<>();
+        for (OpenOrderReservation order : openOrders) {
+            if (cancelOpenOrder(order.id(), openStatuses, cancelledAt)) {
+                cancelledOrders.add(order);
+            }
         }
+        releaseOpenBuyReservations(accountId, account, cancelledOrders, cancelledAt);
+        releaseOpenSellReservations(accountId, cancelledOrders, cancelledAt);
     }
 
-    private void releaseOpenSellReservations(StockAccount account, List<String> openStatuses, String marketType, LocalDateTime cancelledAt) {
-        List<SellReservation> sellReservations = jdbcClient.sql(
+    private List<OpenOrderReservation> findOpenOrdersForUpdate(long accountId, List<String> openStatuses, String marketType) {
+        return jdbcClient.sql(
                 marketType == null
                         ? """
-                        select symbol, coalesce(sum(quantity - filled_quantity), 0) as remaining_quantity
+                        select id, side, symbol, quantity, filled_quantity, reserved_cash
                           from stock_order
                          where account_id = ?
-                           and side = ?
                            and status in (?, ?)
-                         group by symbol
+                         order by id asc
+                         for update
                         """
                         : """
-                        select symbol, coalesce(sum(quantity - filled_quantity), 0) as remaining_quantity
+                        select id, side, symbol, quantity, filled_quantity, reserved_cash
                           from stock_order
                          where account_id = ?
                            and market_type = ?
-                           and side = ?
                            and status in (?, ?)
-                         group by symbol
+                         order by id asc
+                         for update
                         """
         )
                 .params(marketType == null
-                        ? List.of(account.getId(), OrderSide.SELL.name(), openStatuses.get(0), openStatuses.get(1))
-                        : List.of(account.getId(), marketType, OrderSide.SELL.name(), openStatuses.get(0), openStatuses.get(1)))
-                .query((rs, rowNum) -> new SellReservation(
+                        ? List.of(accountId, openStatuses.get(0), openStatuses.get(1))
+                        : List.of(accountId, marketType, openStatuses.get(0), openStatuses.get(1)))
+                .query((rs, rowNum) -> new OpenOrderReservation(
+                        rs.getLong("id"),
+                        rs.getString("side"),
                         rs.getString("symbol"),
-                        rs.getLong("remaining_quantity")
+                        rs.getLong("quantity"),
+                        rs.getLong("filled_quantity"),
+                        rs.getBigDecimal("reserved_cash")
                 ))
                 .list();
-        for (SellReservation reservation : sellReservations) {
-            stockHoldingRepository.findByAccountIdAndSymbolForUpdate(account.getId(), reservation.symbol())
-                    .ifPresent(holding -> holding.releaseReservedQuantity(reservation.remainingQuantity(), cancelledAt));
-        }
     }
 
-    private void cancelOpenOrders(StockAccount account, List<String> openStatuses, String marketType, LocalDateTime cancelledAt) {
-        if (marketType == null) {
-            jdbcTemplate.update(
-                    """
-                    update stock_order
-                       set status = 'CANCELLED',
-                           reserved_cash = 0,
-                           updated_at = ?
-                     where account_id = ?
-                       and status in (?, ?)
-                    """,
-                    cancelledAt,
-                    account.getId(),
-                    openStatuses.get(0),
-                    openStatuses.get(1)
-            );
-            return;
-        }
-        jdbcTemplate.update(
+    private boolean cancelOpenOrder(long orderId, List<String> openStatuses, LocalDateTime cancelledAt) {
+        return jdbcTemplate.update(
                 """
                 update stock_order
                    set status = 'CANCELLED',
                        reserved_cash = 0,
                        updated_at = ?
-                 where account_id = ?
-                   and market_type = ?
+                 where id = ?
                    and status in (?, ?)
                 """,
                 cancelledAt,
-                account.getId(),
-                marketType,
+                orderId,
                 openStatuses.get(0),
                 openStatuses.get(1)
-        );
+        ) > 0;
     }
 
-    private record SellReservation(String symbol, long remainingQuantity) {
+    private void releaseOpenBuyReservations(
+            long accountId,
+            StockAccount account,
+            List<OpenOrderReservation> cancelledOrders,
+            LocalDateTime cancelledAt
+    ) {
+        BigDecimal reservedBuyCash = cancelledOrders.stream()
+                .filter(order -> OrderSide.BUY.name().equals(order.side()))
+                .map(OpenOrderReservation::reservedCash)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        if (reservedBuyCash.compareTo(BigDecimal.ZERO) > 0) {
+            if (account == null) {
+                jdbcTemplate.update(
+                        "update stock_account set cash_balance = cash_balance + ?, updated_at = ? where id = ?",
+                        reservedBuyCash,
+                        cancelledAt,
+                        accountId
+                );
+            } else {
+                account.releaseCash(reservedBuyCash, cancelledAt);
+            }
+        }
+    }
+
+    private void releaseOpenSellReservations(
+            long accountId,
+            List<OpenOrderReservation> cancelledOrders,
+            LocalDateTime cancelledAt
+    ) {
+        Map<String, Long> sellQuantityBySymbol = new TreeMap<>();
+        for (OpenOrderReservation order : cancelledOrders) {
+            if (OrderSide.SELL.name().equals(order.side()) && order.remainingQuantity() > 0) {
+                sellQuantityBySymbol.merge(order.symbol(), order.remainingQuantity(), Long::sum);
+            }
+        }
+        sellQuantityBySymbol.forEach((symbol, remainingQuantity) ->
+                stockHoldingRepository.findByAccountIdAndSymbolForUpdate(accountId, symbol)
+                    .ifPresent(holding -> holding.releaseReservedQuantity(remainingQuantity, cancelledAt)));
+    }
+
+    private record OpenOrderReservation(
+            long id,
+            String side,
+            String symbol,
+            long quantity,
+            long filledQuantity,
+            BigDecimal reservedCash
+    ) {
+
+        long remainingQuantity() {
+            return quantity - filledQuantity;
+        }
     }
 }
