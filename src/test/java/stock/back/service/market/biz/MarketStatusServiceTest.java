@@ -18,6 +18,7 @@ import stock.back.service.database.repository.StockOrderRepository;
 import stock.back.service.database.repository.StockVirtualMarketConfigRepository;
 import stock.back.service.market.vo.MarketStatusUpdateRequest;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
@@ -32,6 +33,9 @@ import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
 class MarketStatusServiceTest {
+
+    private static final LocalDateTime SIMULATION_NOW = LocalDateTime.of(2026, 7, 3, 10, 0);
+    private static final LocalDateTime SIMULATION_DAY_START = SIMULATION_NOW.toLocalDate().atStartOfDay();
 
     @Mock
     private StockVirtualMarketConfigRepository stockVirtualMarketConfigRepository;
@@ -55,7 +59,8 @@ class MarketStatusServiceTest {
 
     @BeforeEach
     void setUp() {
-        lenient().when(simulationClockService.currentMarketDayStart()).thenReturn(SimulationDayClock.currentDayStart());
+        lenient().when(simulationClockService.currentMarketDayStart()).thenReturn(SIMULATION_DAY_START);
+        lenient().when(simulationClockService.currentMarketDateTime()).thenReturn(SIMULATION_NOW);
         lenient().when(simulationMarketSessionService.isRegularSession()).thenReturn(true);
         service = new MarketStatusService(
                 stockVirtualMarketConfigRepository,
@@ -97,6 +102,92 @@ class MarketStatusServiceTest {
         assertThat(response.symbol()).isEqualTo("ZQ001");
         assertThat(response.enabled()).isTrue();
         assertThat(response.marketStatus()).isEqualTo(MarketSessionStatus.CLOSED);
+    }
+
+    @Test
+    void updateMarketStatus_orderBookOpenOutsideRegularSession_throwsConflict() {
+        StockOrderBookMarketConfig config = orderBookConfig("ZQ001", MarketSessionStatus.HALTED, SIMULATION_DAY_START.plusHours(9));
+        when(stockOrderBookMarketConfigRepository.findById("ZQ001")).thenReturn(Optional.of(config));
+        when(simulationMarketSessionService.isRegularSession()).thenReturn(false);
+
+        assertThatThrownBy(() -> service.updateMarketStatus(
+                MarketType.ORDER_BOOK,
+                "zq001",
+                new MarketStatusUpdateRequest(true, MarketSessionStatus.OPEN)
+        ))
+                .isInstanceOf(StockException.class)
+                .hasMessageContaining("regular trading session");
+    }
+
+    @Test
+    void updateMarketStatus_virtualMarketOpenOutsideRegularSession_throwsConflict() {
+        StockVirtualMarketConfig config = virtualMarketConfig("005930", true, MarketSessionStatus.CLOSED);
+        when(stockVirtualMarketConfigRepository.findById("005930")).thenReturn(Optional.of(config));
+        when(simulationMarketSessionService.isRegularSession()).thenReturn(false);
+
+        assertThatThrownBy(() -> service.updateMarketStatus(
+                MarketType.VIRTUAL_PRICE,
+                "005930",
+                new MarketStatusUpdateRequest(true, MarketSessionStatus.OPEN)
+        ))
+                .isInstanceOf(StockException.class)
+                .hasMessageContaining("regular trading session");
+    }
+
+    @Test
+    void updateMarketStatus_orderBookClosedToOpenOnSameSimulationDate_throwsConflict() {
+        StockOrderBookMarketConfig config = orderBookConfig("ZQ001", MarketSessionStatus.CLOSED, SIMULATION_DAY_START.plusHours(9));
+        when(stockOrderBookMarketConfigRepository.findById("ZQ001")).thenReturn(Optional.of(config));
+
+        assertThatThrownBy(() -> service.updateMarketStatus(
+                MarketType.ORDER_BOOK,
+                "zq001",
+                new MarketStatusUpdateRequest(true, MarketSessionStatus.OPEN)
+        ))
+                .isInstanceOf(StockException.class)
+                .hasMessageContaining("same simulation trading day");
+    }
+
+    @Test
+    void updateMarketStatus_orderBookClosedToOpenOnLaterSimulationDate_updatesConfig() {
+        StockOrderBookMarketConfig config = orderBookConfig("ZQ001", MarketSessionStatus.CLOSED, SIMULATION_DAY_START.minusDays(1).plusHours(18));
+        when(stockOrderBookMarketConfigRepository.findById("ZQ001")).thenReturn(Optional.of(config));
+
+        var response = service.updateMarketStatus(
+                MarketType.ORDER_BOOK,
+                "zq001",
+                new MarketStatusUpdateRequest(true, MarketSessionStatus.OPEN)
+        );
+
+        assertThat(response.marketStatus()).isEqualTo(MarketSessionStatus.OPEN);
+    }
+
+    @Test
+    void updateMarketStatus_orderBookCircuitBreakerToOpen_throwsConflict() {
+        StockOrderBookMarketConfig config = orderBookConfig("ZQ001", MarketSessionStatus.CIRCUIT_BREAKER, SIMULATION_DAY_START.minusDays(1).plusHours(10));
+        when(stockOrderBookMarketConfigRepository.findById("ZQ001")).thenReturn(Optional.of(config));
+
+        assertThatThrownBy(() -> service.updateMarketStatus(
+                MarketType.ORDER_BOOK,
+                "zq001",
+                new MarketStatusUpdateRequest(true, MarketSessionStatus.OPEN)
+        ))
+                .isInstanceOf(StockException.class)
+                .hasMessageContaining("Circuit breaker market resumes automatically");
+    }
+
+    @Test
+    void updateMarketStatus_orderBookHaltedToOpenDuringRegularSession_updatesConfig() {
+        StockOrderBookMarketConfig config = orderBookConfig("ZQ001", MarketSessionStatus.HALTED, SIMULATION_DAY_START.plusHours(9));
+        when(stockOrderBookMarketConfigRepository.findById("ZQ001")).thenReturn(Optional.of(config));
+
+        var response = service.updateMarketStatus(
+                MarketType.ORDER_BOOK,
+                "zq001",
+                new MarketStatusUpdateRequest(true, MarketSessionStatus.OPEN)
+        );
+
+        assertThat(response.marketStatus()).isEqualTo(MarketSessionStatus.OPEN);
     }
 
     @Test
@@ -142,13 +233,19 @@ class MarketStatusServiceTest {
         assertThat(response.configs()).extracting(config -> config.marketStatus()).containsExactly(MarketSessionStatus.OPEN);
     }
 
+    private StockOrderBookMarketConfig orderBookConfig(String symbol, MarketSessionStatus marketStatus, LocalDateTime updatedAt) {
+        StockOrderBookMarketConfig config = StockOrderBookMarketConfig.enabled(symbol);
+        config.updateStatus(true, marketStatus, updatedAt);
+        return config;
+    }
+
     private StockVirtualMarketConfig virtualMarketConfig(String symbol, boolean enabled, MarketSessionStatus marketStatus) {
         StockVirtualMarketConfig config = mock(StockVirtualMarketConfig.class);
         AtomicReference<Boolean> enabledHolder = new AtomicReference<>(enabled);
         AtomicReference<MarketSessionStatus> statusHolder = new AtomicReference<>(marketStatus);
-        when(config.getSymbol()).thenReturn(symbol);
-        when(config.getEnabled()).thenAnswer(invocation -> enabledHolder.get());
-        when(config.getMarketStatus()).thenAnswer(invocation -> statusHolder.get());
+        lenient().when(config.getSymbol()).thenReturn(symbol);
+        lenient().when(config.getEnabled()).thenAnswer(invocation -> enabledHolder.get());
+        lenient().when(config.getMarketStatus()).thenAnswer(invocation -> statusHolder.get());
         lenient().doAnswer(invocation -> {
             Boolean nextEnabled = invocation.getArgument(0);
             MarketSessionStatus nextStatus = invocation.getArgument(1);
@@ -160,6 +257,17 @@ class MarketStatusServiceTest {
             }
             return null;
         }).when(config).updateStatus(any(), any());
+        lenient().doAnswer(invocation -> {
+            Boolean nextEnabled = invocation.getArgument(0);
+            MarketSessionStatus nextStatus = invocation.getArgument(1);
+            if (nextEnabled != null) {
+                enabledHolder.set(nextEnabled);
+            }
+            if (nextStatus != null) {
+                statusHolder.set(nextStatus);
+            }
+            return null;
+        }).when(config).updateStatus(any(), any(), any());
         return config;
     }
 }

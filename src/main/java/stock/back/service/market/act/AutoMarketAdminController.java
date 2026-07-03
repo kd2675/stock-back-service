@@ -21,6 +21,7 @@ import stock.back.service.market.biz.AutoParticipantProfileConfigService;
 import stock.back.service.market.biz.AutoParticipantSymbolConfigService;
 import stock.back.service.market.vo.AutoMarketConfigResponse;
 import stock.back.service.market.vo.AutoMarketConfigUpdateRequest;
+import stock.back.service.market.vo.AutoParticipantActivityScope;
 import stock.back.service.market.vo.AutoParticipantCashAdjustmentRequest;
 import stock.back.service.market.vo.AutoParticipantCashAdjustmentResponse;
 import stock.back.service.market.vo.AutoParticipantHoldingGroupResponse;
@@ -54,9 +55,10 @@ public class AutoMarketAdminController {
     @GetMapping("/auto-market/participants/overviews")
     public ResponseDataDTO<List<AutoParticipantOverviewResponse>> getAutoParticipantOverviews(
             @RequestParam(defaultValue = "true") boolean includeHoldings,
-            @RequestParam(defaultValue = "") List<String> userKeys
+            @RequestParam(defaultValue = "") List<String> userKeys,
+            @RequestParam(defaultValue = "RECENT_SIMULATION_DAY") AutoParticipantActivityScope activityScope
     ) {
-        return ResponseDataDTO.of(autoParticipantOverviewQueryService.getAutoParticipantOverviews(includeHoldings, userKeys));
+        return ResponseDataDTO.of(autoParticipantOverviewQueryService.getAutoParticipantOverviews(includeHoldings, userKeys, activityScope));
     }
 
     @GetMapping("/auto-market/participants")
@@ -72,8 +74,11 @@ public class AutoMarketAdminController {
     }
 
     @GetMapping("/auto-market/participants/profile-overviews")
-    public ResponseDataDTO<List<AutoParticipantProfileOverviewResponse>> getAutoParticipantProfileOverviews() {
-        return ResponseDataDTO.of(autoParticipantOverviewQueryService.getAutoParticipantProfileOverviews());
+    public ResponseDataDTO<List<AutoParticipantProfileOverviewResponse>> getAutoParticipantProfileOverviews(
+            @RequestParam(defaultValue = "RECENT_SIMULATION_DAY") AutoParticipantActivityScope activityScope,
+            @RequestParam(defaultValue = "") List<String> profileTypes
+    ) {
+        return ResponseDataDTO.of(autoParticipantOverviewQueryService.getAutoParticipantProfileOverviews(activityScope, profileTypes));
     }
 
     @PatchMapping("/auto-market/profile-configs/{profileType}")

@@ -10,6 +10,7 @@ import org.springframework.web.bind.annotation.RestController;
 import stock.back.service.market.biz.AdminFlowQueryService;
 import stock.back.service.market.vo.AdminCashFlowPageResponse;
 import stock.back.service.market.vo.AdminFlowOverviewResponse;
+import stock.back.service.market.vo.AdminFundFlowScope;
 import stock.back.service.market.vo.AdminFundFlowSummaryResponse;
 import stock.back.service.market.vo.AdminSymbolFlowListResponse;
 import web.common.core.response.base.dto.ResponseDataDTO;
@@ -26,14 +27,17 @@ public class MarketAdminController {
     public ResponseDataDTO<AdminFlowOverviewResponse> getAdminFlowOverview(
             @RequestParam(defaultValue = "0") int symbolFlowLimit,
             @RequestParam(defaultValue = "true") boolean includeFundFlow,
-            @RequestParam(defaultValue = "true") boolean includeSymbolFlows
+            @RequestParam(defaultValue = "true") boolean includeSymbolFlows,
+            @RequestParam(defaultValue = "RECENT_SIMULATION_DAY") AdminFundFlowScope fundFlowScope
     ) {
-        return ResponseDataDTO.of(adminFlowQueryService.getAdminFlowOverview(symbolFlowLimit, includeFundFlow, includeSymbolFlows));
+        return ResponseDataDTO.of(adminFlowQueryService.getAdminFlowOverview(symbolFlowLimit, includeFundFlow, includeSymbolFlows, fundFlowScope));
     }
 
     @GetMapping("/admin/fund-flow-summary")
-    public ResponseDataDTO<AdminFundFlowSummaryResponse> getAdminFundFlowSummary() {
-        return ResponseDataDTO.of(adminFlowQueryService.getAdminFundFlowSummary());
+    public ResponseDataDTO<AdminFundFlowSummaryResponse> getAdminFundFlowSummary(
+            @RequestParam(defaultValue = "RECENT_SIMULATION_DAY") AdminFundFlowScope scope
+    ) {
+        return ResponseDataDTO.of(adminFlowQueryService.getAdminFundFlowSummary(scope));
     }
 
     @GetMapping("/admin/symbol-flows")

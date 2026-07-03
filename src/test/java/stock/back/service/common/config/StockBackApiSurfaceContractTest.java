@@ -48,6 +48,7 @@ class StockBackApiSurfaceContractTest {
             "POST /api/stock/v1/markets/order-book-instruments/{symbol}/reports",
             "PATCH /api/stock/v1/markets/order-book-instruments/{symbol}/reports",
             "DELETE /api/stock/v1/markets/order-book-instruments/{symbol}/reports",
+            "PATCH /api/stock/v1/markets/order-book-instruments/{symbol}/trading-rules",
             "GET /api/stock/v1/markets/corporate-action-entitlements/me",
             "PATCH /api/stock/v1/markets/{marketType}/symbols/{symbol}/status",
             "GET /api/stock/v1/markets/prices",

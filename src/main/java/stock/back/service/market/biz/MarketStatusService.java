@@ -18,6 +18,8 @@ import stock.back.service.market.vo.MarketStatusUpdateRequest;
 import stock.back.service.market.vo.SymbolMarketConfigResponse;
 import stock.back.service.market.vo.VirtualMarketStatusResponse;
 
+import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.List;
 
 @Service
@@ -46,12 +48,15 @@ public class MarketStatusService {
         if (marketType == MarketType.VIRTUAL_PRICE) {
             StockVirtualMarketConfig config = stockVirtualMarketConfigRepository.findById(normalizedSymbol)
                     .orElseThrow(() -> StockException.notFound("Unknown virtual market symbol: " + normalizedSymbol));
-            config.updateStatus(request.enabled(), request.marketStatus());
+            validateManualOpenSession(request.marketStatus(), normalizedSymbol);
+            config.updateStatus(request.enabled(), request.marketStatus(), simulationClockService.currentMarketDateTime());
             return toVirtualMarketConfigResponse(config);
         }
         StockOrderBookMarketConfig config = stockOrderBookMarketConfigRepository.findById(normalizedSymbol)
                 .orElseThrow(() -> StockException.notFound("Unknown order book market symbol: " + normalizedSymbol));
-        config.updateStatus(request.enabled(), request.marketStatus());
+        LocalDateTime updatedAt = simulationClockService.currentMarketDateTime();
+        validateOrderBookManualOpenTransition(config, request.marketStatus(), updatedAt.toLocalDate());
+        config.updateStatus(request.enabled(), request.marketStatus(), updatedAt);
         return toOrderBookMarketConfigResponse(config);
     }
 
@@ -93,6 +98,32 @@ public class MarketStatusService {
 
     private boolean isConfigOpen(SymbolMarketConfigResponse config) {
         return config.enabled() && config.marketStatus() == MarketSessionStatus.OPEN;
+    }
+
+    private void validateOrderBookManualOpenTransition(
+            StockOrderBookMarketConfig config,
+            MarketSessionStatus requestedStatus,
+            LocalDate currentSimulationDate
+    ) {
+        validateManualOpenSession(requestedStatus, config.getSymbol());
+        if (requestedStatus != MarketSessionStatus.OPEN) {
+            return;
+        }
+        MarketSessionStatus currentStatus = normalizeMarketSessionStatus(config.getMarketStatus());
+        if (currentStatus == MarketSessionStatus.CIRCUIT_BREAKER) {
+            throw StockException.conflict("Circuit breaker market resumes automatically at the next regular session: " + config.getSymbol());
+        }
+        if (currentStatus == MarketSessionStatus.CLOSED
+                && config.getUpdatedAt() != null
+                && config.getUpdatedAt().toLocalDate().isEqual(currentSimulationDate)) {
+            throw StockException.conflict("Closed market cannot be reopened manually during the same simulation trading day: " + config.getSymbol());
+        }
+    }
+
+    private void validateManualOpenSession(MarketSessionStatus requestedStatus, String symbol) {
+        if (requestedStatus == MarketSessionStatus.OPEN && !simulationMarketSessionService.isRegularSession()) {
+            throw StockException.conflict("Market can be opened manually only during the regular trading session: " + symbol);
+        }
     }
 
     private MarketSessionStatus normalizeMarketSessionStatus(MarketSessionStatus marketStatus) {

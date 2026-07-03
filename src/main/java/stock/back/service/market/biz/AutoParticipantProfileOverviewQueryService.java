@@ -4,6 +4,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
+import stock.back.service.market.vo.AutoParticipantActivityScope;
 import stock.back.service.market.vo.AutoParticipantProfileOverviewResponse;
 import stock.back.service.market.vo.AutoParticipantProfileSymbolHoldingResponse;
 
@@ -11,9 +12,11 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 @Service
 public class AutoParticipantProfileOverviewQueryService {
@@ -32,8 +35,20 @@ public class AutoParticipantProfileOverviewQueryService {
     }
 
     public List<AutoParticipantProfileOverviewResponse> getAutoParticipantProfileOverviews() {
+        return getAutoParticipantProfileOverviews(AutoParticipantActivityScope.RECENT_SIMULATION_DAY);
+    }
+
+    public List<AutoParticipantProfileOverviewResponse> getAutoParticipantProfileOverviews(AutoParticipantActivityScope activityScope) {
+        return getAutoParticipantProfileOverviews(activityScope, List.of());
+    }
+
+    public List<AutoParticipantProfileOverviewResponse> getAutoParticipantProfileOverviews(
+            AutoParticipantActivityScope activityScope,
+            List<String> profileTypes
+    ) {
+        AutoParticipantAggregateQuerySupport.ActivityWindow activityWindow = activityWindow(activityScope);
         LocalDateTime todayStart = simulationClockService.currentMarketDayStart();
-        List<ParticipantRow> participants = findParticipants();
+        List<ParticipantRow> participants = findParticipants(profileTypes);
         Map<String, ProfileAccumulator> profiles = new LinkedHashMap<>();
         Map<Long, ProfileAccumulator> profileByAccountId = new HashMap<>();
         Map<String, ProfileAccumulator> profileByUserKey = new HashMap<>();
@@ -56,6 +71,7 @@ public class AutoParticipantProfileOverviewQueryService {
             aggregateQuerySupport.applyAccountAggregates(
                     profileByAccountId.keySet().stream().toList(),
                     todayStart,
+                    activityWindow,
                     profileByAccountId
             );
         }
@@ -71,8 +87,18 @@ public class AutoParticipantProfileOverviewQueryService {
                 .toList();
     }
 
-    private List<ParticipantRow> findParticipants() {
-        return jdbcClient.sql("""
+    private AutoParticipantAggregateQuerySupport.ActivityWindow activityWindow(AutoParticipantActivityScope activityScope) {
+        LocalDateTime activityEnd = simulationClockService.currentMarketDateTime();
+        if (activityScope == AutoParticipantActivityScope.ALL) {
+            return AutoParticipantAggregateQuerySupport.ActivityWindow.allUntil(activityEnd);
+        }
+        return AutoParticipantAggregateQuerySupport.ActivityWindow.recent(activityEnd.minusDays(1), activityEnd);
+    }
+
+    private List<ParticipantRow> findParticipants(List<String> profileTypes) {
+        Set<String> normalizedProfileTypes = normalizeProfileTypes(profileTypes);
+        String profileFilter = normalizedProfileTypes.isEmpty() ? "" : " and p.profile_type in (:profileTypes)\n";
+        var statement = jdbcClient.sql("""
                         select p.user_key,
                                p.enabled,
                                p.profile_type,
@@ -81,8 +107,13 @@ public class AutoParticipantProfileOverviewQueryService {
                           from stock_auto_participant p
                           left join stock_account a on a.user_key = p.user_key
                          where p.withdrawn_at is null
+                        %s
                          order by p.profile_type asc, p.user_key asc
-                        """)
+                        """.formatted(profileFilter));
+        if (!normalizedProfileTypes.isEmpty()) {
+            statement = statement.param("profileTypes", normalizedProfileTypes);
+        }
+        return statement
                 .query((rs, rowNum) -> new ParticipantRow(
                         rs.getString("user_key"),
                         rs.getBoolean("enabled"),
@@ -91,6 +122,20 @@ public class AutoParticipantProfileOverviewQueryService {
                         AutoParticipantQuerySupport.zeroIfNull(rs.getBigDecimal("available_cash"))
                 ))
                 .list();
+    }
+
+    private Set<String> normalizeProfileTypes(List<String> profileTypes) {
+        Set<String> normalizedProfileTypes = new HashSet<>();
+        if (profileTypes == null) {
+            return normalizedProfileTypes;
+        }
+        for (String profileType : profileTypes) {
+            String normalizedProfileType = MarketTextNormalizer.text(profileType).toUpperCase();
+            if (!normalizedProfileType.isBlank()) {
+                normalizedProfileTypes.add(normalizedProfileType);
+            }
+        }
+        return normalizedProfileTypes;
     }
 
     private record ParticipantRow(

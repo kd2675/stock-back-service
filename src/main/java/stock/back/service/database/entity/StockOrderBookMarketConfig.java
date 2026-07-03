@@ -42,12 +42,16 @@ public class StockOrderBookMarketConfig {
     }
 
     public void updateStatus(Boolean enabled, MarketSessionStatus marketStatus) {
+        updateStatus(enabled, marketStatus, LocalDateTime.now());
+    }
+
+    public void updateStatus(Boolean enabled, MarketSessionStatus marketStatus, LocalDateTime updatedAt) {
         if (enabled != null) {
             this.enabled = enabled;
         }
         if (marketStatus != null) {
             this.marketStatus = marketStatus;
         }
-        this.updatedAt = LocalDateTime.now();
+        this.updatedAt = updatedAt;
     }
 }

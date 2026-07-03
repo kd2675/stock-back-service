@@ -61,6 +61,7 @@ import stock.back.service.market.vo.AutoParticipantSymbolConfigRequest;
 import stock.back.service.market.vo.CorporateActionRequest;
 import stock.back.service.market.vo.InstrumentReportRequest;
 import stock.back.service.market.vo.OrderBookInstrumentRequest;
+import stock.back.service.market.vo.OrderBookInstrumentTradingRulesRequest;
 import stock.back.service.market.vo.AutoMarketStatusResponse;
 import stock.back.service.trading.biz.AccountOrderCleanupService;
 import web.common.core.simulation.SimulationClockSnapshot;
@@ -398,7 +399,6 @@ class MarketServiceTest {
                         "",
                         new BigDecimal("70000.00"),
                         100000L,
-                        new BigDecimal("5.00"),
                         new BigDecimal("30.00"),
                         null
                 )
@@ -411,7 +411,7 @@ class MarketServiceTest {
         assertThat(response.symbol()).isEqualTo("ZQ001");
         assertThat(response.issuedShares()).isEqualTo(100000L);
         assertThat(response.tradableShares()).isEqualTo(100000L);
-        assertThat(response.tickSize()).isEqualByComparingTo(new BigDecimal("5.00"));
+        assertThat(response.tickSize()).isEqualByComparingTo(new BigDecimal("100.00"));
         assertThat(response.priceLimitRate()).isEqualByComparingTo(new BigDecimal("30.00"));
         assertThat(response.priceLimitBase()).isEqualByComparingTo(new BigDecimal("70000.00"));
         assertThat(actionCaptor.getValue().getActionType()).isEqualTo(StockCorporateActionType.INITIAL_ISSUE);
@@ -445,6 +445,44 @@ class MarketServiceTest {
                 org.mockito.ArgumentMatchers.contains("insert into stock_order"),
                 org.mockito.ArgumentMatchers.<Object[]>any()
         );
+    }
+
+    @Test
+    void updateOrderBookInstrumentTradingRules_validRequest_updatesPriceLimitRate() {
+        StockOrderBookInstrument instrument = StockOrderBookInstrument.listed(
+                "ZQ001",
+                "제로큐 주문장",
+                "ORDERBOOK",
+                new BigDecimal("70000.00"),
+                100000L,
+                new BigDecimal("1.00"),
+                new BigDecimal("30.00")
+        );
+        when(stockOrderBookInstrumentRepository.findById("ZQ001")).thenReturn(Optional.of(instrument));
+        when(stockPriceRepository.findById("ZQ001")).thenReturn(Optional.empty());
+
+        var response = marketService.updateOrderBookInstrumentTradingRules(
+                " zq001 ",
+                new OrderBookInstrumentTradingRulesRequest(new BigDecimal("15.00"))
+        );
+
+        assertThat(response.symbol()).isEqualTo("ZQ001");
+        assertThat(response.tickSize()).isEqualByComparingTo(new BigDecimal("100.00"));
+        assertThat(response.priceLimitRate()).isEqualByComparingTo(new BigDecimal("15.00"));
+        assertThat(instrument.getTickSize()).isEqualByComparingTo(new BigDecimal("1.00"));
+        assertThat(instrument.getPriceLimitRate()).isEqualByComparingTo(new BigDecimal("15.00"));
+    }
+
+    @Test
+    void updateOrderBookInstrumentTradingRules_invalidRate_throwsBadRequest() {
+        assertThatThrownBy(() -> marketService.updateOrderBookInstrumentTradingRules(
+                "ZQ001",
+                new OrderBookInstrumentTradingRulesRequest(new BigDecimal("120.00"))
+        ))
+                .isInstanceOf(StockException.class)
+                .hasMessageContaining("Price limit rate");
+
+        verify(stockOrderBookInstrumentRepository, never()).findById(any());
     }
 
     @Test
@@ -684,6 +722,7 @@ class MarketServiceTest {
         JdbcTemplate realJdbcTemplate = createAutoParticipantProfileOverviewJdbcTemplate();
         SimulationClockService simulationClockService = mock(SimulationClockService.class);
         when(simulationClockService.currentMarketDayStart()).thenReturn(SimulationDayClock.currentDayStart());
+        when(simulationClockService.currentMarketDateTime()).thenReturn(SimulationDayClock.currentDayStart().plusDays(1));
         AutoParticipantProfileOverviewQueryService service = new AutoParticipantProfileOverviewQueryService(realJdbcTemplate, simulationClockService);
         LocalDateTime simulationDayStart = SimulationDayClock.currentDayStart();
         LocalDateTime lastOrderAt = simulationDayStart.plusMinutes(15);
@@ -834,7 +873,12 @@ class MarketServiceTest {
                 .doesNotContain("sum(case when status in");
         assertThat(AutoParticipantAggregateQuerySupport.LAST_ORDER_AGGREGATE_SQL)
                 .contains("max(created_at) as last_order_at")
+                .contains("created_at >= :activityStart")
+                .contains("created_at <= :activityEnd")
                 .doesNotContain("status in ('PENDING', 'PARTIALLY_FILLED')");
+        assertThat(AutoParticipantAggregateQuerySupport.LAST_ORDER_AGGREGATE_ALL_SQL)
+                .contains("created_at <= :activityEnd")
+                .doesNotContain("created_at >= :activityStart");
     }
 
     @Test
@@ -844,7 +888,12 @@ class MarketServiceTest {
                 .doesNotContain("sum(case when executed_at >= :todayStart");
         assertThat(AutoParticipantAggregateQuerySupport.LAST_EXECUTION_AGGREGATE_SQL)
                 .contains("max(executed_at) as last_execution_at")
+                .contains("executed_at >= :activityStart")
+                .contains("executed_at <= :activityEnd")
                 .doesNotContain("todayStart");
+        assertThat(AutoParticipantAggregateQuerySupport.LAST_EXECUTION_AGGREGATE_ALL_SQL)
+                .contains("executed_at <= :activityEnd")
+                .doesNotContain("executed_at >= :activityStart");
     }
 
     @Test

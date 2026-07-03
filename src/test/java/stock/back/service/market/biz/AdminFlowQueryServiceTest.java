@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import stock.back.service.database.repository.StockOrderBookInstrumentRepository;
+import stock.back.service.market.vo.AdminFundFlowScope;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -14,11 +15,16 @@ import static org.mockito.Mockito.when;
 
 class AdminFlowQueryServiceTest {
 
+    private static final LocalDateTime SIMULATION_DAY_START = LocalDateTime.of(2026, 7, 3, 0, 0);
+    private static final LocalDateTime SIMULATION_NOW = LocalDateTime.of(2026, 7, 3, 10, 0);
+
     @Test
-    void getAdminFundFlowSummary_readsAggregateWithJdbcClient() {
+    void getAdminFundFlowSummary_recentSimulationDay_readsScopedAggregateWithJdbcClient() {
         JdbcTemplate jdbcTemplate = createJdbcTemplate("admin_flow_query_service_fund_summary_test");
         AdminFlowQueryService service = createService(jdbcTemplate);
         seedFundFlow(jdbcTemplate);
+        insertCashFlowAt(jdbcTemplate, 5L, 1L, "DEPOSIT", "1000.00", "ADMIN_DEPOSIT", SIMULATION_DAY_START.minusMinutes(1));
+        insertExecutionAt(jdbcTemplate, 5L, 1L, "SELL", "1000.00", "1.00", "2.00", "1000.00", SIMULATION_DAY_START.minusMinutes(1));
 
         var summary = service.getAdminFundFlowSummary();
 
@@ -38,6 +44,25 @@ class AdminFlowQueryServiceTest {
         assertThat(summary.totalTaxAmount()).isEqualByComparingTo(new BigDecimal("5.00"));
         assertThat(summary.realizedProfit()).isEqualByComparingTo(new BigDecimal("200.00"));
         assertThat(summary.executionCount()).isEqualTo(2L);
+    }
+
+    @Test
+    void getAdminFundFlowSummary_all_readsFullAggregateWithJdbcClient() {
+        JdbcTemplate jdbcTemplate = createJdbcTemplate("admin_flow_query_service_fund_summary_all_test");
+        AdminFlowQueryService service = createService(jdbcTemplate);
+        seedFundFlow(jdbcTemplate);
+        insertCashFlowAt(jdbcTemplate, 5L, 1L, "DEPOSIT", "1000.00", "ADMIN_DEPOSIT", SIMULATION_DAY_START.minusMinutes(1));
+        insertExecutionAt(jdbcTemplate, 5L, 1L, "SELL", "1000.00", "1.00", "2.00", "1000.00", SIMULATION_DAY_START.minusMinutes(1));
+
+        var summary = service.getAdminFundFlowSummary(AdminFundFlowScope.ALL);
+
+        assertThat(summary.netExternalCashFlow()).isEqualByComparingTo(new BigDecimal("1380.00"));
+        assertThat(summary.sellNetAmount()).isEqualByComparingTo(new BigDecimal("1900.00"));
+        assertThat(summary.tradeNetCashFlow()).isEqualByComparingTo(new BigDecimal("1200.00"));
+        assertThat(summary.totalFeeAmount()).isEqualByComparingTo(new BigDecimal("11.00"));
+        assertThat(summary.totalTaxAmount()).isEqualByComparingTo(new BigDecimal("7.00"));
+        assertThat(summary.realizedProfit()).isEqualByComparingTo(new BigDecimal("1200.00"));
+        assertThat(summary.executionCount()).isEqualTo(3L);
     }
 
     @Test
@@ -66,7 +91,8 @@ class AdminFlowQueryServiceTest {
     private AdminFlowQueryService createService(JdbcTemplate jdbcTemplate) {
         StockOrderBookInstrumentRepository stockOrderBookInstrumentRepository = mock(StockOrderBookInstrumentRepository.class);
         SimulationClockService simulationClockService = mock(SimulationClockService.class);
-        when(simulationClockService.currentMarketDayStart()).thenReturn(SimulationDayClock.currentDayStart());
+        when(simulationClockService.currentMarketDayStart()).thenReturn(SIMULATION_DAY_START);
+        when(simulationClockService.currentMarketDateTime()).thenReturn(SIMULATION_NOW);
         return new AdminFlowQueryService(
                 jdbcTemplate,
                 new AdminSymbolFlowQueryService(jdbcTemplate, stockOrderBookInstrumentRepository),
@@ -135,7 +161,8 @@ class AdminFlowQueryServiceTest {
                     net_amount decimal(19, 2) not null,
                     fee_amount decimal(19, 2) not null,
                     tax_amount decimal(19, 2) not null,
-                    realized_profit decimal(19, 2) not null
+                    realized_profit decimal(19, 2) not null,
+                    executed_at timestamp not null
                 )
                 """);
         return jdbcTemplate;
@@ -227,7 +254,32 @@ class AdminFlowQueryServiceTest {
                 flowType,
                 new BigDecimal(amount),
                 reason,
-                LocalDateTime.now().minusMinutes(minute)
+                SIMULATION_NOW.minusMinutes(minute)
+        );
+    }
+
+    private void insertCashFlowAt(
+            JdbcTemplate jdbcTemplate,
+            long id,
+            long accountId,
+            String flowType,
+            String amount,
+            String reason,
+            LocalDateTime createdAt
+    ) {
+        jdbcTemplate.update(
+                """
+                insert into stock_account_cash_flow(
+                    id, account_id, flow_type, amount, reason, created_by, created_at
+                )
+                values (?, ?, ?, ?, ?, 'test-admin', ?)
+                """,
+                id,
+                accountId,
+                flowType,
+                new BigDecimal(amount),
+                reason,
+                createdAt
         );
     }
 
@@ -244,9 +296,9 @@ class AdminFlowQueryServiceTest {
         jdbcTemplate.update(
                 """
                 insert into stock_execution(
-                    id, account_id, symbol, side, net_amount, fee_amount, tax_amount, realized_profit
+                    id, account_id, symbol, side, net_amount, fee_amount, tax_amount, realized_profit, executed_at
                 )
-                values (?, ?, 'STOCK001', ?, ?, ?, ?, ?)
+                values (?, ?, 'STOCK001', ?, ?, ?, ?, ?, ?)
                 """,
                 id,
                 accountId,
@@ -254,7 +306,37 @@ class AdminFlowQueryServiceTest {
                 new BigDecimal(netAmount),
                 new BigDecimal(feeAmount),
                 new BigDecimal(taxAmount),
-                new BigDecimal(realizedProfit)
+                new BigDecimal(realizedProfit),
+                SIMULATION_NOW.minusMinutes(id)
+        );
+    }
+
+    private void insertExecutionAt(
+            JdbcTemplate jdbcTemplate,
+            long id,
+            long accountId,
+            String side,
+            String netAmount,
+            String feeAmount,
+            String taxAmount,
+            String realizedProfit,
+            LocalDateTime executedAt
+    ) {
+        jdbcTemplate.update(
+                """
+                insert into stock_execution(
+                    id, account_id, symbol, side, net_amount, fee_amount, tax_amount, realized_profit, executed_at
+                )
+                values (?, ?, 'STOCK001', ?, ?, ?, ?, ?, ?)
+                """,
+                id,
+                accountId,
+                side,
+                new BigDecimal(netAmount),
+                new BigDecimal(feeAmount),
+                new BigDecimal(taxAmount),
+                new BigDecimal(realizedProfit),
+                executedAt
         );
     }
 }

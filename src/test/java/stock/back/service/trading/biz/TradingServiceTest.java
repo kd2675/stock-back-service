@@ -341,7 +341,7 @@ class TradingServiceTest {
     }
 
     @Test
-    void placeOrder_orderBookLimitPriceNotMatchingTickSize_throwsBadRequestWithoutOpeningAccount() {
+    void placeOrder_orderBookLimitPriceNotMatchingPriceBandTickSize_throwsBadRequestWithoutOpeningAccount() {
         stockOrderBookInstrumentRepository.save(StockOrderBookInstrument.listed(
                 "TICK5",
                 "호가단위 테스트",
@@ -357,7 +357,7 @@ class TradingServiceTest {
                 "user-tick-size-invalid",
                 new OrderRequest("TICK5", MarketType.ORDER_BOOK, OrderSide.BUY, OrderType.LIMIT, new BigDecimal("70003"), 1, null)
         )).isInstanceOf(StockException.class)
-                .hasMessageContaining("Limit price must match tick size 5");
+                .hasMessageContaining("Limit price must match tick size 100");
 
         assertThat(stockAccountRepository.findByUserKey("user-tick-size-invalid")).isEmpty();
     }

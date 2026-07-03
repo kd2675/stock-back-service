@@ -12,7 +12,6 @@ public record OrderBookInstrumentRequest(
         String market,
         @NotNull @Positive BigDecimal initialPrice,
         @NotNull @Positive Long issuedShares,
-        @Positive BigDecimal tickSize,
         @Positive BigDecimal priceLimitRate,
         ListingAutoAccountRequest listingAutoAccount
 ) {

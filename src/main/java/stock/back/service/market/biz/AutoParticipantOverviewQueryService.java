@@ -7,6 +7,7 @@ import org.springframework.transaction.annotation.Transactional;
 import stock.back.service.market.vo.AutoParticipantHoldingGroupResponse;
 import stock.back.service.market.vo.AutoParticipantHoldingResponse;
 import stock.back.service.market.vo.AutoParticipantOverviewResponse;
+import stock.back.service.market.vo.AutoParticipantActivityScope;
 import stock.back.service.market.vo.AutoParticipantProfileOverviewResponse;
 import stock.back.service.market.vo.AutoParticipantResponse;
 
@@ -43,7 +44,18 @@ public class AutoParticipantOverviewQueryService {
     }
 
     public List<AutoParticipantProfileOverviewResponse> getAutoParticipantProfileOverviews() {
-        return autoParticipantProfileOverviewQueryService.getAutoParticipantProfileOverviews();
+        return getAutoParticipantProfileOverviews(AutoParticipantActivityScope.RECENT_SIMULATION_DAY);
+    }
+
+    public List<AutoParticipantProfileOverviewResponse> getAutoParticipantProfileOverviews(AutoParticipantActivityScope activityScope) {
+        return getAutoParticipantProfileOverviews(activityScope, List.of());
+    }
+
+    public List<AutoParticipantProfileOverviewResponse> getAutoParticipantProfileOverviews(
+            AutoParticipantActivityScope activityScope,
+            List<String> profileTypes
+    ) {
+        return autoParticipantProfileOverviewQueryService.getAutoParticipantProfileOverviews(activityScope, profileTypes);
     }
 
     @Transactional(readOnly = true)
@@ -52,6 +64,15 @@ public class AutoParticipantOverviewQueryService {
     }
 
     public List<AutoParticipantOverviewResponse> getAutoParticipantOverviews(boolean includeHoldings, List<String> userKeys) {
+        return getAutoParticipantOverviews(includeHoldings, userKeys, AutoParticipantActivityScope.RECENT_SIMULATION_DAY);
+    }
+
+    public List<AutoParticipantOverviewResponse> getAutoParticipantOverviews(
+            boolean includeHoldings,
+            List<String> userKeys,
+            AutoParticipantActivityScope activityScope
+    ) {
+        AutoParticipantAggregateQuerySupport.ActivityWindow activityWindow = activityWindow(activityScope);
         LocalDateTime todayStart = simulationClockService.currentMarketDayStart();
         List<String> normalizedUserKeys = AutoParticipantQuerySupport.normalizeUserKeys(userKeys);
         List<ParticipantOverviewAccumulator> participants = findParticipantOverviewSeeds(normalizedUserKeys);
@@ -68,6 +89,7 @@ public class AutoParticipantOverviewQueryService {
             aggregateQuerySupport.applyAccountAggregates(
                     participantByAccountId.keySet().stream().toList(),
                     todayStart,
+                    activityWindow,
                     participantByAccountId
             );
         }
@@ -90,6 +112,14 @@ public class AutoParticipantOverviewQueryService {
                 .distinct()
                 .toList());
         return AutoParticipantOverviewResponseMapper.withHoldingsByAccountId(overviews, holdingsByAccountId);
+    }
+
+    private AutoParticipantAggregateQuerySupport.ActivityWindow activityWindow(AutoParticipantActivityScope activityScope) {
+        LocalDateTime activityEnd = simulationClockService.currentMarketDateTime();
+        if (activityScope == AutoParticipantActivityScope.ALL) {
+            return AutoParticipantAggregateQuerySupport.ActivityWindow.allUntil(activityEnd);
+        }
+        return AutoParticipantAggregateQuerySupport.ActivityWindow.recent(activityEnd.minusDays(1), activityEnd);
     }
 
     @Transactional(readOnly = true)

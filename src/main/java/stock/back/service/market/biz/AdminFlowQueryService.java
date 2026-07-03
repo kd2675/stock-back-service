@@ -7,6 +7,7 @@ import org.springframework.transaction.annotation.Transactional;
 import stock.back.service.market.vo.AdminCashFlowPageResponse;
 import stock.back.service.market.vo.AdminCorporateActionFlowSummaryResponse;
 import stock.back.service.market.vo.AdminFlowOverviewResponse;
+import stock.back.service.market.vo.AdminFundFlowScope;
 import stock.back.service.market.vo.AdminFundFlowSummaryResponse;
 import stock.back.service.market.vo.AdminOrderFlowSummaryResponse;
 import stock.back.service.market.vo.AdminRecentCashFlowResponse;
@@ -18,7 +19,21 @@ import java.util.List;
 @Service
 public class AdminFlowQueryService {
 
-    static final String FUND_FLOW_SUMMARY_SQL = """
+    static final String FUND_FLOW_SUMMARY_SQL = fundFlowSummarySql("", "");
+
+    static final String FUND_FLOW_SUMMARY_RECENT_SIMULATION_DAY_SQL = fundFlowSummarySql(
+            """
+             where f.created_at >= ?
+               and f.created_at <= ?
+            """,
+            """
+             where e.executed_at >= ?
+               and e.executed_at <= ?
+            """
+    );
+
+    private static String fundFlowSummarySql(String cashFlowDatePredicate, String executionDatePredicate) {
+        return """
             with active_accounts as (
                 select id, cash_balance
                   from stock_account
@@ -62,6 +77,7 @@ public class AdminFlowQueryService {
                      sum(case when f.flow_type = 'DEPOSIT' and f.reason = 'DIVIDEND_PAYMENT' then f.amount else 0 end) as dividend_income_amount
                 from stock_account_cash_flow f
                 join active_accounts aa on aa.id = f.account_id
+            %s
             ) f
             cross join (
               select sum(case when e.side = 'BUY' then e.net_amount else 0 end) as buy_net_amount,
@@ -72,8 +88,10 @@ public class AdminFlowQueryService {
                      count(*) as execution_count
                 from stock_execution e
                 join active_accounts aa on aa.id = e.account_id
+            %s
             ) e
-            """;
+            """.formatted(cashFlowDatePredicate, executionDatePredicate);
+    }
 
     static final String CORPORATE_ACTION_FLOW_SUMMARY_SQL = """
             select
@@ -179,12 +197,22 @@ public class AdminFlowQueryService {
 
     @Transactional(readOnly = true)
     public AdminFlowOverviewResponse getAdminFlowOverview(int symbolFlowLimit, boolean includeFundFlow, boolean includeSymbolFlows) {
+        return getAdminFlowOverview(symbolFlowLimit, includeFundFlow, includeSymbolFlows, AdminFundFlowScope.RECENT_SIMULATION_DAY);
+    }
+
+    @Transactional(readOnly = true)
+    public AdminFlowOverviewResponse getAdminFlowOverview(
+            int symbolFlowLimit,
+            boolean includeFundFlow,
+            boolean includeSymbolFlows,
+            AdminFundFlowScope fundFlowScope
+    ) {
         LocalDateTime todayStart = todayStart();
         AdminSymbolFlowListResponse symbolFlowList = includeSymbolFlows
                 ? getAdminSymbolFlows(symbolFlowLimit)
                 : new AdminSymbolFlowListResponse(adminSymbolFlowQueryService.countSymbols(), List.of());
         return new AdminFlowOverviewResponse(
-                includeFundFlow ? loadAdminFundFlowSummary() : null,
+                includeFundFlow ? loadAdminFundFlowSummary(normalizeFundFlowScope(fundFlowScope)) : null,
                 loadAdminOrderFlowSummary(todayStart),
                 loadAdminCorporateActionFlowSummary(todayStart),
                 symbolFlowList.totalCount(),
@@ -196,7 +224,12 @@ public class AdminFlowQueryService {
 
     @Transactional(readOnly = true)
     public AdminFundFlowSummaryResponse getAdminFundFlowSummary() {
-        return loadAdminFundFlowSummary();
+        return getAdminFundFlowSummary(AdminFundFlowScope.RECENT_SIMULATION_DAY);
+    }
+
+    @Transactional(readOnly = true)
+    public AdminFundFlowSummaryResponse getAdminFundFlowSummary(AdminFundFlowScope scope) {
+        return loadAdminFundFlowSummary(normalizeFundFlowScope(scope));
     }
 
     @Transactional(readOnly = true)
@@ -229,8 +262,19 @@ public class AdminFlowQueryService {
         );
     }
 
-    private AdminFundFlowSummaryResponse loadAdminFundFlowSummary() {
-        return jdbcClient.sql(FUND_FLOW_SUMMARY_SQL)
+    private AdminFundFlowSummaryResponse loadAdminFundFlowSummary(AdminFundFlowScope scope) {
+        if (scope == AdminFundFlowScope.ALL) {
+            return jdbcClient.sql(FUND_FLOW_SUMMARY_SQL)
+                    .query((rs, rowNum) -> AdminFlowResponseMapper.toFundFlowSummary(rs))
+                    .single();
+        }
+        LocalDateTime rangeStart = todayStart();
+        LocalDateTime rangeEnd = simulationClockService.currentMarketDateTime();
+        return jdbcClient.sql(FUND_FLOW_SUMMARY_RECENT_SIMULATION_DAY_SQL)
+                .param(rangeStart)
+                .param(rangeEnd)
+                .param(rangeStart)
+                .param(rangeEnd)
                 .query((rs, rowNum) -> AdminFlowResponseMapper.toFundFlowSummary(rs))
                 .single();
     }
@@ -257,5 +301,9 @@ public class AdminFlowQueryService {
 
     private LocalDateTime todayStart() {
         return simulationClockService.currentMarketDayStart();
+    }
+
+    private AdminFundFlowScope normalizeFundFlowScope(AdminFundFlowScope scope) {
+        return scope == null ? AdminFundFlowScope.RECENT_SIMULATION_DAY : scope;
     }
 }

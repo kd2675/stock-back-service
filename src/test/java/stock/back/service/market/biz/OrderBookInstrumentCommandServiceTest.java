@@ -98,7 +98,6 @@ class OrderBookInstrumentCommandServiceTest {
                         "",
                         new BigDecimal("70000.00"),
                         100000L,
-                        new BigDecimal("5.00"),
                         new BigDecimal("30.00"),
                         null
                 )
@@ -110,7 +109,7 @@ class OrderBookInstrumentCommandServiceTest {
         verify(stockListingAutoAccountConfigRepository).save(listingConfigCaptor.capture());
         assertThat(response.symbol()).isEqualTo("ZQ001");
         assertThat(response.issuedShares()).isEqualTo(100000L);
-        assertThat(response.tickSize()).isEqualByComparingTo(new BigDecimal("5.00"));
+        assertThat(response.tickSize()).isEqualByComparingTo(new BigDecimal("100.00"));
         assertThat(actionCaptor.getValue().getActionType()).isEqualTo(StockCorporateActionType.INITIAL_ISSUE);
         assertThat(actionCaptor.getValue().getStatus()).isEqualTo(StockCorporateActionStatus.LISTED);
         assertThat(listingConfigCaptor.getValue().getUserKey()).isEqualTo("stock-listing-zq001");
@@ -147,7 +146,6 @@ class OrderBookInstrumentCommandServiceTest {
                         "ORDERBOOK",
                         new BigDecimal("70000.00"),
                         100000L,
-                        null,
                         null,
                         null
                 )

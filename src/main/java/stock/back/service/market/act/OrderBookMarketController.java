@@ -6,6 +6,7 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -21,6 +22,7 @@ import stock.back.service.market.vo.AutoMarketStatusResponse;
 import stock.back.service.market.vo.OrderBookCandleResponse;
 import stock.back.service.market.vo.OrderBookInstrumentRequest;
 import stock.back.service.market.vo.OrderBookInstrumentResponse;
+import stock.back.service.market.vo.OrderBookInstrumentTradingRulesRequest;
 import stock.back.service.market.vo.OrderBookMarketStatusResponse;
 import stock.back.service.market.vo.OrderBookRecentExecutionResponse;
 import stock.back.service.market.vo.OrderBookResponse;
@@ -52,6 +54,15 @@ public class OrderBookMarketController {
             @Valid @RequestBody OrderBookInstrumentRequest request
     ) {
         return ResponseDataDTO.of(orderBookInstrumentCommandService.createOrderBookInstrument(request));
+    }
+
+    @PatchMapping("/order-book-instruments/{symbol}/trading-rules")
+    @RequirePrincipalRole(anyOf = {UserRole.ADMIN})
+    public ResponseDataDTO<OrderBookInstrumentResponse> updateOrderBookInstrumentTradingRules(
+            @PathVariable String symbol,
+            @Valid @RequestBody OrderBookInstrumentTradingRulesRequest request
+    ) {
+        return ResponseDataDTO.of(orderBookInstrumentCommandService.updateTradingRules(symbol, request));
     }
 
     @GetMapping("/order-books/{symbol}")

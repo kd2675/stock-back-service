@@ -143,7 +143,7 @@ public class MarketCatalogQueryService {
                 instrument.getInitialPrice(),
                 instrument.getIssuedShares(),
                 instrument.getTradableShares(),
-                instrument.getTickSize(),
+                KoreanStockTickSizePolicy.tickSizeForCurrentPrice(instrument.getMarket(), currentPrice),
                 instrument.getPriceLimitRate(),
                 priceLimitBase,
                 currentPrice,

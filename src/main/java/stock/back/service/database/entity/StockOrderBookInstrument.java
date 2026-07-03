@@ -105,6 +105,11 @@ public class StockOrderBookInstrument {
         this.updatedAt = LocalDateTime.now();
     }
 
+    public void updatePriceLimitRate(BigDecimal priceLimitRate) {
+        this.priceLimitRate = priceLimitRate;
+        this.updatedAt = LocalDateTime.now();
+    }
+
     public void delist() {
         this.enabled = false;
         this.updatedAt = LocalDateTime.now();

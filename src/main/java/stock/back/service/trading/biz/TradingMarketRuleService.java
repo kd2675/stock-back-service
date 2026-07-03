@@ -17,6 +17,7 @@ import stock.back.service.database.repository.StockOrderBookMarketConfigReposito
 import stock.back.service.database.repository.StockPriceRepository;
 import stock.back.service.database.repository.StockVirtualMarketConfigRepository;
 import stock.back.service.market.biz.SimulationMarketSessionService;
+import stock.back.service.market.biz.KoreanStockTickSizePolicy;
 import stock.back.service.market.cache.CachedStockPrice;
 import stock.back.service.market.cache.StockPriceCacheService;
 import stock.back.service.trading.vo.OrderRequest;
@@ -29,7 +30,6 @@ import java.util.Optional;
 @RequiredArgsConstructor
 public class TradingMarketRuleService {
 
-    private static final BigDecimal DEFAULT_TICK_SIZE = BigDecimal.ONE;
     private static final BigDecimal DEFAULT_PRICE_LIMIT_RATE = BigDecimal.valueOf(30);
     private static final BigDecimal ONE_HUNDRED = BigDecimal.valueOf(100);
 
@@ -75,16 +75,17 @@ public class TradingMarketRuleService {
             return;
         }
         MarketPriceRule rule = resolveMarketPriceRule(symbol, marketType);
-        if (limitPrice.remainder(rule.tickSize()).compareTo(BigDecimal.ZERO) != 0) {
-            throw StockException.badRequest("Limit price must match tick size " + rule.tickSize().stripTrailingZeros().toPlainString());
+        BigDecimal tickSize = KoreanStockTickSizePolicy.tickSizeForQuotePrice(rule.market(), limitPrice);
+        if (!KoreanStockTickSizePolicy.isValidQuotePrice(rule.market(), limitPrice)) {
+            throw StockException.badRequest("Limit price must match tick size " + tickSize.stripTrailingZeros().toPlainString());
         }
 
-        BigDecimal lowerLimit = rule.basePrice()
+        BigDecimal lowerLimit = KoreanStockTickSizePolicy.ceilingValidQuotePrice(rule.market(), rule.basePrice()
                 .multiply(ONE_HUNDRED.subtract(rule.priceLimitRate()))
-                .divide(ONE_HUNDRED, 2, RoundingMode.HALF_UP);
-        BigDecimal upperLimit = rule.basePrice()
+                .divide(ONE_HUNDRED, 6, RoundingMode.HALF_UP));
+        BigDecimal upperLimit = KoreanStockTickSizePolicy.floorValidQuotePrice(rule.market(), rule.basePrice()
                 .multiply(ONE_HUNDRED.add(rule.priceLimitRate()))
-                .divide(ONE_HUNDRED, 2, RoundingMode.HALF_UP);
+                .divide(ONE_HUNDRED, 6, RoundingMode.HALF_UP));
         if (limitPrice.compareTo(lowerLimit) < 0 || limitPrice.compareTo(upperLimit) > 0) {
             throw StockException.badRequest(
                     "Limit price must be between " + lowerLimit.toPlainString() + " and " + upperLimit.toPlainString()
@@ -108,16 +109,15 @@ public class TradingMarketRuleService {
         if (marketType != MarketType.ORDER_BOOK) {
             StockPrice price = stockPriceRepository.findById(symbol)
                     .orElseThrow(() -> StockException.notFound("Price not found: " + symbol));
-            return new MarketPriceRule(price.getPreviousClose(), DEFAULT_TICK_SIZE, DEFAULT_PRICE_LIMIT_RATE);
+            return new MarketPriceRule(price.getPreviousClose(), "VIRTUAL_PRICE", DEFAULT_PRICE_LIMIT_RATE);
         }
         StockOrderBookInstrument instrument = stockOrderBookInstrumentRepository.findById(symbol)
                 .orElseThrow(() -> StockException.notFound("Unknown stock symbol: " + symbol));
         BigDecimal basePrice = stockPriceRepository.findById(symbol)
                 .map(StockPrice::getPreviousClose)
                 .orElse(instrument.getInitialPrice());
-        BigDecimal tickSize = instrument.getTickSize() == null ? DEFAULT_TICK_SIZE : instrument.getTickSize();
         BigDecimal priceLimitRate = instrument.getPriceLimitRate() == null ? DEFAULT_PRICE_LIMIT_RATE : instrument.getPriceLimitRate();
-        return new MarketPriceRule(basePrice, tickSize, priceLimitRate);
+        return new MarketPriceRule(basePrice, instrument.getMarket(), priceLimitRate);
     }
 
     private BigDecimal resolveReferencePrice(String symbol) {
@@ -137,7 +137,7 @@ public class TradingMarketRuleService {
 
     private record MarketPriceRule(
             BigDecimal basePrice,
-            BigDecimal tickSize,
+            String market,
             BigDecimal priceLimitRate
     ) {
     }

@@ -21,6 +21,7 @@ import stock.back.service.database.repository.StockPriceRepository;
 import stock.back.service.market.vo.ListingAutoAccountRequest;
 import stock.back.service.market.vo.OrderBookInstrumentRequest;
 import stock.back.service.market.vo.OrderBookInstrumentResponse;
+import stock.back.service.market.vo.OrderBookInstrumentTradingRulesRequest;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -87,7 +88,7 @@ public class OrderBookInstrumentCommandService {
             throw StockException.conflict("Order book symbol already exists: " + symbol);
         }
 
-        BigDecimal tickSize = request.tickSize() == null ? BigDecimal.ONE : request.tickSize();
+        BigDecimal tickSize = KoreanStockTickSizePolicy.tickSizeForCurrentPrice(market, request.initialPrice());
         BigDecimal priceLimitRate = request.priceLimitRate() == null ? BigDecimal.valueOf(30) : request.priceLimitRate();
         StockOrderBookInstrument instrument = stockOrderBookInstrumentRepository.save(
                 StockOrderBookInstrument.listed(symbol, name, market, request.initialPrice(), request.issuedShares(), tickSize, priceLimitRate)
@@ -100,6 +101,20 @@ public class OrderBookInstrumentCommandService {
         stockAutoMarketConfigRepository.save(StockAutoMarketConfig.defaults(symbol));
         stockPriceRepository.save(StockPrice.initial(symbol, request.initialPrice(), now));
         seedListingAutoAccount(symbol, name, request.initialPrice(), request.issuedShares(), request.listingAutoAccount(), now);
+        return OrderBookInstrumentResponseMapper.toResponse(instrument, findPrice(instrument));
+    }
+
+    @Transactional
+    public OrderBookInstrumentResponse updateTradingRules(String symbol, OrderBookInstrumentTradingRulesRequest request) {
+        String normalizedSymbol = MarketTextNormalizer.symbol(symbol);
+        if (normalizedSymbol.isBlank()) {
+            throw StockException.badRequest("Symbol is required");
+        }
+        BigDecimal priceLimitRate = request == null ? null : request.priceLimitRate();
+        validatePriceLimitRate(priceLimitRate);
+        StockOrderBookInstrument instrument = stockOrderBookInstrumentRepository.findById(normalizedSymbol)
+                .orElseThrow(() -> StockException.notFound("Unknown order book symbol: " + normalizedSymbol));
+        instrument.updatePriceLimitRate(priceLimitRate);
         return OrderBookInstrumentResponseMapper.toResponse(instrument, findPrice(instrument));
     }
 
@@ -119,12 +134,11 @@ public class OrderBookInstrumentCommandService {
         if (request.issuedShares() == null || request.issuedShares() <= 0) {
             throw StockException.badRequest("Issued shares must be positive");
         }
-        BigDecimal tickSize = request.tickSize() == null ? BigDecimal.ONE : request.tickSize();
-        BigDecimal priceLimitRate = request.priceLimitRate() == null ? BigDecimal.valueOf(30) : request.priceLimitRate();
-        if (tickSize.compareTo(BigDecimal.ZERO) <= 0) {
-            throw StockException.badRequest("Tick size must be positive");
-        }
-        if (priceLimitRate.compareTo(BigDecimal.ZERO) <= 0 || priceLimitRate.compareTo(BigDecimal.valueOf(100)) > 0) {
+        validatePriceLimitRate(request.priceLimitRate() == null ? BigDecimal.valueOf(30) : request.priceLimitRate());
+    }
+
+    private void validatePriceLimitRate(BigDecimal priceLimitRate) {
+        if (priceLimitRate == null || priceLimitRate.compareTo(BigDecimal.ZERO) <= 0 || priceLimitRate.compareTo(BigDecimal.valueOf(100)) > 0) {
             throw StockException.badRequest("Price limit rate must be greater than 0 and 100 or less");
         }
     }

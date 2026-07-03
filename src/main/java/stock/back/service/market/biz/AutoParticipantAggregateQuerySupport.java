@@ -1,5 +1,6 @@
 package stock.back.service.market.biz;
 
+import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.dao.TransientDataAccessResourceException;
 import org.springframework.jdbc.core.simple.JdbcClient;
 
@@ -32,6 +33,18 @@ final class AutoParticipantAggregateQuerySupport {
                       from stock_order
                      where account_id in (:accountIds)
                        and market_type = 'ORDER_BOOK'
+                       and created_at >= :activityStart
+                       and created_at <= :activityEnd
+                     group by account_id
+                    """;
+
+    static final String LAST_ORDER_AGGREGATE_ALL_SQL = """
+                    select account_id,
+                           max(created_at) as last_order_at
+                      from stock_order
+                     where account_id in (:accountIds)
+                       and market_type = 'ORDER_BOOK'
+                       and created_at <= :activityEnd
                      group by account_id
                     """;
 
@@ -54,6 +67,18 @@ final class AutoParticipantAggregateQuerySupport {
                       from stock_execution
                      where account_id in (:accountIds)
                        and source = 'INTERNAL_ORDER_BOOK'
+                       and executed_at >= :activityStart
+                       and executed_at <= :activityEnd
+                     group by account_id
+                    """;
+
+    static final String LAST_EXECUTION_AGGREGATE_ALL_SQL = """
+                    select account_id,
+                           max(executed_at) as last_execution_at
+                      from stock_execution
+                     where account_id in (:accountIds)
+                       and source = 'INTERNAL_ORDER_BOOK'
+                       and executed_at <= :activityEnd
                      group by account_id
                     """;
 
@@ -66,15 +91,16 @@ final class AutoParticipantAggregateQuerySupport {
     <T extends AutoParticipantAggregateTarget> void applyAccountAggregates(
             List<Long> accountIds,
             LocalDateTime todayStart,
+            ActivityWindow activityWindow,
             Map<Long, T> targetByAccountId
     ) {
         if (accountIds.isEmpty()) {
             return;
         }
-        applyOrderAggregates(accountIds, targetByAccountId);
+        applyOrderAggregates(accountIds, activityWindow, targetByAccountId);
         applyHoldings(accountIds, targetByAccountId);
         applyNetCashFlows(accountIds, targetByAccountId);
-        applyExecutionAggregates(accountIds, todayStart, targetByAccountId);
+        applyExecutionAggregates(accountIds, todayStart, activityWindow, targetByAccountId);
     }
 
     <T extends AutoParticipantAggregateTarget> void applyStrategyAggregates(
@@ -106,10 +132,11 @@ final class AutoParticipantAggregateQuerySupport {
 
     private <T extends AutoParticipantAggregateTarget> void applyOrderAggregates(
             List<Long> accountIds,
+            ActivityWindow activityWindow,
             Map<Long, T> targetByAccountId
     ) {
         applyOpenOrderAggregates(accountIds, targetByAccountId);
-        applyLastOrderAggregates(accountIds, targetByAccountId);
+        applyLastOrderAggregates(accountIds, activityWindow, targetByAccountId);
     }
 
     private <T extends AutoParticipantAggregateTarget> void applyOpenOrderAggregates(
@@ -135,10 +162,17 @@ final class AutoParticipantAggregateQuerySupport {
 
     private <T extends AutoParticipantAggregateTarget> void applyLastOrderAggregates(
             List<Long> accountIds,
+            ActivityWindow activityWindow,
             Map<Long, T> targetByAccountId
     ) {
-        List<LastOrderAggregateRow> rows = queryListWithTransientConnectionRetry(() -> jdbcClient.sql(LAST_ORDER_AGGREGATE_SQL)
+        var statement = jdbcClient.sql(activityWindow.all() ? LAST_ORDER_AGGREGATE_ALL_SQL : LAST_ORDER_AGGREGATE_SQL)
                 .param("accountIds", accountIds)
+                .param("activityEnd", activityWindow.end());
+        if (!activityWindow.all()) {
+            statement = statement.param("activityStart", activityWindow.start());
+        }
+        var query = statement;
+        List<LastOrderAggregateRow> rows = queryListWithConnectionRetry(() -> query
                 .query((rs, rowNum) -> new LastOrderAggregateRow(
                         rs.getLong("account_id"),
                         rs.getObject("last_order_at", LocalDateTime.class)
@@ -220,10 +254,11 @@ final class AutoParticipantAggregateQuerySupport {
     private <T extends AutoParticipantAggregateTarget> void applyExecutionAggregates(
             List<Long> accountIds,
             LocalDateTime todayStart,
+            ActivityWindow activityWindow,
             Map<Long, T> targetByAccountId
     ) {
         applyTodayExecutionAggregates(accountIds, todayStart, targetByAccountId);
-        applyLastExecutionAggregates(accountIds, targetByAccountId);
+        applyLastExecutionAggregates(accountIds, activityWindow, targetByAccountId);
     }
 
     private <T extends AutoParticipantAggregateTarget> void applyTodayExecutionAggregates(
@@ -249,10 +284,16 @@ final class AutoParticipantAggregateQuerySupport {
 
     private <T extends AutoParticipantAggregateTarget> void applyLastExecutionAggregates(
             List<Long> accountIds,
+            ActivityWindow activityWindow,
             Map<Long, T> targetByAccountId
     ) {
-        jdbcClient.sql(LAST_EXECUTION_AGGREGATE_SQL)
+        var statement = jdbcClient.sql(activityWindow.all() ? LAST_EXECUTION_AGGREGATE_ALL_SQL : LAST_EXECUTION_AGGREGATE_SQL)
                 .param("accountIds", accountIds)
+                .param("activityEnd", activityWindow.end());
+        if (!activityWindow.all()) {
+            statement = statement.param("activityStart", activityWindow.start());
+        }
+        statement
                 .query(rs -> {
                     T target = targetByAccountId.get(rs.getLong("account_id"));
                     if (target != null) {
@@ -268,15 +309,26 @@ final class AutoParticipantAggregateQuerySupport {
         return nextValue;
     }
 
-    private <T> List<T> queryListWithTransientConnectionRetry(Supplier<List<T>> querySupplier) {
+    private <T> List<T> queryListWithConnectionRetry(Supplier<List<T>> querySupplier) {
         try {
             return querySupplier.get();
-        } catch (TransientDataAccessResourceException firstFailure) {
+        } catch (DataAccessResourceFailureException | TransientDataAccessResourceException firstFailure) {
             return querySupplier.get();
         }
     }
 
     private record LastOrderAggregateRow(long accountId, LocalDateTime lastOrderAt) {
+    }
+
+    record ActivityWindow(LocalDateTime start, LocalDateTime end, boolean all) {
+
+        static ActivityWindow recent(LocalDateTime start, LocalDateTime end) {
+            return new ActivityWindow(start, end, false);
+        }
+
+        static ActivityWindow allUntil(LocalDateTime end) {
+            return new ActivityWindow(null, end, true);
+        }
     }
 
 }

@@ -31,6 +31,7 @@ import stock.back.service.market.vo.ListingAutoAccountResponse;
 import stock.back.service.market.vo.MarketStatusUpdateRequest;
 import stock.back.service.market.vo.OrderBookInstrumentRequest;
 import stock.back.service.market.vo.OrderBookInstrumentResponse;
+import stock.back.service.market.vo.OrderBookInstrumentTradingRulesRequest;
 import stock.back.service.market.vo.OrderBookMarketStatusResponse;
 import stock.back.service.market.vo.OrderBookResponse;
 import stock.back.service.market.vo.OrderBookCandleResponse;
@@ -120,6 +121,11 @@ public class MarketServiceTestFacade {
     @Transactional
     public OrderBookInstrumentResponse createOrderBookInstrument(OrderBookInstrumentRequest request) {
         return orderBookInstrumentCommandService.createOrderBookInstrument(request);
+    }
+
+    @Transactional
+    public OrderBookInstrumentResponse updateOrderBookInstrumentTradingRules(String symbol, OrderBookInstrumentTradingRulesRequest request) {
+        return orderBookInstrumentCommandService.updateTradingRules(symbol, request);
     }
 
     @Transactional
