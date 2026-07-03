@@ -41,8 +41,3 @@ database:
           idle-timeout: 240000
           max-lifetime: 300000
           keepalive-time: 120000
-
-stock:
-  batch-client:
-    base-url: ${STOCK_BATCH_API_BASE_URL}
-    internal-token: ${STOCK_BATCH_INTERNAL_TOKEN}

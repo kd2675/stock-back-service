@@ -1,11 +1,13 @@
 package stock.back.service.market.biz;
 
+import org.springframework.dao.TransientDataAccessResourceException;
 import org.springframework.jdbc.core.simple.JdbcClient;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Supplier;
 
 final class AutoParticipantAggregateQuerySupport {
 
@@ -135,14 +137,19 @@ final class AutoParticipantAggregateQuerySupport {
             List<Long> accountIds,
             Map<Long, T> targetByAccountId
     ) {
-        jdbcClient.sql(LAST_ORDER_AGGREGATE_SQL)
+        List<LastOrderAggregateRow> rows = queryListWithTransientConnectionRetry(() -> jdbcClient.sql(LAST_ORDER_AGGREGATE_SQL)
                 .param("accountIds", accountIds)
-                .query(rs -> {
-                    T target = targetByAccountId.get(rs.getLong("account_id"));
-                    if (target != null) {
-                        target.recordLastOrderAt(rs.getObject("last_order_at", LocalDateTime.class));
-                    }
-                });
+                .query((rs, rowNum) -> new LastOrderAggregateRow(
+                        rs.getLong("account_id"),
+                        rs.getObject("last_order_at", LocalDateTime.class)
+                ))
+                .list());
+        for (LastOrderAggregateRow row : rows) {
+            T target = targetByAccountId.get(row.accountId());
+            if (target != null) {
+                target.recordLastOrderAt(row.lastOrderAt());
+            }
+        }
     }
 
     private <T extends AutoParticipantAggregateTarget> void applyHoldings(
@@ -259,6 +266,17 @@ final class AutoParticipantAggregateQuerySupport {
             return currentValue;
         }
         return nextValue;
+    }
+
+    private <T> List<T> queryListWithTransientConnectionRetry(Supplier<List<T>> querySupplier) {
+        try {
+            return querySupplier.get();
+        } catch (TransientDataAccessResourceException firstFailure) {
+            return querySupplier.get();
+        }
+    }
+
+    private record LastOrderAggregateRow(long accountId, LocalDateTime lastOrderAt) {
     }
 
 }

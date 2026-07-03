@@ -4,7 +4,6 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 import stock.back.service.market.vo.AutoParticipantProfileOverviewResponse;
 import stock.back.service.market.vo.AutoParticipantProfileSymbolHoldingResponse;
 
@@ -32,7 +31,6 @@ public class AutoParticipantProfileOverviewQueryService {
         this.simulationClockService = simulationClockService;
     }
 
-    @Transactional(readOnly = true)
     public List<AutoParticipantProfileOverviewResponse> getAutoParticipantProfileOverviews() {
         LocalDateTime todayStart = simulationClockService.currentMarketDayStart();
         List<ParticipantRow> participants = findParticipants();

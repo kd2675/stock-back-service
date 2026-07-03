@@ -169,6 +169,8 @@ class MarketServiceTest {
         lenient().when(simulationClockService.currentMarketDayStart()).thenReturn(SimulationDayClock.currentDayStart());
         lenient().when(simulationClockService.currentMarketDateTime()).thenAnswer(invocation -> LocalDateTime.now());
         lenient().when(simulationClockService.currentSnapshot()).thenAnswer(invocation -> currentSimulationClockSnapshot());
+        SimulationMarketSessionService simulationMarketSessionService =
+                new SimulationMarketSessionService(simulationClockService, "00:00", "23:59");
         AutoMarketStatusDataLoader autoMarketStatusDataLoader = new AutoMarketStatusDataLoader(
                 jdbcTemplate,
                 stockAutoParticipantSymbolConfigRepository,
@@ -231,7 +233,8 @@ class MarketServiceTest {
                         stockOrderBookMarketConfigRepository,
                         stockOrderRepository,
                         stockExecutionMarketViewRepository,
-                        simulationClockService
+                        simulationClockService,
+                        simulationMarketSessionService
                 ),
                 new CorporateActionCommandService(
                         stockOrderBookInstrumentRepository,
@@ -267,7 +270,8 @@ class MarketServiceTest {
                         stockExecutionMarketViewRepository,
                         autoMarketStatusDataLoader,
                         autoMarketSummaryStatusQuery,
-                        simulationClockService
+                        simulationClockService,
+                        simulationMarketSessionService
                 ),
                 new OrderBookMarketStatusQueryService(
                         jdbcTemplate,
@@ -275,7 +279,8 @@ class MarketServiceTest {
                         stockOrderBookInstrumentRepository,
                         stockOrderRepository,
                         stockExecutionMarketViewRepository,
-                        simulationClockService
+                        simulationClockService,
+                        simulationMarketSessionService
                 ),
                 new OrderBookQueryService(jdbcTemplate, stockOrderBookInstrumentRepository, stockOrderRepository, simulationClockService),
                 new OrderBookCandleQueryService(jdbcTemplate, stockOrderBookInstrumentRepository, stockPriceRepository, simulationClockService)

@@ -16,6 +16,7 @@ import stock.back.service.database.repository.StockOrderBookInstrumentRepository
 import stock.back.service.database.repository.StockOrderBookMarketConfigRepository;
 import stock.back.service.database.repository.StockPriceRepository;
 import stock.back.service.database.repository.StockVirtualMarketConfigRepository;
+import stock.back.service.market.biz.SimulationMarketSessionService;
 import stock.back.service.market.cache.CachedStockPrice;
 import stock.back.service.market.cache.StockPriceCacheService;
 import stock.back.service.trading.vo.OrderRequest;
@@ -38,6 +39,7 @@ public class TradingMarketRuleService {
     private final StockOrderBookMarketConfigRepository stockOrderBookMarketConfigRepository;
     private final StockPriceRepository stockPriceRepository;
     private final StockPriceCacheService stockPriceCacheService;
+    private final SimulationMarketSessionService simulationMarketSessionService;
 
     void validateSymbolExists(String symbol, MarketType marketType) {
         boolean exists = marketType == MarketType.ORDER_BOOK
@@ -49,6 +51,9 @@ public class TradingMarketRuleService {
     }
 
     void validateMarketOpen(String symbol, MarketType marketType) {
+        if (!simulationMarketSessionService.isRegularSession()) {
+            throw StockException.conflict("Market is not in regular trading session: " + symbol);
+        }
         if (marketType == MarketType.ORDER_BOOK) {
             StockOrderBookMarketConfig config = stockOrderBookMarketConfigRepository.findById(symbol)
                     .orElseThrow(() -> StockException.conflict("Market is not open: " + symbol));

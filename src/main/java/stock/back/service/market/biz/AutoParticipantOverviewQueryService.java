@@ -42,7 +42,6 @@ public class AutoParticipantOverviewQueryService {
         this.simulationClockService = simulationClockService;
     }
 
-    @Transactional(readOnly = true)
     public List<AutoParticipantProfileOverviewResponse> getAutoParticipantProfileOverviews() {
         return autoParticipantProfileOverviewQueryService.getAutoParticipantProfileOverviews();
     }
@@ -52,7 +51,6 @@ public class AutoParticipantOverviewQueryService {
         return autoMarketStatusDataLoader.loadAutoParticipantStatusResponses();
     }
 
-    @Transactional(readOnly = true)
     public List<AutoParticipantOverviewResponse> getAutoParticipantOverviews(boolean includeHoldings, List<String> userKeys) {
         LocalDateTime todayStart = simulationClockService.currentMarketDayStart();
         List<String> normalizedUserKeys = AutoParticipantQuerySupport.normalizeUserKeys(userKeys);

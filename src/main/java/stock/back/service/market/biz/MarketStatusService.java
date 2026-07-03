@@ -29,6 +29,7 @@ public class MarketStatusService {
     private final StockOrderRepository stockOrderRepository;
     private final StockExecutionMarketViewRepository stockExecutionMarketViewRepository;
     private final SimulationClockService simulationClockService;
+    private final SimulationMarketSessionService simulationMarketSessionService;
 
     @Transactional
     public SymbolMarketConfigResponse updateMarketStatus(MarketType marketType, String symbol, MarketStatusUpdateRequest request) {
@@ -67,7 +68,7 @@ public class MarketStatusService {
                 ExecutionSource.VIRTUAL_MARKET_PRICE
         );
         return new VirtualMarketStatusResponse(
-                configs.stream().anyMatch(this::isConfigOpen),
+                simulationMarketSessionService.isRegularSession() && configs.stream().anyMatch(this::isConfigOpen),
                 openOrderCount,
                 todayExecutionCount,
                 configs

@@ -98,11 +98,10 @@ scripts/stock-smoke.sh
 - 전체 stock 시뮬레이션 데이터를 지울 때는 `src/main/resources/db/maintenance/stock_clear_data.sql`을 사용합니다. 이 파일은 자동참여자, 계좌, 종목, 자동장 설정까지 모두 지우는 전체 초기화용입니다.
 - 자동참여자 등록, 프로필, 참여자별 전략, 종목, 자동장 설정은 남기고 실제시간으로 쌓인 주문/체결/차트/원장 히스토리만 새로 시작하려면 `src/main/resources/db/maintenance/stock_clear_runtime_history_keep_participants.sql`을 사용합니다. 이 파일은 계좌 식별 row는 보존하되 현금과 일반 보유를 0으로 리셋하고, 시뮬레이션 clock의 기준일과 1일 길이는 유지한 채 누적 시간을 0으로 되돌립니다. enabled 주문장 종목 가격은 초기 상장가와 시뮬레이션 기준일 00:00으로 되돌린 뒤, 자동장 batch가 거래 가능한 `OPEN` 종목의 `SELL_ONLY` 상장주관 자동계정에는 현재 유통주식수만큼 공급 보유분을 다시 만들어 삭제된 현금 원장과 손익/수익률 기준이 어긋나지 않게 합니다.
 - maintenance SQL은 실행 전 stock-back과 stock-batch 스케줄러를 멈춘 뒤 적용합니다.
-- stock-back과 stock-batch는 물리적으로 분리된 서버로 본다. stock-back은 batch 내부 구현을 직접 호출하지 않고 `stock.batch-client.base-url`의 내부 HTTP API만 호출한다.
-- `local-direct`에서 stock-back의 batch client는 기본적으로 `http://localhost:20481`의 stock-batch 내부 API를 호출하며, 로컬 기본 내부 토큰은 `local-stock-batch-internal-token`이다.
-- `dev`/`prod`에서는 `STOCK_BATCH_API_BASE_URL`, `STOCK_BATCH_INTERNAL_TOKEN`을 반드시 명시한다. 값이 없을 때 `localhost`나 빈 token으로 조용히 기동하지 않도록 dev/prod profile에는 기본값을 두지 않는다.
-- stock-back의 batch client timeout은 `STOCK_BATCH_CLIENT_CONNECT_TIMEOUT_MS`, `STOCK_BATCH_CLIENT_READ_TIMEOUT_MS`로 조정한다. 기본값은 connect 3000ms, read 10000ms다.
-- batch 스케줄러 runtime 제어와 중복 실행 잠금은 `STOCK_SERVICE`의 `stock_batch_job_control`, `stock_batch_job_lock` 테이블을 기준으로 공유한다.
+- stock-back과 stock-batch는 물리적으로 분리된 서버로 본다. stock-back은 stock-batch 내부 HTTP API를 호출하지 않고 `STOCK_SERVICE.stock_batch_job_signal`에 실행 신호를 적재한다.
+- batch 스케줄러 runtime 제어는 stock-back이 `stock_batch_job_control.runtime_enabled`를 직접 읽고 쓰며, stock-batch는 자신의 실제 `enabled` 설정을 `scheduler_configured`에 동기화한 뒤 두 값을 함께 읽어 자동 실행 여부를 판단한다.
+- batch 수동 실행, 종목 장마감 롤오버, 거래정지/서킷브레이크 미체결 정리는 stock-back이 `PENDING` signal row를 만들고 stock-batch가 폴링해 기존 batch job launcher로 실행한다.
+- batch 스케줄러 runtime 제어, 중복 실행 잠금, 비동기 실행 신호는 `STOCK_SERVICE`의 `stock_batch_job_control`, `stock_batch_job_lock`, `stock_batch_job_signal` 테이블을 기준으로 공유한다.
 
 주요 테이블:
 

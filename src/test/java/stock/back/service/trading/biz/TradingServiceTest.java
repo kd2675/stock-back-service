@@ -90,6 +90,26 @@ class TradingServiceTest {
                 """,
                 LocalDateTime.now()
         );
+        jdbcTemplate.update(
+                """
+                merge into stock_simulation_clock(
+                    clock_id,
+                    base_simulation_date,
+                    real_seconds_per_simulation_day,
+                    accumulated_real_seconds,
+                    running,
+                    last_started_at,
+                    last_heartbeat_at,
+                    timezone,
+                    created_at,
+                    updated_at
+                )
+                key(clock_id)
+                values ('DEFAULT', date '2026-07-01', 7200, 3000, false, null, null, 'Asia/Seoul', ?, ?)
+                """,
+                LocalDateTime.now(),
+                LocalDateTime.now()
+        );
     }
 
     @Test

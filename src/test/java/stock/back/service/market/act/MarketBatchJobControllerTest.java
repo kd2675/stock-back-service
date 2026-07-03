@@ -3,7 +3,8 @@ package stock.back.service.market.act;
 import auth.common.core.context.UserContext;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
-import stock.back.service.market.client.StockBatchAdminClient;
+import stock.back.service.market.biz.BatchJobRuntimeControlService;
+import stock.back.service.market.biz.BatchJobSignalService;
 import stock.back.service.market.vo.AutoParticipantCashFlowControlRequest;
 import stock.back.service.market.vo.AutoParticipantCashFlowStatusResponse;
 import stock.back.service.market.vo.BatchJobRuntimeControlRequest;
@@ -19,8 +20,12 @@ import static org.mockito.Mockito.when;
 
 class MarketBatchJobControllerTest {
 
-    private final StockBatchAdminClient stockBatchAdminClient = mock(StockBatchAdminClient.class);
-    private final MarketBatchJobController marketBatchJobController = new MarketBatchJobController(stockBatchAdminClient);
+    private final BatchJobRuntimeControlService batchJobRuntimeControlService = mock(BatchJobRuntimeControlService.class);
+    private final BatchJobSignalService batchJobSignalService = mock(BatchJobSignalService.class);
+    private final MarketBatchJobController marketBatchJobController = new MarketBatchJobController(
+            batchJobRuntimeControlService,
+            batchJobSignalService
+    );
 
     @Test
     void updateAutoParticipantCashFlowStatus_adminUserKey_overridesClientUpdatedBy() {
@@ -31,9 +36,7 @@ class MarketBatchJobControllerTest {
                 "admin-user-key",
                 LocalDateTime.now()
         );
-        when(stockBatchAdminClient.updateAutoParticipantCashFlowStatus(
-                org.mockito.ArgumentMatchers.any(AutoParticipantCashFlowControlRequest.class)
-        )).thenReturn(batchResponse);
+        when(batchJobRuntimeControlService.updateCashFlowStatus(false, "admin-user-key")).thenReturn(batchResponse);
 
         var response = marketBatchJobController.updateAutoParticipantCashFlowStatus(
                 new AutoParticipantCashFlowControlRequest(false, "client-forged-user"),
@@ -43,12 +46,7 @@ class MarketBatchJobControllerTest {
                         .build()
         );
 
-        ArgumentCaptor<AutoParticipantCashFlowControlRequest> commandCaptor =
-                ArgumentCaptor.forClass(AutoParticipantCashFlowControlRequest.class);
-        verify(stockBatchAdminClient).updateAutoParticipantCashFlowStatus(commandCaptor.capture());
-        AutoParticipantCashFlowControlRequest command = commandCaptor.getValue();
-        assertThat(command.runtimeEnabled()).isFalse();
-        assertThat(command.updatedBy()).isEqualTo("admin-user-key");
+        verify(batchJobRuntimeControlService).updateCashFlowStatus(false, "admin-user-key");
         assertThat(response.getData()).isEqualTo(batchResponse);
     }
 
@@ -62,9 +60,10 @@ class MarketBatchJobControllerTest {
                 "admin-user-key",
                 LocalDateTime.now()
         );
-        when(stockBatchAdminClient.updateBatchJobRuntimeControl(
+        when(batchJobRuntimeControlService.update(
                 org.mockito.ArgumentMatchers.eq("auto-market"),
-                org.mockito.ArgumentMatchers.any(BatchJobRuntimeControlRequest.class)
+                org.mockito.ArgumentMatchers.eq(false),
+                org.mockito.ArgumentMatchers.eq("admin-user-key")
         )).thenReturn(batchResponse);
 
         var response = marketBatchJobController.updateBatchJobRuntimeControl(
@@ -76,34 +75,33 @@ class MarketBatchJobControllerTest {
                         .build()
         );
 
-        ArgumentCaptor<BatchJobRuntimeControlRequest> commandCaptor =
-                ArgumentCaptor.forClass(BatchJobRuntimeControlRequest.class);
-        verify(stockBatchAdminClient).updateBatchJobRuntimeControl(
+        verify(batchJobRuntimeControlService).update(
                 org.mockito.ArgumentMatchers.eq("auto-market"),
-                commandCaptor.capture()
+                org.mockito.ArgumentMatchers.eq(false),
+                org.mockito.ArgumentMatchers.eq("admin-user-key")
         );
-        BatchJobRuntimeControlRequest command = commandCaptor.getValue();
-        assertThat(command.runtimeEnabled()).isFalse();
-        assertThat(command.updatedBy()).isEqualTo("admin-user-key");
         assertThat(response.getData()).isEqualTo(batchResponse);
     }
 
     @Test
-    void runMarketCloseRollover_delegatesToStockBatchClient() {
+    void runMarketCloseRollover_enqueuesBatchSignal() {
         StockBatchJobRunResponse batchResponse = new StockBatchJobRunResponse(
                 "market-close-rollover",
-                "COMPLETED",
-                "price-limit-base",
-                7,
-                "Job completed",
+                "QUEUED",
+                "manual-rollover",
+                0,
+                "Batch job signal queued: id=1",
                 LocalDateTime.now(),
-                LocalDateTime.now()
+                null
         );
-        when(stockBatchAdminClient.runMarketCloseRollover()).thenReturn(batchResponse);
+        when(batchJobSignalService.enqueueMarketCloseRollover("admin-user-key")).thenReturn(batchResponse);
 
-        var response = marketBatchJobController.runMarketCloseRollover();
+        var response = marketBatchJobController.runMarketCloseRollover(UserContext.builder()
+                .userKey("admin-user-key")
+                .role("ROLE_ADMIN")
+                .build());
 
-        verify(stockBatchAdminClient).runMarketCloseRollover();
+        verify(batchJobSignalService).enqueueMarketCloseRollover("admin-user-key");
         assertThat(response.getData()).isEqualTo(batchResponse);
     }
 }

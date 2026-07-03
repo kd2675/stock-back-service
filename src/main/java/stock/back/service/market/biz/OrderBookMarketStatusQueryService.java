@@ -27,6 +27,7 @@ public class OrderBookMarketStatusQueryService {
     private final StockOrderRepository stockOrderRepository;
     private final StockExecutionMarketViewRepository stockExecutionMarketViewRepository;
     private final SimulationClockService simulationClockService;
+    private final SimulationMarketSessionService simulationMarketSessionService;
 
     public OrderBookMarketStatusQueryService(
             JdbcTemplate jdbcTemplate,
@@ -34,7 +35,8 @@ public class OrderBookMarketStatusQueryService {
             StockOrderBookInstrumentRepository stockOrderBookInstrumentRepository,
             StockOrderRepository stockOrderRepository,
             StockExecutionMarketViewRepository stockExecutionMarketViewRepository,
-            SimulationClockService simulationClockService
+            SimulationClockService simulationClockService,
+            SimulationMarketSessionService simulationMarketSessionService
     ) {
         this.jdbcClient = JdbcClient.create(new NamedParameterJdbcTemplate(jdbcTemplate));
         this.stockOrderBookMarketConfigRepository = stockOrderBookMarketConfigRepository;
@@ -42,6 +44,7 @@ public class OrderBookMarketStatusQueryService {
         this.stockOrderRepository = stockOrderRepository;
         this.stockExecutionMarketViewRepository = stockExecutionMarketViewRepository;
         this.simulationClockService = simulationClockService;
+        this.simulationMarketSessionService = simulationMarketSessionService;
     }
 
     @Transactional(readOnly = true)
@@ -72,7 +75,7 @@ public class OrderBookMarketStatusQueryService {
                 )
                 : 0L;
         long configCount = configs.size();
-        long openConfigCount = configs.stream().filter(OrderBookMarketStatusResponseMapper::isOpen).count();
+        long openConfigCount = effectiveOpenConfigCount(configs.stream().filter(OrderBookMarketStatusResponseMapper::isOpen).count());
         long instrumentCount = stockOrderBookInstrumentRepository.countByEnabledTrue();
         return OrderBookMarketStatusResponseMapper.toStatus(
                 configCount,
@@ -110,13 +113,30 @@ public class OrderBookMarketStatusQueryService {
                            and m.market_status = 'OPEN') as open_config_count
                 """.formatted(todayExecutionSql);
         if (includeTodayExecution) {
-            return jdbcClient.sql(sql)
+            OrderBookMarketStatusResponse response = jdbcClient.sql(sql)
                     .param("todayStart", todayStart)
                     .query((rs, rowNum) -> OrderBookMarketStatusResponseMapper.toSummaryStatus(rs))
                     .single();
+            return withEffectiveSession(response);
         }
-        return jdbcClient.sql(sql)
+        OrderBookMarketStatusResponse response = jdbcClient.sql(sql)
                 .query((rs, rowNum) -> OrderBookMarketStatusResponseMapper.toSummaryStatus(rs))
                 .single();
+        return withEffectiveSession(response);
+    }
+
+    private long effectiveOpenConfigCount(long openConfigCount) {
+        return simulationMarketSessionService.isRegularSession() ? openConfigCount : 0L;
+    }
+
+    private OrderBookMarketStatusResponse withEffectiveSession(OrderBookMarketStatusResponse response) {
+        return OrderBookMarketStatusResponseMapper.toStatus(
+                response.configCount(),
+                effectiveOpenConfigCount(response.openConfigCount()),
+                response.instrumentCount(),
+                response.openOrderCount(),
+                response.todayExecutionCount(),
+                response.configs()
+        );
     }
 }

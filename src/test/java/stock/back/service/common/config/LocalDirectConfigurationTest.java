@@ -33,13 +33,11 @@ class LocalDirectConfigurationTest {
     }
 
     @Test
-    void localDirectProfile_usesDirectStockBatchHttpBoundary() throws IOException {
+    void localDirectProfile_doesNotDefineStockBatchHttpBoundary() throws IOException {
         PropertySource<?> properties = loadLocalDirectProperties();
 
-        assertThat(properties.getProperty("stock.batch-client.base-url"))
-                .isEqualTo("${STOCK_BATCH_API_BASE_URL:http://localhost:20481}");
-        assertThat(properties.getProperty("stock.batch-client.internal-token"))
-                .isEqualTo("${STOCK_BATCH_INTERNAL_TOKEN:local-stock-batch-internal-token}");
+        assertThat(properties.getProperty("stock.batch-client.base-url")).isNull();
+        assertThat(properties.getProperty("stock.batch-client.internal-token")).isNull();
     }
 
     private PropertySource<?> loadLocalDirectProperties() throws IOException {

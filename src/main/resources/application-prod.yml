@@ -41,8 +41,3 @@ database:
           idle-timeout: ${STOCK_DB_SLAVE_IDLE_TIMEOUT:${STOCK_DB_IDLE_TIMEOUT:240000}}
           max-lifetime: ${STOCK_DB_SLAVE_MAX_LIFETIME:${STOCK_DB_MAX_LIFETIME:300000}}
           keepalive-time: ${STOCK_DB_SLAVE_KEEPALIVE_TIME:${STOCK_DB_KEEPALIVE_TIME:120000}}
-
-stock:
-  batch-client:
-    base-url: ${STOCK_BATCH_API_BASE_URL}
-    internal-token: ${STOCK_BATCH_INTERNAL_TOKEN}

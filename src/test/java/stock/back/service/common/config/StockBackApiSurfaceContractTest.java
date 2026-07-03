@@ -59,6 +59,7 @@ class StockBackApiSurfaceContractTest {
             "GET /api/stock/v1/markets/order-books/{symbol}/candles/{interval}",
             "GET /api/stock/v1/markets/rankings",
             "GET /api/stock/v1/markets/simulation-clock",
+            "PATCH /api/stock/v1/markets/simulation-clock",
             "GET /api/stock/v1/markets/virtual-market",
             "GET /api/stock/v1/markets/order-book-market",
             "GET /api/stock/v1/markets/auto-market",

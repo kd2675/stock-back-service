@@ -40,6 +40,7 @@ public class AutoMarketStatusQueryService {
     private final AutoMarketStatusDataLoader autoMarketStatusDataLoader;
     private final AutoMarketSummaryStatusQuery autoMarketSummaryStatusQuery;
     private final SimulationClockService simulationClockService;
+    private final SimulationMarketSessionService simulationMarketSessionService;
 
     @Transactional(readOnly = true)
     public AutoMarketStatusResponse getAutoMarketStatus() {
@@ -106,10 +107,10 @@ public class AutoMarketStatusQueryService {
 
     private AutoMarketStatusResponse getAutoMarketStatus(AutoMarketStatusQueryOptions options) {
         if (options.summaryOnly()) {
-            return autoMarketSummaryStatusQuery.getSummaryStatus(
+            return withEffectiveSession(autoMarketSummaryStatusQuery.getSummaryStatus(
                     options.includeRuntimeMetrics(),
                     options.includeSalaryEligibility()
-            );
+            ));
         }
         List<StockAutoMarketConfig> configEntities = options.shouldLoadConfigs()
                 ? stockAutoMarketConfigRepository.findAll().stream()
@@ -152,7 +153,8 @@ public class AutoMarketStatusQueryService {
         List<OrderStatus> openStatuses = List.of(OrderStatus.PENDING, OrderStatus.PARTIALLY_FILLED);
         long openAutoOrderCount = options.includeRuntimeMetrics() ? stockOrderRepository.countOpenAutoOrders(openStatuses, MarketType.ORDER_BOOK) : 0L;
         long todayAutoExecutionCount = options.includeRuntimeMetrics() ? stockExecutionMarketViewRepository.countAutoExecutionsFrom(simulationClockService.currentMarketDayStart()) : 0L;
-        boolean enabled = enabledParticipantCount > 0 && (options.shouldLoadConfigs()
+        boolean enabled = simulationMarketSessionService.isRegularSession()
+                && enabledParticipantCount > 0 && (options.shouldLoadConfigs()
                 ? enabledConfigCount > 0
                 : stockAutoMarketConfigRepository.existsByEnabledTrue());
         return AutoMarketStatusResponseMapper.toStatus(
@@ -172,6 +174,30 @@ public class AutoMarketStatusQueryService {
                 participantSymbolConfigs,
                 participantProfileConfigs,
                 listingAutoAccounts
+        );
+    }
+
+    private AutoMarketStatusResponse withEffectiveSession(AutoMarketStatusResponse response) {
+        if (simulationMarketSessionService.isRegularSession()) {
+            return response;
+        }
+        return AutoMarketStatusResponseMapper.toStatus(
+                false,
+                new AutoMarketStatusResponseMapper.AutoMarketStatusCounts(
+                        response.configCount(),
+                        response.participantCount(),
+                        response.participantProfileConfigCount(),
+                        response.listingAutoAccountCount(),
+                        response.enabledParticipantCount(),
+                        response.salaryEligibleParticipantCount(),
+                        response.openAutoOrderCount(),
+                        response.todayAutoExecutionCount()
+                ),
+                response.configs(),
+                response.participants(),
+                response.participantSymbolConfigs(),
+                response.participantProfileConfigs(),
+                response.listingAutoAccounts()
         );
     }
 

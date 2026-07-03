@@ -49,18 +49,23 @@ class OrderBookMarketStatusQueryServiceTest {
     @Mock
     private SimulationClockService simulationClockService;
 
+    @Mock
+    private SimulationMarketSessionService simulationMarketSessionService;
+
     private OrderBookMarketStatusQueryService service;
 
     @BeforeEach
     void setUp() {
         lenient().when(simulationClockService.currentMarketDayStart()).thenReturn(SimulationDayClock.currentDayStart());
+        lenient().when(simulationMarketSessionService.isRegularSession()).thenReturn(true);
         service = new OrderBookMarketStatusQueryService(
                 jdbcTemplate,
                 stockOrderBookMarketConfigRepository,
                 stockOrderBookInstrumentRepository,
                 stockOrderRepository,
                 stockExecutionMarketViewRepository,
-                simulationClockService
+                simulationClockService,
+                simulationMarketSessionService
         );
     }
 
@@ -72,7 +77,8 @@ class OrderBookMarketStatusQueryServiceTest {
                 stockOrderBookInstrumentRepository,
                 stockOrderRepository,
                 stockExecutionMarketViewRepository,
-                simulationClockService
+                simulationClockService,
+                simulationMarketSessionService
         );
         seedSummaryRows(true);
 
@@ -101,7 +107,8 @@ class OrderBookMarketStatusQueryServiceTest {
                 stockOrderBookInstrumentRepository,
                 stockOrderRepository,
                 stockExecutionMarketViewRepository,
-                simulationClockService
+                simulationClockService,
+                simulationMarketSessionService
         );
         seedSummaryRows(true);
 
@@ -146,6 +153,26 @@ class OrderBookMarketStatusQueryServiceTest {
                 MarketSessionStatus.OPEN,
                 MarketSessionStatus.CLOSED
         );
+    }
+
+    @Test
+    void getOrderBookMarketStatus_outsideRegularSession_reportsClosedEffectiveStatus() {
+        StockOrderBookMarketConfig openConfig = StockOrderBookMarketConfig.enabled("ZQ001");
+        when(stockOrderBookMarketConfigRepository.findAll()).thenReturn(List.of(openConfig));
+        when(stockOrderRepository.countByMarketTypeAndStatusIn(
+                eq(MarketType.ORDER_BOOK),
+                eq(List.of(OrderStatus.PENDING, OrderStatus.PARTIALLY_FILLED))
+        )).thenReturn(4L);
+        when(stockExecutionMarketViewRepository.countExecutionsFromBySource(any(LocalDateTime.class), eq(ExecutionSource.INTERNAL_ORDER_BOOK)))
+                .thenReturn(6L);
+        when(stockOrderBookInstrumentRepository.countByEnabledTrue()).thenReturn(1L);
+        when(simulationMarketSessionService.isRegularSession()).thenReturn(false);
+
+        var response = service.getOrderBookMarketStatus(true, true);
+
+        assertThat(response.enabled()).isFalse();
+        assertThat(response.openConfigCount()).isZero();
+        assertThat(response.configs()).extracting("marketStatus").containsExactly(MarketSessionStatus.OPEN);
     }
 
     private JdbcTemplate createSummaryJdbcTemplate(String databaseName) {

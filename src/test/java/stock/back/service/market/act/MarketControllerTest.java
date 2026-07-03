@@ -1,10 +1,11 @@
 package stock.back.service.market.act;
 
+import auth.common.core.context.UserContext;
 import org.junit.jupiter.api.Test;
 import stock.back.service.database.entity.MarketSessionStatus;
 import stock.back.service.database.entity.MarketType;
+import stock.back.service.market.biz.BatchJobSignalService;
 import stock.back.service.market.biz.MarketStatusService;
-import stock.back.service.market.client.StockBatchAdminClient;
 import stock.back.service.market.vo.MarketStatusUpdateRequest;
 import stock.back.service.market.vo.SymbolMarketConfigResponse;
 
@@ -17,10 +18,10 @@ import static org.mockito.Mockito.when;
 class MarketControllerTest {
 
     private final MarketStatusService marketStatusService = mock(MarketStatusService.class);
-    private final StockBatchAdminClient stockBatchAdminClient = mock(StockBatchAdminClient.class);
+    private final BatchJobSignalService batchJobSignalService = mock(BatchJobSignalService.class);
     private final MarketController marketController = new MarketController(
             marketStatusService,
-            stockBatchAdminClient
+            batchJobSignalService
     );
 
     @Test
@@ -34,9 +35,46 @@ class MarketControllerTest {
         when(marketStatusService.updateMarketStatus(MarketType.ORDER_BOOK, "mc001", request))
                 .thenReturn(marketResponse);
 
-        var response = marketController.updateMarketStatus(MarketType.ORDER_BOOK, "mc001", request);
+        var response = marketController.updateMarketStatus(MarketType.ORDER_BOOK, "mc001", request, userContext());
 
-        verify(stockBatchAdminClient).runMarketCloseRollover("MC001");
+        verify(batchJobSignalService).enqueueMarketCloseRollover("MC001", "admin-user-key");
+        verify(batchJobSignalService, never()).enqueueOpenOrderBookOrderCancel("MC001", "admin-user-key");
+        assertThat(response.getData()).isEqualTo(marketResponse);
+    }
+
+    @Test
+    void updateMarketStatus_orderBookHalted_cancelsOpenOrderBookOrders() {
+        MarketStatusUpdateRequest request = new MarketStatusUpdateRequest(true, MarketSessionStatus.HALTED);
+        SymbolMarketConfigResponse marketResponse = new SymbolMarketConfigResponse(
+                "MC001",
+                true,
+                MarketSessionStatus.HALTED
+        );
+        when(marketStatusService.updateMarketStatus(MarketType.ORDER_BOOK, "mc001", request))
+                .thenReturn(marketResponse);
+
+        var response = marketController.updateMarketStatus(MarketType.ORDER_BOOK, "mc001", request, userContext());
+
+        verify(batchJobSignalService).enqueueOpenOrderBookOrderCancel("MC001", "admin-user-key");
+        verify(batchJobSignalService, never()).enqueueMarketCloseRollover("MC001", "admin-user-key");
+        assertThat(response.getData()).isEqualTo(marketResponse);
+    }
+
+    @Test
+    void updateMarketStatus_orderBookCircuitBreaker_cancelsOpenOrderBookOrders() {
+        MarketStatusUpdateRequest request = new MarketStatusUpdateRequest(true, MarketSessionStatus.CIRCUIT_BREAKER);
+        SymbolMarketConfigResponse marketResponse = new SymbolMarketConfigResponse(
+                "MC001",
+                true,
+                MarketSessionStatus.CIRCUIT_BREAKER
+        );
+        when(marketStatusService.updateMarketStatus(MarketType.ORDER_BOOK, "mc001", request))
+                .thenReturn(marketResponse);
+
+        var response = marketController.updateMarketStatus(MarketType.ORDER_BOOK, "mc001", request, userContext());
+
+        verify(batchJobSignalService).enqueueOpenOrderBookOrderCancel("MC001", "admin-user-key");
+        verify(batchJobSignalService, never()).enqueueMarketCloseRollover("MC001", "admin-user-key");
         assertThat(response.getData()).isEqualTo(marketResponse);
     }
 
@@ -51,9 +89,10 @@ class MarketControllerTest {
         when(marketStatusService.updateMarketStatus(MarketType.ORDER_BOOK, "mc001", request))
                 .thenReturn(marketResponse);
 
-        var response = marketController.updateMarketStatus(MarketType.ORDER_BOOK, "mc001", request);
+        var response = marketController.updateMarketStatus(MarketType.ORDER_BOOK, "mc001", request, userContext());
 
-        verify(stockBatchAdminClient, never()).runMarketCloseRollover("MC001");
+        verify(batchJobSignalService, never()).enqueueMarketCloseRollover("MC001", "admin-user-key");
+        verify(batchJobSignalService, never()).enqueueOpenOrderBookOrderCancel("MC001", "admin-user-key");
         assertThat(response.getData()).isEqualTo(marketResponse);
     }
 
@@ -68,9 +107,17 @@ class MarketControllerTest {
         when(marketStatusService.updateMarketStatus(MarketType.VIRTUAL_PRICE, "mc001", request))
                 .thenReturn(marketResponse);
 
-        var response = marketController.updateMarketStatus(MarketType.VIRTUAL_PRICE, "mc001", request);
+        var response = marketController.updateMarketStatus(MarketType.VIRTUAL_PRICE, "mc001", request, userContext());
 
-        verify(stockBatchAdminClient, never()).runMarketCloseRollover("MC001");
+        verify(batchJobSignalService, never()).enqueueMarketCloseRollover("MC001", "admin-user-key");
+        verify(batchJobSignalService, never()).enqueueOpenOrderBookOrderCancel("MC001", "admin-user-key");
         assertThat(response.getData()).isEqualTo(marketResponse);
+    }
+
+    private UserContext userContext() {
+        return UserContext.builder()
+                .userKey("admin-user-key")
+                .role("ROLE_ADMIN")
+                .build();
     }
 }

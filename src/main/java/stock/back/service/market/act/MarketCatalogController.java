@@ -1,9 +1,13 @@
 package stock.back.service.market.act;
 
+import auth.common.core.constant.UserRole;
+import auth.common.core.context.RequirePrincipalRole;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
@@ -15,6 +19,7 @@ import stock.back.service.market.vo.InstrumentResponse;
 import stock.back.service.market.vo.PriceResponse;
 import stock.back.service.market.vo.PriceTickResponse;
 import stock.back.service.market.vo.RankingResponse;
+import stock.back.service.market.vo.SimulationClockJumpRequest;
 import stock.back.service.market.vo.SimulationClockResponse;
 import stock.back.service.market.vo.VirtualMarketStatusResponse;
 import web.common.core.response.base.dto.ResponseDataDTO;
@@ -59,6 +64,12 @@ public class MarketCatalogController {
     @GetMapping("/simulation-clock")
     public ResponseDataDTO<SimulationClockResponse> getSimulationClock() {
         return ResponseDataDTO.of(simulationClockService.currentResponse());
+    }
+
+    @PatchMapping("/simulation-clock")
+    @RequirePrincipalRole(anyOf = {UserRole.ADMIN})
+    public ResponseDataDTO<SimulationClockResponse> jumpSimulationClock(@RequestBody SimulationClockJumpRequest request) {
+        return ResponseDataDTO.of(simulationClockService.jumpToSafePreset(request == null ? null : request.action()));
     }
 
     @GetMapping("/virtual-market")

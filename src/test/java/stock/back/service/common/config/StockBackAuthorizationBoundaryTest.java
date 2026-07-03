@@ -125,6 +125,26 @@ class StockBackAuthorizationBoundaryTest {
                 """,
                 LocalDateTime.now()
         );
+        jdbcTemplate.update(
+                """
+                merge into stock_simulation_clock(
+                    clock_id,
+                    base_simulation_date,
+                    real_seconds_per_simulation_day,
+                    accumulated_real_seconds,
+                    running,
+                    last_started_at,
+                    last_heartbeat_at,
+                    timezone,
+                    created_at,
+                    updated_at
+                )
+                key(clock_id)
+                values ('DEFAULT', date '2026-07-01', 7200, 3000, false, null, null, 'Asia/Seoul', ?, ?)
+                """,
+                LocalDateTime.now(),
+                LocalDateTime.now()
+        );
     }
 
     private void seedAutoParticipant(String userKey) {
@@ -537,7 +557,8 @@ class StockBackAuthorizationBoundaryTest {
             "POST /api/stock/v1/markets/auto-market/cash-flow/run",
             "POST /api/stock/v1/markets/batch-jobs/market-close/rollover",
             "GET /api/stock/v1/markets/batch-jobs/runtime-controls",
-            "PATCH /api/stock/v1/markets/batch-jobs/runtime-controls/auto-market"
+            "PATCH /api/stock/v1/markets/batch-jobs/runtime-controls/auto-market",
+            "PATCH /api/stock/v1/markets/simulation-clock"
     })
     void autoParticipantCashFlowAdminEndpoints_withoutPrincipalHeaders_returnUnauthorized(String requestLine) throws Exception {
         String[] parts = requestLine.split(" ", 2);
@@ -571,7 +592,8 @@ class StockBackAuthorizationBoundaryTest {
             "POST /api/stock/v1/markets/auto-market/cash-flow/run",
             "POST /api/stock/v1/markets/batch-jobs/market-close/rollover",
             "GET /api/stock/v1/markets/batch-jobs/runtime-controls",
-            "PATCH /api/stock/v1/markets/batch-jobs/runtime-controls/auto-market"
+            "PATCH /api/stock/v1/markets/batch-jobs/runtime-controls/auto-market",
+            "PATCH /api/stock/v1/markets/simulation-clock"
     })
     void autoParticipantCashFlowAdminEndpoints_userPrincipalHeaders_returnForbidden(String requestLine) throws Exception {
         String[] parts = requestLine.split(" ", 2);

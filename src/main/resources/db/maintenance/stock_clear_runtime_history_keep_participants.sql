@@ -18,6 +18,8 @@ UPDATE stock_account
    SET cash_balance = 0.00,
        updated_at = NOW();
 
+TRUNCATE TABLE stock_batch_job_signal;
+
 TRUNCATE TABLE stock_corporate_action_entitlement;
 TRUNCATE TABLE stock_execution;
 TRUNCATE TABLE stock_account_cash_flow;
@@ -26,6 +28,7 @@ TRUNCATE TABLE stock_market_close_run;
 TRUNCATE TABLE stock_holding;
 TRUNCATE TABLE portfolio_snapshot;
 TRUNCATE TABLE stock_order;
+TRUNCATE TABLE stock_auto_participant_order_schedule;
 
 TRUNCATE TABLE stock_price_tick;
 TRUNCATE TABLE stock_corporate_action;

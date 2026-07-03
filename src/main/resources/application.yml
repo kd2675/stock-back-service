@@ -61,6 +61,9 @@ stock:
     base-date: ${STOCK_SIMULATION_BASE_DATE:}
     real-seconds-per-day: ${STOCK_SIMULATION_REAL_SECONDS_PER_DAY:7200}
     stale-after-seconds: ${STOCK_SIMULATION_STALE_AFTER_SECONDS:30}
+  market-session:
+    open-time: ${STOCK_MARKET_SESSION_OPEN_TIME:06:00}
+    close-time: ${STOCK_MARKET_SESSION_CLOSE_TIME:18:00}
   market:
     price-stream:
       redis-listener-enabled: ${STOCK_PRICE_STREAM_REDIS_LISTENER_ENABLED:true}
@@ -70,11 +73,6 @@ stock:
         queue-capacity: ${STOCK_PRICE_STREAM_EXECUTOR_QUEUE_CAPACITY:1000}
   trading:
     opening-grant-amount: ${STOCK_OPENING_GRANT_AMOUNT:10000000}
-  batch-client:
-    base-url: ${STOCK_BATCH_API_BASE_URL:http://localhost:20481}
-    internal-token: ${STOCK_BATCH_INTERNAL_TOKEN:local-stock-batch-internal-token}
-    connect-timeout-ms: ${STOCK_BATCH_CLIENT_CONNECT_TIMEOUT_MS:3000}
-    read-timeout-ms: ${STOCK_BATCH_CLIENT_READ_TIMEOUT_MS:10000}
 
 eureka:
   client:

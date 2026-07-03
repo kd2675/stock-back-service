@@ -14,6 +14,7 @@ import stock.back.service.database.entity.StockHolding;
 import stock.back.service.database.entity.StockOrder;
 import stock.back.service.database.entity.StockPrice;
 import stock.back.service.database.entity.StockVirtualMarketConfig;
+import stock.back.service.common.exception.StockException;
 import stock.back.service.database.repository.PortfolioSnapshotRepository;
 import stock.back.service.database.repository.StockAccountCashFlowRepository;
 import stock.back.service.database.repository.StockExecutionRepository;
@@ -27,6 +28,7 @@ import stock.back.service.database.repository.StockVirtualMarketConfigRepository
 import stock.back.service.market.cache.CachedStockPrice;
 import stock.back.service.market.cache.StockPriceCacheService;
 import stock.back.service.market.biz.SimulationClockService;
+import stock.back.service.market.biz.SimulationMarketSessionService;
 import stock.back.service.trading.vo.OrderRequest;
 
 import java.math.BigDecimal;
@@ -36,6 +38,7 @@ import java.util.Map;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.eq;
@@ -86,11 +89,15 @@ class TradingServicePriceCacheTest {
     @Mock
     private SimulationClockService simulationClockService;
 
+    @Mock
+    private SimulationMarketSessionService simulationMarketSessionService;
+
     private TradingService tradingService;
 
     @BeforeEach
     void setUp() {
         lenient().when(simulationClockService.currentMarketDateTime()).thenReturn(LocalDateTime.of(2026, 7, 1, 10, 0));
+        lenient().when(simulationMarketSessionService.isRegularSession()).thenReturn(true);
         TradingQueryService tradingQueryService = new TradingQueryService(
                 accountService,
                 stockOrderRepository,
@@ -111,7 +118,8 @@ class TradingServicePriceCacheTest {
                         stockVirtualMarketConfigRepository,
                         stockOrderBookMarketConfigRepository,
                         stockPriceRepository,
-                        stockPriceCacheService
+                        stockPriceCacheService,
+                        simulationMarketSessionService
                 ),
                 new TradingReservationService(accountService, stockHoldingRepository),
                 simulationClockService
@@ -138,6 +146,20 @@ class TradingServicePriceCacheTest {
         assertThat(response.reservedCash()).isEqualByComparingTo(new BigDecimal("144000.00"));
         assertThat(account.getCashBalance()).isEqualByComparingTo(new BigDecimal("9856000.00"));
         verify(stockPriceRepository, never()).findById("005930");
+    }
+
+    @Test
+    void placeOrder_outsideRegularSession_rejectsBeforeReservation() {
+        when(simulationMarketSessionService.isRegularSession()).thenReturn(false);
+        when(stockInstrumentRepository.existsById("005930")).thenReturn(true);
+
+        assertThatThrownBy(() -> tradingService.placeOrder(
+                "cache-order-user",
+                new OrderRequest("005930", OrderSide.BUY, OrderType.MARKET, null, 2)
+        ))
+                .isInstanceOf(StockException.class)
+                .hasMessageContaining("regular trading session");
+        verify(accountService, never()).requireAccountForUpdate(any());
     }
 
     @Test

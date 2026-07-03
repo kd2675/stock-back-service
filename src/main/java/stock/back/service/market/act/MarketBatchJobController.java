@@ -12,7 +12,8 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import stock.back.service.common.exception.StockException;
-import stock.back.service.market.client.StockBatchAdminClient;
+import stock.back.service.market.biz.BatchJobRuntimeControlService;
+import stock.back.service.market.biz.BatchJobSignalService;
 import stock.back.service.market.vo.AutoParticipantCashFlowControlRequest;
 import stock.back.service.market.vo.AutoParticipantCashFlowStatusResponse;
 import stock.back.service.market.vo.BatchJobRuntimeControlRequest;
@@ -27,12 +28,13 @@ import java.util.List;
 @RequiredArgsConstructor
 public class MarketBatchJobController {
 
-    private final StockBatchAdminClient stockBatchAdminClient;
+    private final BatchJobRuntimeControlService batchJobRuntimeControlService;
+    private final BatchJobSignalService batchJobSignalService;
 
     @GetMapping("/auto-market/cash-flow")
     @RequirePrincipalRole(anyOf = {UserRole.ADMIN})
     public ResponseDataDTO<AutoParticipantCashFlowStatusResponse> getAutoParticipantCashFlowStatus() {
-        return ResponseDataDTO.of(stockBatchAdminClient.getAutoParticipantCashFlowStatus());
+        return ResponseDataDTO.of(batchJobRuntimeControlService.cashFlowStatus());
     }
 
     @PatchMapping("/auto-market/cash-flow")
@@ -45,25 +47,28 @@ public class MarketBatchJobController {
                 requireRuntimeEnabled(request == null ? null : request.runtimeEnabled()),
                 userContext.getUserKey()
         );
-        return ResponseDataDTO.of(stockBatchAdminClient.updateAutoParticipantCashFlowStatus(command));
+        return ResponseDataDTO.of(batchJobRuntimeControlService.updateCashFlowStatus(
+                command.runtimeEnabled(),
+                command.updatedBy()
+        ));
     }
 
     @PostMapping("/auto-market/cash-flow/run")
     @RequirePrincipalRole(anyOf = {UserRole.ADMIN})
-    public ResponseDataDTO<StockBatchJobRunResponse> runAutoParticipantCashFlow() {
-        return ResponseDataDTO.of(stockBatchAdminClient.runAutoParticipantCashFlow());
+    public ResponseDataDTO<StockBatchJobRunResponse> runAutoParticipantCashFlow(UserContext userContext) {
+        return ResponseDataDTO.of(batchJobSignalService.enqueueAutoParticipantCashFlow(userContext.getUserKey()));
     }
 
     @PostMapping("/batch-jobs/market-close/rollover")
     @RequirePrincipalRole(anyOf = {UserRole.ADMIN})
-    public ResponseDataDTO<StockBatchJobRunResponse> runMarketCloseRollover() {
-        return ResponseDataDTO.of(stockBatchAdminClient.runMarketCloseRollover());
+    public ResponseDataDTO<StockBatchJobRunResponse> runMarketCloseRollover(UserContext userContext) {
+        return ResponseDataDTO.of(batchJobSignalService.enqueueMarketCloseRollover(userContext.getUserKey()));
     }
 
     @GetMapping("/batch-jobs/runtime-controls")
     @RequirePrincipalRole(anyOf = {UserRole.ADMIN})
     public ResponseDataDTO<List<BatchJobRuntimeStatusResponse>> getBatchJobRuntimeControls() {
-        return ResponseDataDTO.of(stockBatchAdminClient.getBatchJobRuntimeControls());
+        return ResponseDataDTO.of(batchJobRuntimeControlService.statuses());
     }
 
     @PatchMapping("/batch-jobs/runtime-controls/{jobName}")
@@ -77,7 +82,11 @@ public class MarketBatchJobController {
                 requireRuntimeEnabled(request == null ? null : request.runtimeEnabled()),
                 userContext.getUserKey()
         );
-        return ResponseDataDTO.of(stockBatchAdminClient.updateBatchJobRuntimeControl(jobName, command));
+        return ResponseDataDTO.of(batchJobRuntimeControlService.update(
+                jobName,
+                command.runtimeEnabled(),
+                command.updatedBy()
+        ));
     }
 
     private static boolean requireRuntimeEnabled(Boolean runtimeEnabled) {

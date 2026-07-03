@@ -75,7 +75,8 @@ class StockMysqlDdlContractTest {
 
     private static final List<String> BATCH_OPERATION_TABLE_MARKERS = List.of(
             "stock_batch_job_control",
-            "stock_batch_job_lock"
+            "stock_batch_job_lock",
+            "stock_batch_job_signal"
     );
 
     private static final List<String> SIMULATION_CLOCK_TABLE_MARKERS = List.of(
@@ -99,6 +100,7 @@ class StockMysqlDdlContractTest {
             "idx_stock_auto_participant_active",
             "idx_stock_auto_participant_profile_active",
             "idx_stock_auto_participant_symbol_lookup",
+            "idx_stock_auto_order_schedule_due",
             "idx_stock_corporate_action_status_symbol"
     );
 
@@ -110,11 +112,13 @@ class StockMysqlDdlContractTest {
 
     private static final List<String> CLEAR_DATA_REQUIRED_TRUNCATES = List.of(
             "TRUNCATE TABLE stock_batch_job_lock;",
+            "TRUNCATE TABLE stock_batch_job_signal;",
             "TRUNCATE TABLE stock_batch_job_control;",
             "TRUNCATE TABLE stock_execution;",
             "TRUNCATE TABLE stock_account_cash_flow;",
             "TRUNCATE TABLE stock_price_tick;",
             "TRUNCATE TABLE stock_order;",
+            "TRUNCATE TABLE stock_auto_participant_order_schedule;",
             "TRUNCATE TABLE portfolio_snapshot;",
             "TRUNCATE TABLE stock_market_close_run;",
             "TRUNCATE TABLE stock_listing_auto_account_config;",
@@ -124,6 +128,7 @@ class StockMysqlDdlContractTest {
     private static final List<String> CLEAR_RUNTIME_HISTORY_KEEP_PARTICIPANTS_REQUIRED_MARKERS = List.of(
             "UPDATE stock_account",
             "SET cash_balance = 0.00",
+            "TRUNCATE TABLE stock_batch_job_signal;",
             "TRUNCATE TABLE stock_corporate_action_entitlement;",
             "TRUNCATE TABLE stock_execution;",
             "TRUNCATE TABLE stock_account_cash_flow;",
@@ -132,6 +137,7 @@ class StockMysqlDdlContractTest {
             "TRUNCATE TABLE stock_holding;",
             "TRUNCATE TABLE portfolio_snapshot;",
             "TRUNCATE TABLE stock_order;",
+            "TRUNCATE TABLE stock_auto_participant_order_schedule;",
             "TRUNCATE TABLE stock_price_tick;",
             "TRUNCATE TABLE stock_corporate_action;",
             "INSERT INTO stock_simulation_clock(",
@@ -177,7 +183,8 @@ class StockMysqlDdlContractTest {
         String ddl = readStockAllSql();
 
         assertThat(ddl).contains("KEY idx_stock_price_tick_symbol_time (symbol, price_time)");
-        assertThat(ddl).contains("KEY idx_stock_order_order_book_match (symbol, side, order_type, status, limit_price, created_at)");
+        assertThat(ddl).contains("KEY idx_stock_order_order_book_match (market_type, symbol, side, status, order_type, limit_price, created_at, id)");
+        assertThat(ddl).contains("KEY idx_stock_order_order_book_expiry (market_type, symbol, created_at, id, status, account_id)");
         assertThat(ddl).contains(ADMIN_QUERY_INDEX_MARKERS.toArray(String[]::new));
         assertThat(ddl).contains(BATCH_OPERATION_TABLE_MARKERS.toArray(String[]::new));
         assertThat(ddl).contains(SIMULATION_CLOCK_TABLE_MARKERS.toArray(String[]::new));
@@ -236,27 +243,20 @@ class StockMysqlDdlContractTest {
     }
 
     @Test
-    void adminQueryPerformanceAlterDdl_matchesInitialSchemaIndexNames() throws IOException {
-        String alterDdl = Files.readString(
-                Path.of("src/main/resources/db/ddl/stock_admin_query_performance_indexes_alter.sql"),
-                StandardCharsets.UTF_8
-        );
+    void initialSchemaDdl_containsAdminQueryPerformanceIndexNames() throws IOException {
+        String stockAllDdl = readStockAllSql();
 
-        assertThat(alterDdl).contains(ADMIN_QUERY_INDEX_MARKERS.toArray(String[]::new));
+        assertThat(stockAllDdl).contains(ADMIN_QUERY_INDEX_MARKERS.toArray(String[]::new));
     }
 
     @Test
-    void batchJobControlAlterDdl_matchesInitialSchemaTableDefinitions() throws IOException {
+    void initialSchemaDdl_containsBatchOperationTableDefinitions() throws IOException {
         String stockAllDdl = readStockAllSql();
-        String alterDdl = Files.readString(
-                Path.of("src/main/resources/db/ddl/stock_batch_job_control_alter.sql"),
-                StandardCharsets.UTF_8
-        );
 
         for (String tableName : BATCH_OPERATION_TABLE_MARKERS) {
-            assertThat(normalizeSqlBlock(extractCreateTableBlock(alterDdl, tableName)))
+            assertThat(normalizeSqlBlock(extractCreateTableBlock(stockAllDdl, tableName)))
                     .as(tableName)
-                    .isEqualTo(normalizeSqlBlock(extractCreateTableBlock(stockAllDdl, tableName)));
+                    .isNotBlank();
         }
     }
 

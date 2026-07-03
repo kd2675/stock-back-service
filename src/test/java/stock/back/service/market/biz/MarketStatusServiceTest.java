@@ -48,17 +48,22 @@ class MarketStatusServiceTest {
     @Mock
     private SimulationClockService simulationClockService;
 
+    @Mock
+    private SimulationMarketSessionService simulationMarketSessionService;
+
     private MarketStatusService service;
 
     @BeforeEach
     void setUp() {
         lenient().when(simulationClockService.currentMarketDayStart()).thenReturn(SimulationDayClock.currentDayStart());
+        lenient().when(simulationMarketSessionService.isRegularSession()).thenReturn(true);
         service = new MarketStatusService(
                 stockVirtualMarketConfigRepository,
                 stockOrderBookMarketConfigRepository,
                 stockOrderRepository,
                 stockExecutionMarketViewRepository,
-                simulationClockService
+                simulationClockService,
+                simulationMarketSessionService
         );
     }
 
@@ -123,6 +128,18 @@ class MarketStatusServiceTest {
         assertThat(response.openOrderCount()).isEqualTo(3L);
         assertThat(response.todayExecutionCount()).isEqualTo(7L);
         assertThat(response.configs()).extracting(config -> config.symbol()).containsExactly("A001", "B001");
+    }
+
+    @Test
+    void getVirtualMarketStatus_outsideRegularSession_reportsDisabledEvenWhenConfigOpen() {
+        StockVirtualMarketConfig open = virtualMarketConfig("B001", true, MarketSessionStatus.OPEN);
+        when(stockVirtualMarketConfigRepository.findAll()).thenReturn(List.of(open));
+        when(simulationMarketSessionService.isRegularSession()).thenReturn(false);
+
+        var response = service.getVirtualMarketStatus();
+
+        assertThat(response.enabled()).isFalse();
+        assertThat(response.configs()).extracting(config -> config.marketStatus()).containsExactly(MarketSessionStatus.OPEN);
     }
 
     private StockVirtualMarketConfig virtualMarketConfig(String symbol, boolean enabled, MarketSessionStatus marketStatus) {

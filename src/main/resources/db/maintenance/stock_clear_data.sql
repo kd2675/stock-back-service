@@ -7,6 +7,7 @@ USE STOCK_SERVICE;
 SET FOREIGN_KEY_CHECKS = 0;
 
 TRUNCATE TABLE stock_batch_job_lock;
+TRUNCATE TABLE stock_batch_job_signal;
 TRUNCATE TABLE stock_batch_job_control;
 
 TRUNCATE TABLE stock_corporate_action_entitlement;
@@ -17,6 +18,7 @@ TRUNCATE TABLE stock_market_close_run;
 TRUNCATE TABLE stock_holding;
 TRUNCATE TABLE portfolio_snapshot;
 TRUNCATE TABLE stock_order;
+TRUNCATE TABLE stock_auto_participant_order_schedule;
 
 TRUNCATE TABLE stock_instrument_report_event;
 TRUNCATE TABLE stock_auto_participant_symbol_config;
