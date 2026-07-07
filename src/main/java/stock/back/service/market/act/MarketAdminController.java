@@ -50,9 +50,16 @@ public class MarketAdminController {
     @GetMapping("/admin/symbol-flows")
     public ResponseDataDTO<AdminSymbolFlowListResponse> getAdminSymbolFlows(
             @RequestParam(defaultValue = "0") int limit,
-            @RequestParam(defaultValue = "RECENT_SIMULATION_DAY") AdminFundFlowScope scope
+            @RequestParam(defaultValue = "RECENT_SIMULATION_DAY") AdminFundFlowScope scope,
+            @RequestParam(defaultValue = "false") boolean includeDailyCumulative,
+            @RequestParam(defaultValue = "7") int dailyCumulativeDays
     ) {
-        return ResponseDataDTO.of(adminFlowQueryService.getAdminSymbolFlows(limit, scope));
+        return ResponseDataDTO.of(adminFlowQueryService.getAdminSymbolFlows(
+                limit,
+                scope,
+                includeDailyCumulative,
+                dailyCumulativeDays
+        ));
     }
 
     @GetMapping("/admin/cash-flows")

@@ -1,5 +1,14 @@
 package stock.back.service.market.biz;
 
+import java.time.Duration;
+import java.time.LocalDateTime;
+import java.time.LocalTime;
+import java.util.Arrays;
+import java.util.List;
+import java.util.Map;
+import java.util.function.Function;
+import java.util.stream.Collectors;
+
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -15,17 +24,12 @@ import stock.back.service.database.repository.StockExecutionMarketViewRepository
 import stock.back.service.database.repository.StockListingAutoAccountConfigRepository;
 import stock.back.service.database.repository.StockOrderRepository;
 import stock.back.service.market.vo.AutoMarketConfigResponse;
+import stock.back.service.market.vo.AutoMarketDailyRegimeResponse;
 import stock.back.service.market.vo.AutoMarketStatusResponse;
 import stock.back.service.market.vo.AutoParticipantProfileConfigResponse;
 import stock.back.service.market.vo.AutoParticipantResponse;
 import stock.back.service.market.vo.AutoParticipantSymbolConfigResponse;
 import stock.back.service.market.vo.ListingAutoAccountResponse;
-
-import java.util.Arrays;
-import java.util.List;
-import java.util.Map;
-import java.util.function.Function;
-import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -117,9 +121,18 @@ public class AutoMarketStatusQueryService {
                         .sorted((left, right) -> left.getSymbol().compareTo(right.getSymbol()))
                         .toList()
                 : List.of();
+        LocalDateTime currentMarketDateTime = simulationClockService.currentMarketDateTime();
+        Map<String, AutoMarketDailyRegimeResponse> dailyRegimesBySymbol = options.shouldLoadConfigs()
+                ? autoMarketStatusDataLoader.loadDailyRegimesBySymbol(
+	                        configEntities.stream().map(StockAutoMarketConfig::getSymbol).toList(),
+	                        currentMarketDateTime.toLocalDate(),
+	                        resolveRegimePhase(currentMarketDateTime),
+	                        currentMarketDateTime
+	                )
+                : Map.of();
         List<AutoMarketConfigResponse> configs = options.shouldLoadConfigs()
                 ? configEntities.stream()
-                        .map(AutoMarketStatusResponseMapper::toMarketConfig)
+                        .map(config -> AutoMarketStatusResponseMapper.toMarketConfig(config, dailyRegimesBySymbol.get(config.getSymbol())))
                         .toList()
                 : List.of();
         List<AutoParticipantResponse> participants = options.shouldLoadParticipants()
@@ -155,7 +168,7 @@ public class AutoMarketStatusQueryService {
         long todayAutoExecutionCount = options.includeRuntimeMetrics()
                 ? stockExecutionMarketViewRepository.countAutoExecutionsBetween(
                         simulationClockService.currentMarketDayStart(),
-                        simulationClockService.currentMarketDateTime()
+                        currentMarketDateTime
                 )
                 : 0L;
         boolean enabled = simulationMarketSessionService.isRegularSession()
@@ -214,6 +227,20 @@ public class AutoMarketStatusQueryService {
         return Arrays.stream(AutoParticipantProfileType.values())
                 .map(profileType -> AutoParticipantProfileConfigResponseMapper.toResponse(profileType, savedConfigs.get(profileType)))
                 .toList();
+    }
+
+    private String resolveRegimePhase(LocalDateTime currentMarketDateTime) {
+        if (currentMarketDateTime == null || currentMarketDateTime.toLocalTime().isBefore(midSessionTime())) {
+            return "OPENING";
+        }
+        return "MIDDAY";
+    }
+
+    private LocalTime midSessionTime() {
+        LocalTime openTime = simulationMarketSessionService.openTime();
+        LocalTime closeTime = simulationMarketSessionService.closeTime();
+        long halfSessionSeconds = Duration.between(openTime, closeTime).toSeconds() / 2;
+        return openTime.plusSeconds(halfSessionSeconds);
     }
 
 }

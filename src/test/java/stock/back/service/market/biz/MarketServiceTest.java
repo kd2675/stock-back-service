@@ -228,7 +228,10 @@ class MarketServiceTest {
                         stockAutoMarketConfigRepository,
                         stockListingAutoAccountConfigRepository,
                         stockOrderBookInstrumentRepository,
-                        new ListingAutoAccountLedgerQueryService(jdbcTemplate)
+                        new ListingAutoAccountLedgerQueryService(jdbcTemplate),
+                        simulationClockService,
+                        simulationMarketSessionService,
+                        commandJdbcTemplate
                 ),
                 new MarketStatusService(
                         stockVirtualMarketConfigRepository,
@@ -287,6 +290,7 @@ class MarketServiceTest {
                 new OrderBookQueryService(jdbcTemplate, stockOrderBookInstrumentRepository, stockOrderRepository, simulationClockService),
                 new OrderBookCandleQueryService(jdbcTemplate, stockOrderBookInstrumentRepository, stockPriceRepository, simulationClockService)
         );
+        stubDailyRegimeQuery();
     }
 
     private SimulationClockSnapshot currentSimulationClockSnapshot() {
@@ -382,6 +386,24 @@ class MarketServiceTest {
                 org.mockito.ArgumentMatchers.contains("from stock_auto_participant p"),
                 org.mockito.ArgumentMatchers.<org.springframework.jdbc.core.RowMapper<Object>>any(),
                 aryEq(new Object[0])
+        );
+    }
+
+    private void stubDailyRegimeQuery() {
+        lenient().doAnswer(invocation -> List.of()).when(jdbcTemplate).query(
+                org.mockito.ArgumentMatchers.contains("from stock_order_book_regime_modifier"),
+                org.mockito.ArgumentMatchers.<org.springframework.jdbc.core.RowMapper<Object>>any(),
+                org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any()
+        );
+        lenient().doAnswer(invocation -> List.of()).when(jdbcTemplate).query(
+                org.mockito.ArgumentMatchers.contains("from stock_order_book_daily_regime"),
+                org.mockito.ArgumentMatchers.<org.springframework.jdbc.core.RowMapper<Object>>any(),
+                org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any()
         );
     }
 
@@ -608,6 +630,50 @@ class MarketServiceTest {
         verify(stockAutoParticipantRepository, never()).findByWithdrawnAtIsNullOrderByUserKeyAsc();
         verify(stockAccountRepository, never()).findAllByUserKeyIn(org.mockito.ArgumentMatchers.anyCollection());
         verify(stockAutoParticipantRepository, never()).countByEnabledTrueAndWithdrawnAtIsNull();
+    }
+
+    @Test
+    void getAutoMarketStatus_withDailyRegime_includesGeneratedRandomValues() throws Exception {
+        StockAutoMarketConfig marketConfig = StockAutoMarketConfig.defaults("ZQ001");
+        marketConfig.update(true, 8, 5, 90);
+        when(stockAutoMarketConfigRepository.findAll()).thenReturn(List.of(marketConfig));
+        stubAutoParticipantStatusQuery();
+        when(stockOrderRepository.countOpenAutoOrders(any(), any())).thenReturn(0L);
+        when(stockExecutionMarketViewRepository.countAutoExecutionsBetween(any(), any())).thenReturn(0L);
+        doAnswer(invocation -> {
+            @SuppressWarnings("unchecked")
+            org.springframework.jdbc.core.RowMapper<Object> rowMapper = invocation.getArgument(1);
+            ResultSet resultSet = mock(ResultSet.class);
+            when(resultSet.getString("symbol")).thenReturn("ZQ001");
+            when(resultSet.getObject("simulation_trade_date", LocalDate.class)).thenReturn(LocalDate.of(2026, 7, 7));
+            when(resultSet.getString("regime_phase")).thenReturn("OPENING");
+            when(resultSet.getString("price_direction")).thenReturn("UP");
+            when(resultSet.getString("asset_preference")).thenReturn("STOCK");
+            when(resultSet.getInt("direction_intensity")).thenReturn(8);
+            when(resultSet.getInt("volatility_level")).thenReturn(6);
+            when(resultSet.getInt("liquidity_level")).thenReturn(4);
+            when(resultSet.getInt("execution_aggression_level")).thenReturn(7);
+            when(resultSet.getLong("seed")).thenReturn(1234567890123456789L);
+            when(resultSet.getObject("created_at", LocalDateTime.class)).thenReturn(LocalDateTime.of(2026, 7, 7, 5, 30));
+            when(resultSet.getObject("updated_at", LocalDateTime.class)).thenReturn(LocalDateTime.of(2026, 7, 7, 5, 30));
+            return List.of(rowMapper.mapRow(resultSet, 0));
+        }).when(jdbcTemplate).query(
+                org.mockito.ArgumentMatchers.contains("from stock_order_book_daily_regime"),
+                org.mockito.ArgumentMatchers.<org.springframework.jdbc.core.RowMapper<Object>>any(),
+                org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any()
+        );
+
+        var response = marketService.getAutoMarketStatus(false);
+
+        assertThat(response.configs()).hasSize(1);
+        assertThat(response.configs().get(0).dailyRegime()).isNotNull();
+        assertThat(response.configs().get(0).dailyRegime().regimePhase()).isEqualTo("OPENING");
+        assertThat(response.configs().get(0).dailyRegime().priceDirection()).isEqualTo("UP");
+        assertThat(response.configs().get(0).dailyRegime().assetPreference()).isEqualTo("STOCK");
+        assertThat(response.configs().get(0).dailyRegime().executionAggressionLevel()).isEqualTo(7);
+        assertThat(response.configs().get(0).dailyRegime().seed()).isEqualTo("1234567890123456789");
     }
 
     @Test
@@ -925,7 +991,7 @@ class MarketServiceTest {
         assertThat(sqlCaptor.getValue())
                 .contains("with execution_flow as")
                 .contains("and executed_at >= ?")
-                .contains("and executed_at <= ?")
+                .contains("and executed_at < ?")
                 .contains("selected_symbols as")
                 .contains("limit ?")
                 .contains("join selected_symbols s on s.symbol = o.symbol")
@@ -955,7 +1021,7 @@ class MarketServiceTest {
         assertThat(sqlCaptor.getValue())
                 .doesNotContain("selected_symbols")
                 .doesNotContain("and executed_at >= ?")
-                .doesNotContain("and executed_at <= ?")
+                .doesNotContain("and executed_at < ?")
                 .contains("from stock_order_book_instrument i")
                 .contains("from stock_execution")
                 .contains("from stock_order")

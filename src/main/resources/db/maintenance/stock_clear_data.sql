@@ -18,6 +18,8 @@ TRUNCATE TABLE stock_market_close_run;
 TRUNCATE TABLE stock_holding;
 TRUNCATE TABLE portfolio_snapshot;
 TRUNCATE TABLE stock_order;
+TRUNCATE TABLE stock_order_book_regime_modifier;
+TRUNCATE TABLE stock_order_book_daily_regime;
 TRUNCATE TABLE stock_auto_participant_order_schedule;
 
 TRUNCATE TABLE stock_instrument_report_event;

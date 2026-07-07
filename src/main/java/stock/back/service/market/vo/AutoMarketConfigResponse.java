@@ -5,6 +5,7 @@ public record AutoMarketConfigResponse(
         boolean enabled,
         int intensity,
         int maxOrderQuantity,
-        int orderTtlSeconds
+        int orderTtlSeconds,
+        AutoMarketDailyRegimeResponse dailyRegime
 ) {
 }

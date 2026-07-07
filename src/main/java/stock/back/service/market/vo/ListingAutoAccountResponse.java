@@ -11,6 +11,7 @@ public record ListingAutoAccountResponse(
         String displayName,
         boolean enabled,
         ListingAutoPosition positionSide,
+        long issuedShares,
         Long accountId,
         BigDecimal cashBalance,
         long holdingQuantity,

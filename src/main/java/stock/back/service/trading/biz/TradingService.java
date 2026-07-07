@@ -40,6 +40,7 @@ public class TradingService {
     private final TradingMarketRuleService tradingMarketRuleService;
     private final TradingReservationService tradingReservationService;
     private final SimulationClockService simulationClockService;
+    private final OrderBookReadySymbolPublisher orderBookReadySymbolPublisher;
 
     @Transactional
     public OrderResponse placeOrder(String userKey, OrderRequest request) {
@@ -88,7 +89,9 @@ public class TradingService {
                 orderedAt
         );
 
-        return TradingResponseMapper.toOrderResponse(stockOrderRepository.save(order));
+        StockOrder savedOrder = stockOrderRepository.save(order);
+        orderBookReadySymbolPublisher.enqueueAfterCommit(savedOrder.getSymbol(), savedOrder.getMarketType());
+        return TradingResponseMapper.toOrderResponse(savedOrder);
     }
 
     @Transactional
@@ -136,6 +139,7 @@ public class TradingService {
         } else {
             tradingReservationService.amendSellLimitOrder(account.getId(), order, nextQuantity, nextLimitPrice, amendedAt);
         }
+        orderBookReadySymbolPublisher.enqueueAfterCommit(order.getSymbol(), order.getMarketType());
         return TradingResponseMapper.toOrderResponse(order);
     }
 

@@ -92,6 +92,9 @@ class TradingServicePriceCacheTest {
     @Mock
     private SimulationMarketSessionService simulationMarketSessionService;
 
+    @Mock
+    private OrderBookReadySymbolPublisher orderBookReadySymbolPublisher;
+
     private TradingService tradingService;
 
     @BeforeEach
@@ -122,7 +125,8 @@ class TradingServicePriceCacheTest {
                         simulationMarketSessionService
                 ),
                 new TradingReservationService(accountService, stockHoldingRepository),
-                simulationClockService
+                simulationClockService,
+                orderBookReadySymbolPublisher
         );
     }
 

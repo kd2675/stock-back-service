@@ -269,6 +269,21 @@ public class AdminFlowQueryService {
     }
 
     @Transactional(readOnly = true)
+    public AdminSymbolFlowListResponse getAdminSymbolFlows(
+            int symbolFlowLimit,
+            AdminFundFlowScope scope,
+            boolean includeDailyCumulative,
+            int dailyCumulativeDays
+    ) {
+        return adminSymbolFlowQueryService.getAdminSymbolFlows(
+                symbolFlowLimit,
+                normalizeFlowScope(scope),
+                includeDailyCumulative,
+                dailyCumulativeDays
+        );
+    }
+
+    @Transactional(readOnly = true)
     public AdminCashFlowPageResponse getAdminCashFlows(int page, int size) {
         AdminCashFlowPageRequest pageRequest = AdminCashFlowPageRequest.of(page, size);
         long total = jdbcClient.sql("""

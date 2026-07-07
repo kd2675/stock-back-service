@@ -7,11 +7,16 @@ import stock.back.service.database.entity.StockAutoMarketConfig;
 import stock.back.service.database.entity.StockAutoParticipantSymbolConfig;
 import stock.back.service.database.entity.StockListingAutoAccountConfig;
 import stock.back.service.database.repository.StockAutoParticipantSymbolConfigRepository;
+import stock.back.service.market.vo.AutoMarketDailyRegimeResponse;
+import stock.back.service.market.vo.AutoMarketRegimeModifierResponse;
 import stock.back.service.market.vo.AutoParticipantResponse;
 import stock.back.service.market.vo.AutoParticipantSymbolConfigResponse;
 import stock.back.service.market.vo.ListingAutoAccountResponse;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
@@ -20,6 +25,7 @@ import java.util.stream.Collectors;
 @Service
 public class AutoMarketStatusDataLoader {
 
+    private final JdbcTemplate jdbcTemplate;
     private final JdbcClient jdbcClient;
     private final StockAutoParticipantSymbolConfigRepository stockAutoParticipantSymbolConfigRepository;
     private final ListingAutoAccountLedgerQueryService listingAutoAccountLedgerQueryService;
@@ -29,6 +35,7 @@ public class AutoMarketStatusDataLoader {
             StockAutoParticipantSymbolConfigRepository stockAutoParticipantSymbolConfigRepository,
             ListingAutoAccountLedgerQueryService listingAutoAccountLedgerQueryService
     ) {
+        this.jdbcTemplate = jdbcTemplate;
         this.jdbcClient = JdbcClient.create(jdbcTemplate);
         this.stockAutoParticipantSymbolConfigRepository = stockAutoParticipantSymbolConfigRepository;
         this.listingAutoAccountLedgerQueryService = listingAutoAccountLedgerQueryService;
@@ -112,17 +119,185 @@ public class AutoMarketStatusDataLoader {
                 .toList();
     }
 
+    Map<String, AutoMarketDailyRegimeResponse> loadDailyRegimesBySymbol(
+            List<String> symbols,
+            LocalDate simulationTradeDate,
+            String regimePhase,
+            LocalDateTime currentMarketDateTime
+    ) {
+        if (symbols.isEmpty() || simulationTradeDate == null || regimePhase == null || regimePhase.isBlank()) {
+            return Map.of();
+        }
+        Map<String, AutoMarketRegimeModifierResponse> modifiersBySymbol = loadCurrentRegimeModifiersBySymbol(
+                symbols,
+                simulationTradeDate,
+                regimePhase,
+                modifierWindowStartAt(currentMarketDateTime)
+        );
+        String placeholders = symbols.stream()
+                .map(symbol -> "?")
+                .collect(Collectors.joining(", "));
+        String sql = """
+                select symbol,
+                       simulation_trade_date,
+                       regime_phase,
+                       price_direction,
+                       asset_preference,
+                       direction_intensity,
+                       volatility_level,
+                       liquidity_level,
+                       execution_aggression_level,
+                       seed,
+                       created_at,
+                       updated_at
+                 from stock_order_book_daily_regime
+                 where symbol in (%s)
+                   and simulation_trade_date = ?
+                   and regime_phase = ?
+                 order by symbol asc
+                """.formatted(placeholders);
+        List<Object> params = new ArrayList<>(symbols);
+        params.add(simulationTradeDate);
+        params.add(regimePhase);
+        List<AutoMarketDailyRegimeResponse> rows = jdbcTemplate.query(
+                sql,
+                (rs, rowNum) -> new AutoMarketDailyRegimeResponse(
+                        rs.getString("symbol"),
+                        rs.getObject("simulation_trade_date", LocalDate.class),
+                        rs.getString("regime_phase"),
+                        rs.getString("price_direction"),
+                        rs.getString("asset_preference"),
+                        rs.getInt("direction_intensity"),
+                        rs.getInt("volatility_level"),
+                        rs.getInt("liquidity_level"),
+                        rs.getInt("execution_aggression_level"),
+                        Long.toString(rs.getLong("seed")),
+                        modifiersBySymbol.get(rs.getString("symbol")),
+                        rs.getObject("created_at", LocalDateTime.class),
+                        rs.getObject("updated_at", LocalDateTime.class)
+                ),
+                params.toArray()
+        );
+        Map<String, AutoMarketDailyRegimeResponse> regimesBySymbol = new LinkedHashMap<>();
+        for (AutoMarketDailyRegimeResponse row : rows) {
+            regimesBySymbol.put(row.symbol(), row);
+        }
+        return regimesBySymbol;
+    }
+
+    private Map<String, AutoMarketRegimeModifierResponse> loadCurrentRegimeModifiersBySymbol(
+            List<String> symbols,
+            LocalDate simulationTradeDate,
+            String regimePhase,
+            LocalDateTime modifierWindowStartAt
+    ) {
+        if (symbols.isEmpty() || modifierWindowStartAt == null) {
+            return Map.of();
+        }
+        String placeholders = symbols.stream()
+                .map(symbol -> "?")
+                .collect(Collectors.joining(", "));
+        String sql = """
+                select symbol,
+                       modifier_window_start_at,
+                       price_direction_modifier,
+                       asset_preference_modifier,
+                       direction_intensity_modifier,
+                       volatility_modifier,
+                       liquidity_modifier,
+                       execution_aggression_modifier,
+                       seed,
+                       created_at,
+                       updated_at
+                 from stock_order_book_regime_modifier
+                 where symbol in (%s)
+                   and simulation_trade_date = ?
+                   and regime_phase = ?
+                   and modifier_window_start_at = ?
+                 order by symbol asc
+                """.formatted(placeholders);
+        List<Object> params = new ArrayList<>(symbols);
+        params.add(simulationTradeDate);
+        params.add(regimePhase);
+        params.add(modifierWindowStartAt);
+        List<ModifierRow> rows = jdbcTemplate.query(
+                sql,
+                (rs, rowNum) -> new ModifierRow(
+                        rs.getString("symbol"),
+                        new AutoMarketRegimeModifierResponse(
+                                rs.getObject("modifier_window_start_at", LocalDateTime.class),
+                                rs.getInt("price_direction_modifier"),
+                                rs.getInt("asset_preference_modifier"),
+                                rs.getInt("direction_intensity_modifier"),
+                                rs.getInt("volatility_modifier"),
+                                rs.getInt("liquidity_modifier"),
+                                rs.getInt("execution_aggression_modifier"),
+                                Long.toString(rs.getLong("seed")),
+                                rs.getObject("created_at", LocalDateTime.class),
+                                rs.getObject("updated_at", LocalDateTime.class)
+                        )
+                ),
+                params.toArray()
+        );
+        Map<String, AutoMarketRegimeModifierResponse> modifiersBySymbol = new LinkedHashMap<>();
+        for (ModifierRow row : rows) {
+            modifiersBySymbol.put(row.symbol(), row.response());
+        }
+        return modifiersBySymbol;
+    }
+
+    private LocalDateTime modifierWindowStartAt(LocalDateTime now) {
+        if (now == null) {
+            return null;
+        }
+        int minute = now.getMinute() < 30 ? 0 : 30;
+        return now.withMinute(minute).withSecond(0).withNano(0);
+    }
+
+    private record ModifierRow(String symbol, AutoMarketRegimeModifierResponse response) {
+    }
+
     List<ListingAutoAccountResponse> toListingAutoAccountResponses(List<StockListingAutoAccountConfig> configs) {
         if (configs.isEmpty()) {
             return List.of();
         }
         Map<String, ListingAutoAccountLedger> ledgersBySymbol = listingAutoAccountLedgerQueryService.findLedgersBySymbol();
+        Map<String, Long> issuedSharesBySymbol = loadIssuedSharesBySymbol(configs);
         return configs.stream()
                 .map(config -> AutoMarketStatusResponseMapper.toListingAutoAccount(
                         config,
-                        ledgersBySymbol.getOrDefault(config.getSymbol(), ListingAutoAccountLedger.empty())
+                        ledgersBySymbol.getOrDefault(config.getSymbol(), ListingAutoAccountLedger.empty()),
+                        issuedSharesBySymbol.getOrDefault(config.getSymbol(), 0L)
                 ))
                 .toList();
+    }
+
+    private Map<String, Long> loadIssuedSharesBySymbol(List<StockListingAutoAccountConfig> configs) {
+        List<String> symbols = configs.stream()
+                .map(StockListingAutoAccountConfig::getSymbol)
+                .distinct()
+                .toList();
+        if (symbols.isEmpty()) {
+            return Map.of();
+        }
+        String sql = """
+                select symbol, issued_shares
+                  from stock_order_book_instrument
+                 where symbol in (:symbols)
+                """;
+        return jdbcClient.sql(sql)
+                .param("symbols", symbols)
+                .query((rs, rowNum) -> Map.entry(
+                        rs.getString("symbol"),
+                        rs.getLong("issued_shares")
+                ))
+                .list()
+                .stream()
+                .collect(Collectors.toMap(
+                        Map.Entry::getKey,
+                        Map.Entry::getValue,
+                        (left, right) -> left
+                ));
     }
 
     private String autoParticipantSymbolConfigKey(String userKey, String symbol) {

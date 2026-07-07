@@ -5,6 +5,7 @@ import stock.back.service.database.entity.StockAutoMarketConfig;
 import stock.back.service.database.entity.StockAutoParticipantSymbolConfig;
 import stock.back.service.database.entity.StockListingAutoAccountConfig;
 import stock.back.service.market.vo.AutoMarketConfigResponse;
+import stock.back.service.market.vo.AutoMarketDailyRegimeResponse;
 import stock.back.service.market.vo.AutoMarketStatusResponse;
 import stock.back.service.market.vo.AutoParticipantProfileConfigResponse;
 import stock.back.service.market.vo.AutoParticipantResponse;
@@ -87,12 +88,17 @@ final class AutoMarketStatusResponseMapper {
     }
 
     static AutoMarketConfigResponse toMarketConfig(StockAutoMarketConfig config) {
+        return toMarketConfig(config, null);
+    }
+
+    static AutoMarketConfigResponse toMarketConfig(StockAutoMarketConfig config, AutoMarketDailyRegimeResponse dailyRegime) {
         return new AutoMarketConfigResponse(
                 config.getSymbol(),
                 Boolean.TRUE.equals(config.getEnabled()),
                 config.getIntensity() == null ? 0 : config.getIntensity(),
                 config.getMaxOrderQuantity() == null ? 0 : config.getMaxOrderQuantity(),
-                config.getOrderTtlSeconds() == null ? 0 : config.getOrderTtlSeconds()
+                config.getOrderTtlSeconds() == null ? 0 : config.getOrderTtlSeconds(),
+                dailyRegime
         );
     }
 
@@ -126,7 +132,8 @@ final class AutoMarketStatusResponseMapper {
 
     static ListingAutoAccountResponse toListingAutoAccount(
             StockListingAutoAccountConfig config,
-            ListingAutoAccountLedger ledger
+            ListingAutoAccountLedger ledger,
+            long issuedShares
     ) {
         return new ListingAutoAccountResponse(
                 config.getSymbol(),
@@ -134,6 +141,7 @@ final class AutoMarketStatusResponseMapper {
                 config.getDisplayName(),
                 Boolean.TRUE.equals(config.getEnabled()),
                 config.getPositionSide(),
+                issuedShares,
                 ledger.accountId(),
                 ledger.cashBalance(),
                 ledger.holdingQuantity(),

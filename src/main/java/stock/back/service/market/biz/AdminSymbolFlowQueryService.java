@@ -6,11 +6,14 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import stock.back.service.database.repository.StockOrderBookInstrumentRepository;
 import stock.back.service.market.vo.AdminFundFlowScope;
+import stock.back.service.market.vo.AdminSymbolFlowDailyCumulativeResponse;
 import stock.back.service.market.vo.AdminSymbolFlowListResponse;
 import stock.back.service.market.vo.AdminSymbolFlowResponse;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.stream.IntStream;
 
 @Service
 public class AdminSymbolFlowQueryService {
@@ -68,12 +71,28 @@ public class AdminSymbolFlowQueryService {
 
     @Transactional(readOnly = true)
     public AdminSymbolFlowListResponse getAdminSymbolFlows(int symbolFlowLimit, AdminFundFlowScope scope) {
+        return getAdminSymbolFlows(symbolFlowLimit, scope, false, 0);
+    }
+
+    @Transactional(readOnly = true)
+    public AdminSymbolFlowListResponse getAdminSymbolFlows(
+            int symbolFlowLimit,
+            AdminFundFlowScope scope,
+            boolean includeDailyCumulative,
+            int dailyCumulativeDays
+    ) {
         int normalizedSymbolFlowLimit = Math.clamp(symbolFlowLimit, 0, 500);
-        List<AdminSymbolFlowResponse> symbolFlows = loadAdminSymbolFlows(normalizedSymbolFlowLimit, normalizeScope(scope));
+        List<AdminSymbolFlowResponse> symbolFlows = loadAdminSymbolFlows(
+                normalizedSymbolFlowLimit,
+                symbolFlowExecutionWindow(normalizeScope(scope))
+        );
         long totalCount = normalizedSymbolFlowLimit > 0
                 ? countSymbols()
                 : symbolFlows.size();
-        return new AdminSymbolFlowListResponse(totalCount, symbolFlows);
+        List<AdminSymbolFlowDailyCumulativeResponse> dailyCumulativeFlows = includeDailyCumulative
+                ? loadDailyCumulativeSymbolFlows(normalizedSymbolFlowLimit, Math.clamp(dailyCumulativeDays, 1, 14))
+                : List.of();
+        return new AdminSymbolFlowListResponse(totalCount, symbolFlows, dailyCumulativeFlows);
     }
 
     @Transactional(readOnly = true)
@@ -81,15 +100,14 @@ public class AdminSymbolFlowQueryService {
         return stockOrderBookInstrumentRepository.count();
     }
 
-    private List<AdminSymbolFlowResponse> loadAdminSymbolFlows(int limit, AdminFundFlowScope scope) {
+    private List<AdminSymbolFlowResponse> loadAdminSymbolFlows(int limit, SymbolFlowExecutionWindow executionWindow) {
         if (limit > 0) {
-            return loadLimitedAdminSymbolFlows(limit, scope);
+            return loadLimitedAdminSymbolFlows(limit, executionWindow);
         }
-        return loadAllAdminSymbolFlows(scope);
+        return loadAllAdminSymbolFlows(executionWindow);
     }
 
-    private List<AdminSymbolFlowResponse> loadLimitedAdminSymbolFlows(int limit, AdminFundFlowScope scope) {
-        SymbolFlowExecutionWindow executionWindow = symbolFlowExecutionWindow(scope);
+    private List<AdminSymbolFlowResponse> loadLimitedAdminSymbolFlows(int limit, SymbolFlowExecutionWindow executionWindow) {
         String sql = """
                 with execution_flow as (
                        select symbol,
@@ -162,8 +180,7 @@ public class AdminSymbolFlowQueryService {
                 .list();
     }
 
-    private List<AdminSymbolFlowResponse> loadAllAdminSymbolFlows(AdminFundFlowScope scope) {
-        SymbolFlowExecutionWindow executionWindow = symbolFlowExecutionWindow(scope);
+    private List<AdminSymbolFlowResponse> loadAllAdminSymbolFlows(SymbolFlowExecutionWindow executionWindow) {
         String sql = """
                 select
                 """ + SYMBOL_FLOW_SELECT_COLUMNS + """
@@ -217,6 +234,30 @@ public class AdminSymbolFlowQueryService {
                 .list();
     }
 
+    private List<AdminSymbolFlowDailyCumulativeResponse> loadDailyCumulativeSymbolFlows(int limit, int days) {
+        LocalDateTime currentDayStart = simulationClockService.currentMarketDayStart();
+        LocalDateTime currentTime = simulationClockService.currentMarketDateTime();
+        long totalCount = limit > 0 ? countSymbols() : -1L;
+        return IntStream.range(0, days)
+                .mapToObj(dayOffset -> {
+                    LocalDateTime rangeStart = currentDayStart.minusDays(dayOffset);
+                    LocalDateTime rangeEnd = dayOffset == 0 ? currentTime : rangeStart.plusDays(1);
+                    LocalDate simulationTradeDate = rangeStart.toLocalDate();
+                    List<AdminSymbolFlowResponse> symbolFlows = loadAdminSymbolFlows(
+                            limit,
+                            SymbolFlowExecutionWindow.recent(rangeStart, rangeEnd)
+                    );
+                    return new AdminSymbolFlowDailyCumulativeResponse(
+                            simulationTradeDate,
+                            rangeStart,
+                            rangeEnd,
+                            totalCount >= 0 ? totalCount : symbolFlows.size(),
+                            symbolFlows
+                    );
+                })
+                .toList();
+    }
+
     private JdbcClient.StatementSpec bindExecutionWindow(
             JdbcClient.StatementSpec statement,
             SymbolFlowExecutionWindow executionWindow
@@ -262,7 +303,7 @@ public class AdminSymbolFlowQueryService {
             }
             return """
                    and executed_at >= ?
-                   and executed_at <= ?
+                   and executed_at < ?
             """;
         }
     }

@@ -108,6 +108,30 @@ class AdminFlowQueryServiceTest {
     }
 
     @Test
+    void getAdminSymbolFlows_withDailyCumulative_returnsRecentSimulationDays() {
+        JdbcTemplate jdbcTemplate = createJdbcTemplate("admin_flow_query_service_symbol_flow_daily_cumulative_test");
+        AdminFlowQueryService service = createService(jdbcTemplate);
+        seedSymbolFlow(jdbcTemplate);
+        insertSymbolExecutionAt(jdbcTemplate, 1L, "STOCK001", "BUY", 3L, "300.00", "290.00", SIMULATION_NOW.minusMinutes(10));
+        insertSymbolExecutionAt(jdbcTemplate, 2L, "STOCK001", "SELL", 2L, "200.00", "195.00", SIMULATION_DAY_START.minusDays(1).plusHours(1));
+        insertSymbolExecutionAt(jdbcTemplate, 3L, "STOCK001", "BUY", 9L, "900.00", "890.00", SIMULATION_DAY_START.minusDays(8).plusHours(1));
+
+        var response = service.getAdminSymbolFlows(0, AdminFundFlowScope.ALL, true, 7);
+
+        assertThat(response.dailyCumulativeFlows()).hasSize(7);
+        var today = response.dailyCumulativeFlows().get(0);
+        assertThat(today.simulationTradeDate()).isEqualTo(SIMULATION_DAY_START.toLocalDate());
+        assertThat(today.symbolFlows()).hasSize(1);
+        assertThat(today.symbolFlows().getFirst().executionCount()).isEqualTo(1L);
+        assertThat(today.symbolFlows().getFirst().buyQuantity()).isEqualTo(3L);
+        var yesterday = response.dailyCumulativeFlows().get(1);
+        assertThat(yesterday.simulationTradeDate()).isEqualTo(SIMULATION_DAY_START.minusDays(1).toLocalDate());
+        assertThat(yesterday.symbolFlows().getFirst().executionCount()).isEqualTo(1L);
+        assertThat(yesterday.symbolFlows().getFirst().sellQuantity()).isEqualTo(2L);
+        assertThat(response.dailyCumulativeFlows().get(6).symbolFlows().getFirst().executionCount()).isZero();
+    }
+
+    @Test
     void getAdminCashFlows_readsPageWithJdbcClient() {
         JdbcTemplate jdbcTemplate = createJdbcTemplate("admin_flow_query_service_cash_page_test");
         AdminFlowQueryService service = createService(jdbcTemplate);

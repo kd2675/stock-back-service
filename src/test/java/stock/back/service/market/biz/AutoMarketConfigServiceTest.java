@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.jdbc.core.JdbcTemplate;
 import stock.back.service.common.exception.StockException;
 import stock.back.service.database.entity.ListingAutoPosition;
 import stock.back.service.database.entity.StockAutoMarketConfig;
@@ -16,11 +17,13 @@ import stock.back.service.market.vo.AutoMarketConfigUpdateRequest;
 import stock.back.service.market.vo.ListingAutoAccountRequest;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -40,6 +43,15 @@ class AutoMarketConfigServiceTest {
     @Mock
     private ListingAutoAccountLedgerQueryService listingAutoAccountLedgerQueryService;
 
+    @Mock
+    private SimulationClockService simulationClockService;
+
+    @Mock
+    private SimulationMarketSessionService simulationMarketSessionService;
+
+    @Mock
+    private JdbcTemplate jdbcTemplate;
+
     private AutoMarketConfigService service;
 
     @BeforeEach
@@ -48,8 +60,13 @@ class AutoMarketConfigServiceTest {
                 stockAutoMarketConfigRepository,
                 stockListingAutoAccountConfigRepository,
                 stockOrderBookInstrumentRepository,
-                listingAutoAccountLedgerQueryService
+                listingAutoAccountLedgerQueryService,
+                simulationClockService,
+                simulationMarketSessionService,
+                jdbcTemplate
         );
+        lenient().when(simulationMarketSessionService.openTime()).thenReturn(java.time.LocalTime.of(6, 0));
+        lenient().when(simulationMarketSessionService.closeTime()).thenReturn(java.time.LocalTime.of(18, 0));
     }
 
     @Test
@@ -85,6 +102,43 @@ class AutoMarketConfigServiceTest {
                 .hasMessageContaining("Intensity must be between 1 and 10");
 
         verify(stockAutoMarketConfigRepository, never()).save(any());
+    }
+
+    @Test
+    void regenerateDailyRegime_afterMidSession_updatesMiddayRegime() {
+        when(stockOrderBookInstrumentRepository.existsById("ZQ001")).thenReturn(true);
+        when(stockAutoMarketConfigRepository.findById("ZQ001")).thenReturn(Optional.of(StockAutoMarketConfig.defaults("ZQ001")));
+        when(simulationClockService.currentMarketDateTime()).thenReturn(LocalDateTime.of(2026, 7, 7, 12, 30));
+        when(jdbcTemplate.update(
+                org.mockito.ArgumentMatchers.contains("update stock_order_book_daily_regime"),
+                any(),
+                any(),
+                any(),
+                any(),
+                any(),
+                any(),
+                any(),
+                any(),
+                any(),
+                any(),
+                any()
+        )).thenReturn(1);
+        when(jdbcTemplate.query(
+                org.mockito.ArgumentMatchers.contains("from stock_order_book_regime_modifier"),
+                org.mockito.ArgumentMatchers.<org.springframework.jdbc.core.RowMapper<Object>>any(),
+                any(),
+                any(),
+                any(),
+                any()
+        )).thenReturn(java.util.List.of());
+
+        var response = service.regenerateDailyRegime("zq001");
+
+        assertThat(response.symbol()).isEqualTo("ZQ001");
+        assertThat(response.dailyRegime()).isNotNull();
+        assertThat(response.dailyRegime().regimePhase()).isEqualTo("MIDDAY");
+        assertThat(response.dailyRegime().simulationTradeDate()).isEqualTo(java.time.LocalDate.of(2026, 7, 7));
+        assertThat(response.dailyRegime().executionAggressionLevel()).isBetween(1, 10);
     }
 
     @Test
