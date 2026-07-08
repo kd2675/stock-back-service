@@ -33,7 +33,7 @@ public class StockPriceCacheService {
             return parseCachedPrice(rawPrice)
                     .map(currentPrice -> new CachedStockPrice(currentPrice, CACHE_PROVIDER));
         } catch (RuntimeException ex) {
-            log.debug("Redis price cache read skipped: symbol={}, reason={}", symbol, ex.getMessage());
+            log.warn("Redis price cache read skipped: symbol={}, reason={}", symbol, ex.getMessage());
             return Optional.empty();
         }
     }
@@ -70,7 +70,7 @@ public class StockPriceCacheService {
             }
             return cachedPricesBySymbol;
         } catch (RuntimeException ex) {
-            log.debug("Redis price cache batch read skipped: symbols={}, reason={}", symbols, ex.getMessage());
+            log.warn("Redis price cache batch read skipped: symbols={}, reason={}", symbols, ex.getMessage());
             return Map.of();
         }
     }

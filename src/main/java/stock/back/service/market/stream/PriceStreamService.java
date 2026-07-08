@@ -60,7 +60,10 @@ public class PriceStreamService implements MessageListener {
         try {
             priceStreamTaskExecutor.execute(() -> broadcast(event));
         } catch (RejectedExecutionException ex) {
-            log.debug("SSE price stream event dropped: symbol={}, reason={}", event.symbol(), ex.getMessage());
+            log.warn("SSE price stream event dropped because executor is saturated: symbol={}, reason={}",
+                    event.symbol(),
+                    ex.getMessage()
+            );
         }
     }
 
@@ -112,7 +115,7 @@ public class PriceStreamService implements MessageListener {
                     simulationClockService.currentMarketDateTime().toString()
             );
         } catch (RuntimeException | IOException ex) {
-            log.debug("Redis price stream message skipped: channel={}, reason={}", channel, ex.getMessage());
+            log.warn("Redis price stream message skipped: channel={}, reason={}", channel, ex.getMessage());
             return null;
         }
     }
