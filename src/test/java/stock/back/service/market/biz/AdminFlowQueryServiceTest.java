@@ -7,6 +7,7 @@ import stock.back.service.database.repository.StockOrderBookInstrumentRepository
 import stock.back.service.market.vo.AdminFundFlowScope;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -115,6 +116,19 @@ class AdminFlowQueryServiceTest {
         insertSymbolExecutionAt(jdbcTemplate, 1L, "STOCK001", "BUY", 3L, "300.00", "290.00", SIMULATION_NOW.minusMinutes(10));
         insertSymbolExecutionAt(jdbcTemplate, 2L, "STOCK001", "SELL", 2L, "200.00", "195.00", SIMULATION_DAY_START.minusDays(1).plusHours(1));
         insertSymbolExecutionAt(jdbcTemplate, 3L, "STOCK001", "BUY", 9L, "900.00", "890.00", SIMULATION_DAY_START.minusDays(8).plusHours(1));
+        insertDailySnapshot(
+                jdbcTemplate,
+                100L,
+                "STOCK001",
+                SIMULATION_DAY_START.minusDays(1).toLocalDate(),
+                "95.00",
+                "100.00",
+                7L,
+                12L,
+                "1200.00",
+                5L,
+                7L
+        );
 
         var response = service.getAdminSymbolFlows(0, AdminFundFlowScope.ALL, true, 7);
 
@@ -124,11 +138,30 @@ class AdminFlowQueryServiceTest {
         assertThat(today.symbolFlows()).hasSize(1);
         assertThat(today.symbolFlows().getFirst().executionCount()).isEqualTo(1L);
         assertThat(today.symbolFlows().getFirst().buyQuantity()).isEqualTo(3L);
+        assertThat(today.symbolFlows().getFirst().currentPrice()).isNull();
+        assertThat(today.symbolFlows().getFirst().previousClose()).isNull();
+        assertThat(today.symbolFlows().getFirst().changeRate()).isNull();
         var yesterday = response.dailyCumulativeFlows().get(1);
         assertThat(yesterday.simulationTradeDate()).isEqualTo(SIMULATION_DAY_START.minusDays(1).toLocalDate());
-        assertThat(yesterday.symbolFlows().getFirst().executionCount()).isEqualTo(1L);
-        assertThat(yesterday.symbolFlows().getFirst().sellQuantity()).isEqualTo(2L);
+        assertThat(yesterday.symbolFlows().getFirst().executionCount()).isEqualTo(7L);
+        assertThat(yesterday.symbolFlows().getFirst().executionQuantity()).isEqualTo(12L);
+        assertThat(yesterday.symbolFlows().getFirst().turnoverAmount()).isEqualByComparingTo(new BigDecimal("1200.00"));
+        assertThat(yesterday.symbolFlows().getFirst().buyQuantity()).isEqualTo(5L);
+        assertThat(yesterday.symbolFlows().getFirst().sellQuantity()).isEqualTo(7L);
+        assertThat(yesterday.symbolFlows().getFirst().currentPrice()).isEqualByComparingTo(new BigDecimal("95.00"));
+        assertThat(yesterday.symbolFlows().getFirst().previousClose()).isEqualByComparingTo(new BigDecimal("100.00"));
+        assertThat(yesterday.symbolFlows().getFirst().changeRate()).isEqualByComparingTo(new BigDecimal("-5.0000"));
         assertThat(response.dailyCumulativeFlows().get(6).symbolFlows().getFirst().executionCount()).isZero();
+
+        var olderResponse = service.getAdminSymbolFlows(0, AdminFundFlowScope.ALL, true, 7, 7);
+
+        assertThat(olderResponse.dailyCumulativeFlows()).hasSize(7);
+        assertThat(olderResponse.dailyCumulativeFlows().get(0).simulationTradeDate()).isEqualTo(SIMULATION_DAY_START.minusDays(7).toLocalDate());
+        assertThat(olderResponse.dailyCumulativeFlows().get(1).simulationTradeDate()).isEqualTo(SIMULATION_DAY_START.minusDays(8).toLocalDate());
+        assertThat(olderResponse.dailyCumulativeFlows().get(1).symbolFlows().getFirst().executionCount()).isEqualTo(1L);
+        assertThat(olderResponse.dailyCumulativeFlows().get(1).symbolFlows().getFirst().buyQuantity()).isEqualTo(9L);
+        assertThat(olderResponse.dailyCumulativeFlows().get(1).symbolFlows().getFirst().currentPrice()).isNull();
+        assertThat(olderResponse.dailyCumulativeFlows().get(1).symbolFlows().getFirst().changeRate()).isNull();
     }
 
     @Test
@@ -228,6 +261,46 @@ class AdminFlowQueryServiceTest {
                     symbol varchar(20) primary key,
                     current_price decimal(19, 2) not null,
                     previous_close decimal(19, 2) not null default 0
+                )
+                """);
+        jdbcTemplate.execute("""
+                create table stock_order_book_daily_snapshot (
+                    id bigint primary key,
+                    close_run_id bigint not null,
+                    symbol varchar(20) not null,
+                    simulation_trade_date date not null,
+                    snapshot_at timestamp not null,
+                    name varchar(120) not null,
+                    market varchar(20) not null,
+                    enabled boolean not null,
+                    market_enabled boolean not null,
+                    market_status varchar(20) not null,
+                    issued_shares bigint not null,
+                    tradable_shares bigint not null,
+                    initial_price decimal(19, 2) not null,
+                    tick_size decimal(19, 2) not null,
+                    price_limit_rate decimal(5, 2) not null,
+                    close_price decimal(19, 2) not null,
+                    previous_close decimal(19, 2) not null,
+                    change_rate decimal(9, 4) not null default 0,
+                    price_time timestamp,
+                    price_provider varchar(40),
+                    execution_count bigint not null default 0,
+                    execution_quantity bigint not null default 0,
+                    turnover_amount decimal(19, 2) not null default 0,
+                    buy_quantity bigint not null default 0,
+                    sell_quantity bigint not null default 0,
+                    buy_net_amount decimal(19, 2) not null default 0,
+                    sell_net_amount decimal(19, 2) not null default 0,
+                    open_order_count bigint not null default 0,
+                    open_buy_order_count bigint not null default 0,
+                    open_sell_order_count bigint not null default 0,
+                    reserved_buy_cash decimal(19, 2) not null default 0,
+                    holder_count bigint not null default 0,
+                    holding_quantity bigint not null default 0,
+                    pending_corporate_action_count bigint not null default 0,
+                    last_executed_at timestamp,
+                    created_at timestamp not null
                 )
                 """);
         jdbcTemplate.execute("""
@@ -534,6 +607,62 @@ class AdminFlowQueryServiceTest {
                 new BigDecimal(grossAmount),
                 new BigDecimal(netAmount),
                 executedAt
+        );
+    }
+
+    private void insertDailySnapshot(
+            JdbcTemplate jdbcTemplate,
+            long closeRunId,
+            String symbol,
+            LocalDate simulationTradeDate,
+            String closePrice,
+            String previousClose,
+            long executionCount,
+            long executionQuantity,
+            String turnoverAmount,
+            long buyQuantity,
+            long sellQuantity
+    ) {
+        jdbcTemplate.update(
+                """
+                insert into stock_order_book_daily_snapshot(
+                    id, close_run_id, symbol, simulation_trade_date, snapshot_at,
+                    name, market, enabled, market_enabled, market_status,
+                    issued_shares, tradable_shares, initial_price, tick_size, price_limit_rate,
+                    close_price, previous_close, change_rate, price_time, price_provider,
+                    execution_count, execution_quantity, turnover_amount,
+                    buy_quantity, sell_quantity, buy_net_amount, sell_net_amount,
+                    open_order_count, open_buy_order_count, open_sell_order_count, reserved_buy_cash,
+                    holder_count, holding_quantity, pending_corporate_action_count,
+                    last_executed_at, created_at
+                )
+                values (
+                    ?, ?, ?, ?, ?,
+                    '테스트주식', 'ORDER_BOOK', true, true, 'CLOSED',
+                    100000, 90000, 100.00, 1.00, 30.00,
+                    ?, ?, 0.0000, ?, 'SIMULATION',
+                    ?, ?, ?,
+                    ?, ?, 500.00, 700.00,
+                    3, 1, 2, 1000.00,
+                    2, 1500, 0,
+                    ?, ?
+                )
+                """,
+                closeRunId,
+                closeRunId,
+                symbol,
+                simulationTradeDate,
+                SIMULATION_NOW,
+                new BigDecimal(closePrice),
+                new BigDecimal(previousClose),
+                SIMULATION_NOW,
+                executionCount,
+                executionQuantity,
+                new BigDecimal(turnoverAmount),
+                buyQuantity,
+                sellQuantity,
+                SIMULATION_NOW.minusMinutes(5),
+                SIMULATION_NOW
         );
     }
 }

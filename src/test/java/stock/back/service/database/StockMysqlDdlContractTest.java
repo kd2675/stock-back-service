@@ -107,6 +107,8 @@ class StockMysqlDdlContractTest {
     private static final List<String> MARKET_CLOSE_SNAPSHOT_TABLE_MARKERS = List.of(
             "stock_market_close_run",
             "stock_holding_snapshot",
+            "stock_order_book_daily_snapshot",
+            "uk_stock_order_book_daily_snapshot_run_symbol",
             "holding_snapshot_run_id"
     );
 
@@ -120,6 +122,7 @@ class StockMysqlDdlContractTest {
             "TRUNCATE TABLE stock_order;",
             "TRUNCATE TABLE stock_auto_participant_order_schedule;",
             "TRUNCATE TABLE portfolio_snapshot;",
+            "TRUNCATE TABLE stock_order_book_daily_snapshot;",
             "TRUNCATE TABLE stock_market_close_run;",
             "TRUNCATE TABLE stock_listing_auto_account_config;",
             "TRUNCATE TABLE stock_simulation_clock;"
@@ -133,6 +136,7 @@ class StockMysqlDdlContractTest {
             "TRUNCATE TABLE stock_execution;",
             "TRUNCATE TABLE stock_account_cash_flow;",
             "TRUNCATE TABLE stock_holding_snapshot;",
+            "TRUNCATE TABLE stock_order_book_daily_snapshot;",
             "TRUNCATE TABLE stock_market_close_run;",
             "TRUNCATE TABLE stock_holding;",
             "TRUNCATE TABLE portfolio_snapshot;",

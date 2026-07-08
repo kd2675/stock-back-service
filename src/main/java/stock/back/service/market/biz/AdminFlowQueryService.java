@@ -275,11 +275,29 @@ public class AdminFlowQueryService {
             boolean includeDailyCumulative,
             int dailyCumulativeDays
     ) {
+        return getAdminSymbolFlows(
+                symbolFlowLimit,
+                scope,
+                includeDailyCumulative,
+                dailyCumulativeDays,
+                0
+        );
+    }
+
+    @Transactional(readOnly = true)
+    public AdminSymbolFlowListResponse getAdminSymbolFlows(
+            int symbolFlowLimit,
+            AdminFundFlowScope scope,
+            boolean includeDailyCumulative,
+            int dailyCumulativeDays,
+            int dailyCumulativeDayOffset
+    ) {
         return adminSymbolFlowQueryService.getAdminSymbolFlows(
                 symbolFlowLimit,
                 normalizeFlowScope(scope),
                 includeDailyCumulative,
-                dailyCumulativeDays
+                dailyCumulativeDays,
+                dailyCumulativeDayOffset
         );
     }
 

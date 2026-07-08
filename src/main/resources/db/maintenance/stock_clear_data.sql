@@ -14,6 +14,7 @@ TRUNCATE TABLE stock_corporate_action_entitlement;
 TRUNCATE TABLE stock_execution;
 TRUNCATE TABLE stock_account_cash_flow;
 TRUNCATE TABLE stock_holding_snapshot;
+TRUNCATE TABLE stock_order_book_daily_snapshot;
 TRUNCATE TABLE stock_market_close_run;
 TRUNCATE TABLE stock_holding;
 TRUNCATE TABLE portfolio_snapshot;

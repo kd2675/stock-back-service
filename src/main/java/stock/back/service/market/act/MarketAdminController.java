@@ -52,13 +52,15 @@ public class MarketAdminController {
             @RequestParam(defaultValue = "0") int limit,
             @RequestParam(defaultValue = "RECENT_SIMULATION_DAY") AdminFundFlowScope scope,
             @RequestParam(defaultValue = "false") boolean includeDailyCumulative,
-            @RequestParam(defaultValue = "7") int dailyCumulativeDays
+            @RequestParam(defaultValue = "7") int dailyCumulativeDays,
+            @RequestParam(defaultValue = "0") int dailyCumulativeDayOffset
     ) {
         return ResponseDataDTO.of(adminFlowQueryService.getAdminSymbolFlows(
                 limit,
                 scope,
                 includeDailyCumulative,
-                dailyCumulativeDays
+                dailyCumulativeDays,
+                dailyCumulativeDayOffset
         ));
     }
 

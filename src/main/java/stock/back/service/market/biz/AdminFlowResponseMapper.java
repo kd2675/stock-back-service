@@ -73,8 +73,8 @@ final class AdminFlowResponseMapper {
     }
 
     static AdminSymbolFlowResponse toSymbolFlow(ResultSet rs) throws SQLException {
-        BigDecimal currentPrice = MarketQuerySupport.zeroIfNull(rs.getBigDecimal("current_price"));
-        BigDecimal previousClose = MarketQuerySupport.zeroIfNull(rs.getBigDecimal("previous_close"));
+        BigDecimal currentPrice = rs.getBigDecimal("current_price");
+        BigDecimal previousClose = rs.getBigDecimal("previous_close");
         return new AdminSymbolFlowResponse(
                 rs.getString("symbol"),
                 rs.getString("name"),
@@ -118,7 +118,7 @@ final class AdminFlowResponseMapper {
 
     private static BigDecimal calculateChangeRate(BigDecimal currentPrice, BigDecimal previousClose) {
         if (currentPrice == null || previousClose == null || previousClose.compareTo(BigDecimal.ZERO) <= 0) {
-            return BigDecimal.ZERO;
+            return null;
         }
         return currentPrice.subtract(previousClose)
                 .multiply(BigDecimal.valueOf(100))
