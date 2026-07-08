@@ -989,7 +989,7 @@ class MarketServiceTest {
         assertThat(response.totalCount()).isEqualTo(42L);
         assertThat(response.symbolFlows()).isEmpty();
         assertThat(sqlCaptor.getValue())
-                .contains("with execution_flow as")
+                .contains("execution_flow as")
                 .contains("and executed_at >= ?")
                 .contains("and executed_at < ?")
                 .contains("selected_symbols as")

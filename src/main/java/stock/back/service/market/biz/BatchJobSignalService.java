@@ -4,6 +4,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.support.GeneratedKeyHolder;
 import org.springframework.jdbc.support.KeyHolder;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 import stock.back.service.market.vo.StockBatchJobRunResponse;
@@ -11,7 +12,9 @@ import stock.back.service.market.vo.StockBatchJobRunResponse;
 import java.sql.PreparedStatement;
 import java.sql.Statement;
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Locale;
+import java.util.Optional;
 
 @Service
 public class BatchJobSignalService {
@@ -28,9 +31,9 @@ public class BatchJobSignalService {
         this.jdbcTemplate = jdbcTemplate;
     }
 
-    @Transactional
+    @Transactional(isolation = Isolation.SERIALIZABLE)
     public StockBatchJobRunResponse enqueueAutoParticipantCashFlow(String requestedBy) {
-        return enqueue(
+        return enqueueDeduplicated(
                 SIGNAL_AUTO_PARTICIPANT_CASH_FLOW_RUN,
                 BatchJobNames.AUTO_PARTICIPANT_CASH_FLOW,
                 "manual-recurring-cash",
@@ -82,6 +85,65 @@ public class BatchJobSignalService {
             String requestedBy
     ) {
         LocalDateTime now = LocalDateTime.now();
+        return insertSignal(signalType, jobName, executionMode, symbol, requestedBy, now);
+    }
+
+    private StockBatchJobRunResponse enqueueDeduplicated(
+            String signalType,
+            String jobName,
+            String executionMode,
+            String symbol,
+            String requestedBy
+    ) {
+        LocalDateTime now = LocalDateTime.now();
+        Optional<Long> existingSignalId = findOpenSignalId(signalType, jobName, executionMode, symbol);
+        if (existingSignalId.isPresent()) {
+            return queuedResponse(
+                    jobName,
+                    executionMode,
+                    "Batch job signal already queued: id=" + existingSignalId.get(),
+                    now
+            );
+        }
+        return insertSignal(signalType, jobName, executionMode, symbol, requestedBy, now);
+    }
+
+    private Optional<Long> findOpenSignalId(
+            String signalType,
+            String jobName,
+            String executionMode,
+            String symbol
+    ) {
+        List<Long> signalIds = jdbcTemplate.query(
+                """
+                select id
+                  from stock_batch_job_signal
+                 where signal_type = ?
+                   and job_name = ?
+                   and execution_mode = ?
+                   and ((? is null and symbol is null) or symbol = ?)
+                   and status in ('PENDING', 'PROCESSING')
+                 order by id asc
+                 limit 1
+                """,
+                (rs, rowNum) -> rs.getLong("id"),
+                signalType,
+                jobName,
+                executionMode,
+                symbol,
+                symbol
+        );
+        return signalIds.stream().findFirst();
+    }
+
+    private StockBatchJobRunResponse insertSignal(
+            String signalType,
+            String jobName,
+            String executionMode,
+            String symbol,
+            String requestedBy,
+            LocalDateTime now
+    ) {
         KeyHolder keyHolder = new GeneratedKeyHolder();
         jdbcTemplate.update(connection -> {
             PreparedStatement statement = connection.prepareStatement(
@@ -114,12 +176,26 @@ public class BatchJobSignalService {
         }, keyHolder);
         Number generatedId = keyHolder.getKey();
         long signalId = generatedId == null ? 0L : generatedId.longValue();
+        return queuedResponse(
+                jobName,
+                executionMode,
+                "Batch job signal queued: id=" + signalId,
+                now
+        );
+    }
+
+    private StockBatchJobRunResponse queuedResponse(
+            String jobName,
+            String executionMode,
+            String message,
+            LocalDateTime now
+    ) {
         return new StockBatchJobRunResponse(
                 jobName,
                 STATUS_QUEUED,
                 executionMode,
                 0,
-                "Batch job signal queued: id=" + signalId,
+                message,
                 now,
                 null
         );

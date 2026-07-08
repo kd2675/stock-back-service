@@ -81,6 +81,7 @@ class StockBackApiSurfaceContractTest {
             "PATCH /api/stock/v1/markets/auto-market/profile-configs/{profileType}",
             "PATCH /api/stock/v1/markets/auto-market/configs/{symbol}",
             "POST /api/stock/v1/markets/auto-market/configs/{symbol}/daily-regime/regenerate",
+            "POST /api/stock/v1/markets/auto-market/configs/{symbol}/regime-modifier/regenerate",
             "PATCH /api/stock/v1/markets/auto-market/listing-accounts/{symbol}",
             "PATCH /api/stock/v1/markets/auto-market/participants/{userKey}",
             "DELETE /api/stock/v1/markets/auto-market/participants/{userKey}",

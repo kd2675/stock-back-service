@@ -91,6 +91,8 @@ class SimulationClockServiceTest {
         insertPausedClock(jdbcTemplate, 5_700L);
         insertEnabledOrderBookInstrument(jdbcTemplate);
         insertCompletedMarketCloseRun(jdbcTemplate, LocalDate.of(2026, 1, 1));
+        insertActiveStockAccount(jdbcTemplate, 1L, "settled-user");
+        insertPortfolioSnapshot(jdbcTemplate, 1L, LocalDate.of(2026, 1, 1));
         SimulationClockService service = service(jdbcTemplate);
 
         SimulationClockResponse response = service.jumpToSafePreset(SimulationClockJumpAction.NEXT_MARKET_OPEN);
@@ -98,6 +100,39 @@ class SimulationClockServiceTest {
         assertThat(response.simulationDateTime()).isEqualTo(LocalDateTime.of(2026, 1, 2, 6, 0));
         assertThat(response.marketSession()).isEqualTo(SimulationMarketSession.REGULAR);
         assertThat(response.accumulatedRealSeconds()).isEqualTo(9_000L);
+    }
+
+    @Test
+    void jumpToSafePreset_afterCloseWithCompletedItems_movesBeforeFormerDelay() {
+        // given
+        JdbcTemplate jdbcTemplate = createJdbcTemplate();
+        insertPausedClock(jdbcTemplate, 5_500L);
+        insertEnabledOrderBookInstrument(jdbcTemplate);
+        insertCompletedMarketCloseRun(jdbcTemplate, LocalDate.of(2026, 1, 1));
+        SimulationClockService service = service(jdbcTemplate);
+
+        // when
+        SimulationClockResponse response = service.jumpToSafePreset(SimulationClockJumpAction.NEXT_MARKET_OPEN);
+
+        // then
+        assertThat(response.simulationDateTime()).isEqualTo(LocalDateTime.of(2026, 1, 2, 6, 0));
+        assertThat(response.marketSession()).isEqualTo(SimulationMarketSession.REGULAR);
+    }
+
+    @Test
+    void jumpToSafePreset_afterCloseWithMissingPortfolioSettlement_rejectsNextMarketOpen() {
+        // given
+        JdbcTemplate jdbcTemplate = createJdbcTemplate();
+        insertPausedClock(jdbcTemplate, 5_700L);
+        insertEnabledOrderBookInstrument(jdbcTemplate);
+        insertCompletedMarketCloseRun(jdbcTemplate, LocalDate.of(2026, 1, 1));
+        insertActiveStockAccount(jdbcTemplate, 1L, "settlement-user");
+        SimulationClockService service = service(jdbcTemplate);
+
+        // when / then
+        assertThatThrownBy(() -> service.jumpToSafePreset(SimulationClockJumpAction.NEXT_MARKET_OPEN))
+                .isInstanceOf(StockException.class)
+                .hasMessageContaining("post-processing");
     }
 
     @Test
@@ -125,6 +160,32 @@ class SimulationClockServiceTest {
         assertThatThrownBy(() -> service.jumpToSafePreset(SimulationClockJumpAction.NEXT_MARKET_OPEN))
                 .isInstanceOf(StockException.class)
                 .hasMessageContaining("post-processing");
+    }
+
+    @Test
+    void jumpToSafePreset_preOpenWithPendingPreviousPostClose_rejectsNextMarketOpen() {
+        JdbcTemplate jdbcTemplate = createJdbcTemplate();
+        insertPausedClock(jdbcTemplate, 8_700L);
+        insertEnabledOrderBookInstrument(jdbcTemplate);
+        SimulationClockService service = service(jdbcTemplate);
+
+        assertThatThrownBy(() -> service.jumpToSafePreset(SimulationClockJumpAction.NEXT_MARKET_OPEN))
+                .isInstanceOf(StockException.class)
+                .hasMessageContaining("post-processing");
+    }
+
+    @Test
+    void jumpToSafePreset_preOpenWithCompletedPreviousPostClose_movesToTodayMarketOpen() {
+        JdbcTemplate jdbcTemplate = createJdbcTemplate();
+        insertPausedClock(jdbcTemplate, 8_700L);
+        insertEnabledOrderBookInstrument(jdbcTemplate);
+        insertCompletedMarketCloseRun(jdbcTemplate, LocalDate.of(2026, 1, 1));
+        SimulationClockService service = service(jdbcTemplate);
+
+        SimulationClockResponse response = service.jumpToSafePreset(SimulationClockJumpAction.NEXT_MARKET_OPEN);
+
+        assertThat(response.simulationDateTime()).isEqualTo(LocalDateTime.of(2026, 1, 2, 6, 0));
+        assertThat(response.marketSession()).isEqualTo(SimulationMarketSession.REGULAR);
     }
 
     @Test
@@ -217,6 +278,28 @@ class SimulationClockServiceTest {
         );
     }
 
+    private void insertActiveStockAccount(JdbcTemplate jdbcTemplate, long accountId, String userKey) {
+        jdbcTemplate.update(
+                """
+                insert into stock_account(id, user_key, status)
+                values (?, ?, 'ACTIVE')
+                """,
+                accountId,
+                userKey
+        );
+    }
+
+    private void insertPortfolioSnapshot(JdbcTemplate jdbcTemplate, long accountId, LocalDate snapshotDate) {
+        jdbcTemplate.update(
+                """
+                insert into portfolio_snapshot(account_id, snapshot_date)
+                values (?, ?)
+                """,
+                accountId,
+                snapshotDate
+        );
+    }
+
     private JdbcTemplate createJdbcTemplate() {
         JdbcTemplate jdbcTemplate = new JdbcTemplate(new DriverManagerDataSource(
                 "jdbc:h2:mem:simulation_clock_back_%d;MODE=MySQL;DB_CLOSE_DELAY=-1;DATABASE_TO_UPPER=false".formatted(System.nanoTime()),
@@ -254,6 +337,23 @@ class SimulationClockServiceTest {
                   symbol varchar(20) null,
                   business_date date not null,
                   status varchar(20) not null
+                )
+                """
+        );
+        jdbcTemplate.execute(
+                """
+                create table stock_account (
+                  id bigint not null primary key,
+                  user_key varchar(64),
+                  status varchar(20) not null
+                )
+                """
+        );
+        jdbcTemplate.execute(
+                """
+                create table portfolio_snapshot (
+                  account_id bigint not null,
+                  snapshot_date date not null
                 )
                 """
         );

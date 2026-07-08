@@ -110,6 +110,11 @@ public class AutoMarketAdminController {
         return ResponseDataDTO.of(autoMarketConfigService.regenerateDailyRegime(symbol));
     }
 
+    @PostMapping("/auto-market/configs/{symbol}/regime-modifier/regenerate")
+    public ResponseDataDTO<AutoMarketConfigResponse> regenerateAutoMarketRegimeModifier(@PathVariable String symbol) {
+        return ResponseDataDTO.of(autoMarketConfigService.regenerateRegimeModifier(symbol));
+    }
+
     @PatchMapping("/auto-market/participants/{userKey}")
     public ResponseDataDTO<AutoParticipantResponse> upsertAutoParticipant(
             @PathVariable String userKey,

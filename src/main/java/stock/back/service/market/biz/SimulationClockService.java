@@ -123,8 +123,7 @@ public class SimulationClockService {
                 marketSession,
                 openTime,
                 closeTime,
-                marketSession == SimulationMarketSession.AFTER_CLOSE
-                        && isPostCloseProcessingComplete(snapshot.simulationDate()),
+                isPostCloseProcessingCompleteForClockAdvance(snapshot, marketSession),
                 snapshot.realSecondsPerSimulationDay(),
                 snapshot.running(),
                 snapshot.stale(),
@@ -261,6 +260,9 @@ public class SimulationClockService {
                 if (session == SimulationMarketSession.AFTER_CLOSE) {
                     validatePostCloseProcessingComplete(currentDateTime.toLocalDate());
                 }
+                if (session == SimulationMarketSession.PRE_OPEN) {
+                    validatePreviousPostCloseProcessingComplete(currentDateTime);
+                }
                 LocalDate targetDate = session == SimulationMarketSession.AFTER_CLOSE
                         ? currentDateTime.toLocalDate().plusDays(1)
                         : currentDateTime.toLocalDate();
@@ -269,12 +271,41 @@ public class SimulationClockService {
         };
     }
 
+    private void validatePreviousPostCloseProcessingComplete(LocalDateTime currentDateTime) {
+        LocalDate previousDate = currentDateTime.toLocalDate().minusDays(1);
+        if (previousDate.isBefore(currentBaseSimulationDate())) {
+            return;
+        }
+        validatePostCloseProcessingComplete(previousDate);
+    }
+
     private void validatePostCloseProcessingComplete(LocalDate businessDate) {
         if (!isPostCloseProcessingComplete(businessDate)) {
             throw StockException.conflict("Market close post-processing must be completed before moving to the next simulation day");
         }
     }
 
+    private boolean isPostCloseProcessingCompleteForClockAdvance(
+            SimulationClockSnapshot snapshot,
+            SimulationMarketSession session
+    ) {
+        if (session == SimulationMarketSession.AFTER_CLOSE) {
+            return isPostCloseProcessingComplete(snapshot.simulationDate());
+        }
+        if (session == SimulationMarketSession.PRE_OPEN) {
+            LocalDate previousDate = snapshot.simulationDate().minusDays(1);
+            if (previousDate.isBefore(currentBaseSimulationDate())) {
+                return true;
+            }
+            return isPostCloseProcessingComplete(previousDate);
+        }
+        return true;
+    }
+
+    /**
+     * Clock-advance gate: do not rely on elapsed time. The next simulation boundary is safe only
+     * after market-close rollover and portfolio settlement are both visible in the business DB.
+     */
     private boolean isPostCloseProcessingComplete(LocalDate businessDate) {
         Long enabledInstrumentCount = jdbcClient.sql(
                         """
@@ -300,7 +331,50 @@ public class SimulationClockService {
                 .param(businessDate)
                 .query(Long.class)
                 .single();
-        return completedRunCount != null && completedRunCount > 0;
+        if (completedRunCount == null || completedRunCount == 0) {
+            return false;
+        }
+        return isPortfolioSettlementComplete(businessDate);
+    }
+
+    /**
+     * Portfolio settlement is complete when every active participant account has a snapshot for
+     * the business date. Listing supply accounts are operational inventory and are excluded.
+     */
+    private boolean isPortfolioSettlementComplete(LocalDate businessDate) {
+        Long eligibleAccountCount = jdbcClient.sql(
+                        """
+                        select count(*)
+                          from stock_account
+                         where status = 'ACTIVE'
+                           and user_key is not null
+                           and user_key not like 'stock-listing-%'
+                        """
+                )
+                .query(Long.class)
+                .single();
+        if (eligibleAccountCount == null || eligibleAccountCount == 0) {
+            return true;
+        }
+        Long snapshotAccountCount = jdbcClient.sql(
+                        """
+                        select count(distinct ps.account_id)
+                          from portfolio_snapshot ps
+                          join stock_account a on a.id = ps.account_id
+                         where ps.snapshot_date = ?
+                           and a.status = 'ACTIVE'
+                           and a.user_key is not null
+                           and a.user_key not like 'stock-listing-%'
+                        """
+                )
+                .param(businessDate)
+                .query(Long.class)
+                .single();
+        return snapshotAccountCount != null && snapshotAccountCount >= eligibleAccountCount;
+    }
+
+    private LocalDate currentBaseSimulationDate() {
+        return findClock().orElseGet(this::createPausedClock).baseSimulationDate();
     }
 
     private long toAccumulatedRealSeconds(

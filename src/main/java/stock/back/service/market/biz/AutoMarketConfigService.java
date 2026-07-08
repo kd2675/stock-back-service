@@ -119,6 +119,53 @@ public class AutoMarketConfigService {
         );
     }
 
+    @Transactional
+    public AutoMarketConfigResponse regenerateRegimeModifier(String symbol) {
+        String normalizedSymbol = MarketTextNormalizer.symbol(symbol);
+        if (normalizedSymbol.isBlank()) {
+            throw StockException.badRequest("Symbol is required");
+        }
+        if (!stockOrderBookInstrumentRepository.existsById(normalizedSymbol)) {
+            throw StockException.notFound("Unknown order book symbol: " + normalizedSymbol);
+        }
+        StockAutoMarketConfig config = stockAutoMarketConfigRepository.findById(normalizedSymbol)
+                .orElseGet(() -> StockAutoMarketConfig.defaults(normalizedSymbol));
+        LocalDateTime currentMarketDateTime = simulationClockService.currentMarketDateTime();
+        String regimePhase = resolveRegimePhase(currentMarketDateTime);
+        AutoMarketDailyRegimeResponse dailyRegime = loadDailyRegime(config.getSymbol(), currentMarketDateTime, regimePhase);
+        if (dailyRegime == null) {
+            throw StockException.badRequest("Daily regime is required before regenerating a modifier");
+        }
+        AutoMarketRegimeModifierResponse modifier = regenerateRegimeModifierRow(
+                config.getSymbol(),
+                currentMarketDateTime,
+                regimePhase,
+                modifierWindowStartAt(currentMarketDateTime)
+        );
+        return new AutoMarketConfigResponse(
+                config.getSymbol(),
+                Boolean.TRUE.equals(config.getEnabled()),
+                config.getIntensity() == null ? 0 : config.getIntensity(),
+                config.getMaxOrderQuantity() == null ? 0 : config.getMaxOrderQuantity(),
+                config.getOrderTtlSeconds() == null ? 0 : config.getOrderTtlSeconds(),
+                new AutoMarketDailyRegimeResponse(
+                        dailyRegime.symbol(),
+                        dailyRegime.simulationTradeDate(),
+                        dailyRegime.regimePhase(),
+                        dailyRegime.priceDirection(),
+                        dailyRegime.assetPreference(),
+                        dailyRegime.directionIntensity(),
+                        dailyRegime.volatilityLevel(),
+                        dailyRegime.liquidityLevel(),
+                        dailyRegime.executionAggressionLevel(),
+                        dailyRegime.seed(),
+                        modifier,
+                        dailyRegime.createdAt(),
+                        dailyRegime.updatedAt()
+                )
+        );
+    }
+
     private ListingAutoAccountResponse toListingAutoAccountResponse(StockListingAutoAccountConfig config) {
         ListingAutoAccountLedger ledger = listingAutoAccountLedgerQueryService.findLedger(config);
         return new ListingAutoAccountResponse(
@@ -232,6 +279,62 @@ public class AutoMarketConfigService {
         );
     }
 
+    private AutoMarketRegimeModifierResponse regenerateRegimeModifierRow(
+            String symbol,
+            LocalDateTime currentMarketDateTime,
+            String regimePhase,
+            LocalDateTime modifierWindowStartAt
+    ) {
+        long seed = ThreadLocalRandom.current().nextLong();
+        Random random = new Random(seed);
+        int priceDirectionModifier = pickSecondaryPricePressure(random);
+        int assetPreferenceModifier = pickSecondaryAssetPressure(random);
+        int directionIntensityModifier = pickBellishLevel(random);
+        int volatilityModifier = pickBellishLevel(random);
+        int liquidityModifier = pickBellishLevel(random);
+        int executionAggressionModifier = pickBellishLevel(random);
+        int updatedCount = updateRegimeModifierRow(
+                symbol,
+                currentMarketDateTime,
+                regimePhase,
+                modifierWindowStartAt,
+                priceDirectionModifier,
+                assetPreferenceModifier,
+                directionIntensityModifier,
+                volatilityModifier,
+                liquidityModifier,
+                executionAggressionModifier,
+                seed
+        );
+        if (updatedCount == 0) {
+            insertRegimeModifierRow(
+                    symbol,
+                    currentMarketDateTime,
+                    regimePhase,
+                    modifierWindowStartAt,
+                    priceDirectionModifier,
+                    assetPreferenceModifier,
+                    directionIntensityModifier,
+                    volatilityModifier,
+                    liquidityModifier,
+                    executionAggressionModifier,
+                    seed
+            );
+        }
+        return new AutoMarketRegimeModifierResponse(
+                modifierWindowStartAt,
+                priceDirectionModifier,
+                assetPreferenceModifier,
+                directionIntensityModifier,
+                volatilityModifier,
+                liquidityModifier,
+                executionAggressionModifier,
+                Long.toString(seed),
+                currentMarketDateTime,
+                currentMarketDateTime
+        );
+    }
+
     private void insertDailyRegimeRow(
             String symbol,
             LocalDateTime currentMarketDateTime,
@@ -296,6 +399,153 @@ public class AutoMarketConfigService {
                     regimePhase
             );
         }
+    }
+
+    private int updateRegimeModifierRow(
+            String symbol,
+            LocalDateTime currentMarketDateTime,
+            String regimePhase,
+            LocalDateTime modifierWindowStartAt,
+            int priceDirectionModifier,
+            int assetPreferenceModifier,
+            int directionIntensityModifier,
+            int volatilityModifier,
+            int liquidityModifier,
+            int executionAggressionModifier,
+            long seed
+    ) {
+        return jdbcTemplate.update(
+                """
+                update stock_order_book_regime_modifier
+                   set price_direction_modifier = ?,
+                       asset_preference_modifier = ?,
+                       direction_intensity_modifier = ?,
+                       volatility_modifier = ?,
+                       liquidity_modifier = ?,
+                       execution_aggression_modifier = ?,
+                       seed = ?,
+                       updated_at = ?
+                 where symbol = ?
+                   and simulation_trade_date = ?
+                   and regime_phase = ?
+                   and modifier_window_start_at = ?
+                """,
+                priceDirectionModifier,
+                assetPreferenceModifier,
+                directionIntensityModifier,
+                volatilityModifier,
+                liquidityModifier,
+                executionAggressionModifier,
+                seed,
+                currentMarketDateTime,
+                symbol,
+                currentMarketDateTime.toLocalDate(),
+                regimePhase,
+                modifierWindowStartAt
+        );
+    }
+
+    private void insertRegimeModifierRow(
+            String symbol,
+            LocalDateTime currentMarketDateTime,
+            String regimePhase,
+            LocalDateTime modifierWindowStartAt,
+            int priceDirectionModifier,
+            int assetPreferenceModifier,
+            int directionIntensityModifier,
+            int volatilityModifier,
+            int liquidityModifier,
+            int executionAggressionModifier,
+            long seed
+    ) {
+        try {
+            jdbcTemplate.update(
+                    """
+                    insert into stock_order_book_regime_modifier(
+                        symbol, simulation_trade_date, regime_phase, modifier_window_start_at,
+                        price_direction_modifier, asset_preference_modifier, direction_intensity_modifier,
+                        volatility_modifier, liquidity_modifier, execution_aggression_modifier,
+                        seed, created_at, updated_at
+                    )
+                    values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    symbol,
+                    currentMarketDateTime.toLocalDate(),
+                    regimePhase,
+                    modifierWindowStartAt,
+                    priceDirectionModifier,
+                    assetPreferenceModifier,
+                    directionIntensityModifier,
+                    volatilityModifier,
+                    liquidityModifier,
+                    executionAggressionModifier,
+                    seed,
+                    currentMarketDateTime,
+                    currentMarketDateTime
+            );
+        } catch (DuplicateKeyException ignored) {
+            updateRegimeModifierRow(
+                    symbol,
+                    currentMarketDateTime,
+                    regimePhase,
+                    modifierWindowStartAt,
+                    priceDirectionModifier,
+                    assetPreferenceModifier,
+                    directionIntensityModifier,
+                    volatilityModifier,
+                    liquidityModifier,
+                    executionAggressionModifier,
+                    seed
+            );
+        }
+    }
+
+    private AutoMarketDailyRegimeResponse loadDailyRegime(
+            String symbol,
+            LocalDateTime currentMarketDateTime,
+            String regimePhase
+    ) {
+        return jdbcTemplate.query(
+                        """
+                        select symbol,
+                               simulation_trade_date,
+                               regime_phase,
+                               price_direction,
+                               asset_preference,
+                               direction_intensity,
+                               volatility_level,
+                               liquidity_level,
+                               execution_aggression_level,
+                               seed,
+                               created_at,
+                               updated_at
+                         from stock_order_book_daily_regime
+                         where symbol = ?
+                           and simulation_trade_date = ?
+                           and regime_phase = ?
+                        """,
+                        (rs, rowNum) -> new AutoMarketDailyRegimeResponse(
+                                rs.getString("symbol"),
+                                rs.getDate("simulation_trade_date").toLocalDate(),
+                                rs.getString("regime_phase"),
+                                rs.getString("price_direction"),
+                                rs.getString("asset_preference"),
+                                rs.getInt("direction_intensity"),
+                                rs.getInt("volatility_level"),
+                                rs.getInt("liquidity_level"),
+                                rs.getInt("execution_aggression_level"),
+                                Long.toString(rs.getLong("seed")),
+                                null,
+                                rs.getObject("created_at", LocalDateTime.class),
+                                rs.getObject("updated_at", LocalDateTime.class)
+                        ),
+                        symbol,
+                        currentMarketDateTime.toLocalDate(),
+                        regimePhase
+                )
+                .stream()
+                .findFirst()
+                .orElse(null);
     }
 
     private AutoMarketRegimeModifierResponse loadCurrentModifier(
@@ -387,6 +637,28 @@ public class AutoMarketConfigService {
         int first = random.nextInt(10) + 1;
         int second = random.nextInt(10) + 1;
         return Math.clamp((first + second + 1) / 2, 1, 10);
+    }
+
+    private int pickSecondaryPricePressure(Random random) {
+        String direction = pickPriceDirection(random.nextInt(100));
+        if ("UP".equals(direction)) {
+            return pickBellishLevel(random);
+        }
+        if ("DOWN".equals(direction)) {
+            return -pickBellishLevel(random);
+        }
+        return 0;
+    }
+
+    private int pickSecondaryAssetPressure(Random random) {
+        String preference = pickAssetPreference(random.nextInt(100));
+        if ("STOCK".equals(preference)) {
+            return pickBellishLevel(random);
+        }
+        if ("CASH".equals(preference)) {
+            return -pickBellishLevel(random);
+        }
+        return 0;
     }
 
 }

@@ -34,6 +34,35 @@ class BatchJobSignalServiceTest {
     }
 
     @Test
+    void enqueueAutoParticipantCashFlow_openSignalExists_returnsExistingSignalWithoutInsert() {
+        JdbcTemplate jdbcTemplate = createJdbcTemplate();
+        BatchJobSignalService service = new BatchJobSignalService(jdbcTemplate);
+
+        StockBatchJobRunResponse firstResponse = service.enqueueAutoParticipantCashFlow("admin-user");
+        StockBatchJobRunResponse secondResponse = service.enqueueAutoParticipantCashFlow("admin-user");
+
+        assertThat(firstResponse.message()).contains("Batch job signal queued: id=");
+        assertThat(secondResponse.message()).contains("Batch job signal already queued: id=");
+        assertThat(jdbcTemplate.queryForObject("select count(*) from stock_batch_job_signal", Long.class))
+                .isEqualTo(1L);
+    }
+
+    @Test
+    void enqueueAutoParticipantCashFlow_completedSignalExists_insertsNewSignal() {
+        JdbcTemplate jdbcTemplate = createJdbcTemplate();
+        BatchJobSignalService service = new BatchJobSignalService(jdbcTemplate);
+
+        service.enqueueAutoParticipantCashFlow("admin-user");
+        jdbcTemplate.update("update stock_batch_job_signal set status = 'COMPLETED'");
+
+        StockBatchJobRunResponse response = service.enqueueAutoParticipantCashFlow("admin-user");
+
+        assertThat(response.message()).contains("Batch job signal queued: id=");
+        assertThat(jdbcTemplate.queryForObject("select count(*) from stock_batch_job_signal", Long.class))
+                .isEqualTo(2L);
+    }
+
+    @Test
     void enqueueMarketCloseRolloverSymbol_insertsSymbolScopedSignal() {
         JdbcTemplate jdbcTemplate = createJdbcTemplate();
         BatchJobSignalService service = new BatchJobSignalService(jdbcTemplate);

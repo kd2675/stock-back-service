@@ -6,6 +6,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.RowMapper;
 import stock.back.service.common.exception.StockException;
 import stock.back.service.database.entity.ListingAutoPosition;
 import stock.back.service.database.entity.StockAutoMarketConfig;
@@ -14,9 +15,11 @@ import stock.back.service.database.repository.StockAutoMarketConfigRepository;
 import stock.back.service.database.repository.StockListingAutoAccountConfigRepository;
 import stock.back.service.database.repository.StockOrderBookInstrumentRepository;
 import stock.back.service.market.vo.AutoMarketConfigUpdateRequest;
+import stock.back.service.market.vo.AutoMarketDailyRegimeResponse;
 import stock.back.service.market.vo.ListingAutoAccountRequest;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.Optional;
 
@@ -139,6 +142,58 @@ class AutoMarketConfigServiceTest {
         assertThat(response.dailyRegime().regimePhase()).isEqualTo("MIDDAY");
         assertThat(response.dailyRegime().simulationTradeDate()).isEqualTo(java.time.LocalDate.of(2026, 7, 7));
         assertThat(response.dailyRegime().executionAggressionLevel()).isBetween(1, 10);
+    }
+
+    @Test
+    void regenerateRegimeModifier_existingDailyRegime_updatesCurrentModifierOnly() {
+        when(stockOrderBookInstrumentRepository.existsById("ZQ001")).thenReturn(true);
+        when(stockAutoMarketConfigRepository.findById("ZQ001")).thenReturn(Optional.of(StockAutoMarketConfig.defaults("ZQ001")));
+        when(simulationClockService.currentMarketDateTime()).thenReturn(LocalDateTime.of(2026, 7, 7, 12, 42));
+        when(jdbcTemplate.query(
+                org.mockito.ArgumentMatchers.contains("from stock_order_book_daily_regime"),
+                org.mockito.ArgumentMatchers.<RowMapper<AutoMarketDailyRegimeResponse>>any(),
+                any(),
+                any(),
+                any()
+        )).thenReturn(java.util.List.of(new AutoMarketDailyRegimeResponse(
+                "ZQ001",
+                LocalDate.of(2026, 7, 7),
+                "MIDDAY",
+                "UP",
+                "STOCK",
+                7,
+                6,
+                5,
+                4,
+                "daily-seed",
+                null,
+                LocalDateTime.of(2026, 7, 7, 12, 0),
+                LocalDateTime.of(2026, 7, 7, 12, 0)
+        )));
+        when(jdbcTemplate.update(
+                org.mockito.ArgumentMatchers.contains("update stock_order_book_regime_modifier"),
+                any(),
+                any(),
+                any(),
+                any(),
+                any(),
+                any(),
+                any(),
+                any(),
+                any(),
+                any(),
+                any(),
+                any()
+        )).thenReturn(1);
+
+        var response = service.regenerateRegimeModifier("zq001");
+
+        assertThat(response.symbol()).isEqualTo("ZQ001");
+        assertThat(response.dailyRegime()).isNotNull();
+        assertThat(response.dailyRegime().seed()).isEqualTo("daily-seed");
+        assertThat(response.dailyRegime().currentModifier()).isNotNull();
+        assertThat(response.dailyRegime().currentModifier().modifierWindowStartAt())
+                .isEqualTo(LocalDateTime.of(2026, 7, 7, 12, 30));
     }
 
     @Test
