@@ -41,52 +41,77 @@ final class CorporateActionPolicy {
         return dividendAmount;
     }
 
-    static void requirePaidInCapitalIncreaseDates(LocalDate exRightsDate, LocalDate paymentDate, LocalDate listingDate) {
+    static void requirePaidInCapitalIncreaseDates(
+            LocalDate exRightsDate,
+            LocalDate paymentDate,
+            LocalDate listingDate,
+            LocalDate currentSimulationDate
+    ) {
         if (exRightsDate == null || paymentDate == null || listingDate == null) {
             throw StockException.badRequest("Paid-in capital increase requires ex-rights, payment, and listing dates");
         }
-        if (paymentDate.isBefore(exRightsDate) || listingDate.isBefore(paymentDate)) {
-            throw StockException.badRequest("Paid-in capital increase dates must be ordered by ex-rights, payment, listing");
+        requireNotBeforeCurrentSimulationDate("Paid-in capital increase ex-rights date", exRightsDate, currentSimulationDate);
+        requireNotBeforeCurrentSimulationDate("Paid-in capital increase payment date", paymentDate, currentSimulationDate);
+        requireNotBeforeCurrentSimulationDate("Paid-in capital increase listing date", listingDate, currentSimulationDate);
+        if (!paymentDate.isAfter(exRightsDate) || !listingDate.isAfter(paymentDate)) {
+            throw StockException.badRequest("Paid-in capital increase dates must be ordered by ex-rights, payment, listing on later dates");
         }
     }
 
-    static void requireFreeShareDistributionDates(LocalDate exRightsDate, LocalDate listingDate) {
+    static void requireFreeShareDistributionDates(LocalDate exRightsDate, LocalDate listingDate, LocalDate currentSimulationDate) {
         if (exRightsDate == null || listingDate == null) {
             throw StockException.badRequest("Free share distribution requires ex-rights and listing dates");
         }
-        if (listingDate.isBefore(exRightsDate)) {
-            throw StockException.badRequest("Free share distribution listing date must be on or after ex-rights date");
+        requireNotBeforeCurrentSimulationDate("Free share distribution ex-rights date", exRightsDate, currentSimulationDate);
+        requireNotBeforeCurrentSimulationDate("Free share distribution listing date", listingDate, currentSimulationDate);
+        if (!listingDate.isAfter(exRightsDate)) {
+            throw StockException.badRequest("Free share distribution listing date must be after ex-rights date");
         }
     }
 
-    static void requireCashDividendDates(LocalDate exRightsDate, LocalDate paymentDate) {
+    static void requireCashDividendDates(LocalDate exRightsDate, LocalDate paymentDate, LocalDate currentSimulationDate) {
         if (exRightsDate == null || paymentDate == null) {
             throw StockException.badRequest("Cash dividend requires ex-dividend and payment dates");
         }
-        if (paymentDate.isBefore(exRightsDate)) {
-            throw StockException.badRequest("Cash dividend payment date must be on or after ex-dividend date");
+        requireNotBeforeCurrentSimulationDate("Cash dividend ex-dividend date", exRightsDate, currentSimulationDate);
+        requireNotBeforeCurrentSimulationDate("Cash dividend payment date", paymentDate, currentSimulationDate);
+        if (!paymentDate.isAfter(exRightsDate)) {
+            throw StockException.badRequest("Cash dividend payment date must be after ex-dividend date");
         }
     }
 
-    static LocalDate requireAdditionalIssueListingDate(LocalDate listingDate) {
+    static LocalDate requireAdditionalIssueListingDate(LocalDate listingDate, LocalDate currentSimulationDate) {
         if (listingDate == null) {
             throw StockException.badRequest("Additional issue requires a listing date");
         }
+        requireNotBeforeCurrentSimulationDate("Additional issue listing date", listingDate, currentSimulationDate);
         return listingDate;
     }
 
-    static LocalDate requireStockSplitListingDate(LocalDate listingDate) {
+    static LocalDate requireStockSplitListingDate(LocalDate listingDate, LocalDate currentSimulationDate) {
         if (listingDate == null) {
             throw StockException.badRequest("Stock split requires an effective date");
         }
+        requireNotBeforeCurrentSimulationDate("Stock split effective date", listingDate, currentSimulationDate);
         return listingDate;
     }
 
-    static LocalDate requireDelistingDate(LocalDate delistingDate) {
+    static LocalDate requireDelistingDate(LocalDate delistingDate, LocalDate currentSimulationDate) {
         if (delistingDate == null) {
             throw StockException.badRequest("Delisting requires a delisting date");
         }
+        requireNotBeforeCurrentSimulationDate("Delisting date", delistingDate, currentSimulationDate);
         return delistingDate;
+    }
+
+    private static void requireNotBeforeCurrentSimulationDate(
+            String fieldName,
+            LocalDate date,
+            LocalDate currentSimulationDate
+    ) {
+        if (currentSimulationDate != null && date.isBefore(currentSimulationDate)) {
+            throw StockException.badRequest(fieldName + " must not be before current simulation date");
+        }
     }
 
     static void requireSupportedStockSplitRatio(Integer splitFrom, Integer splitTo) {

@@ -24,15 +24,31 @@ public class BatchJobSignalService {
     private static final String SIGNAL_MARKET_CLOSE_ROLLOVER_SYMBOL = "MARKET_CLOSE_ROLLOVER_SYMBOL";
     private static final String SIGNAL_ORDER_BOOK_OPEN_ORDER_CANCEL_SYMBOL = "ORDER_BOOK_OPEN_ORDER_CANCEL_SYMBOL";
     private static final String STATUS_QUEUED = "QUEUED";
+    private static final String STATUS_SKIPPED = "SKIPPED";
+    private static final String MANUAL_CASH_FLOW_AUTO_ENABLED_MESSAGE =
+            "Manual recurring cash is allowed only when automatic cash flow is disabled";
 
     private final JdbcTemplate jdbcTemplate;
+    private final BatchJobRuntimeControlService batchJobRuntimeControlService;
 
-    public BatchJobSignalService(JdbcTemplate jdbcTemplate) {
+    public BatchJobSignalService(
+            JdbcTemplate jdbcTemplate,
+            BatchJobRuntimeControlService batchJobRuntimeControlService
+    ) {
         this.jdbcTemplate = jdbcTemplate;
+        this.batchJobRuntimeControlService = batchJobRuntimeControlService;
     }
 
     @Transactional(isolation = Isolation.SERIALIZABLE)
     public StockBatchJobRunResponse enqueueAutoParticipantCashFlow(String requestedBy) {
+        if (batchJobRuntimeControlService.cashFlowStatus().effectiveEnabled()) {
+            return skippedResponse(
+                    BatchJobNames.AUTO_PARTICIPANT_CASH_FLOW,
+                    "manual-recurring-cash",
+                    MANUAL_CASH_FLOW_AUTO_ENABLED_MESSAGE,
+                    LocalDateTime.now()
+            );
+        }
         return enqueueDeduplicated(
                 SIGNAL_AUTO_PARTICIPANT_CASH_FLOW_RUN,
                 BatchJobNames.AUTO_PARTICIPANT_CASH_FLOW,
@@ -198,6 +214,23 @@ public class BatchJobSignalService {
                 message,
                 now,
                 null
+        );
+    }
+
+    private StockBatchJobRunResponse skippedResponse(
+            String jobName,
+            String executionMode,
+            String message,
+            LocalDateTime now
+    ) {
+        return new StockBatchJobRunResponse(
+                jobName,
+                STATUS_SKIPPED,
+                executionMode,
+                0,
+                message,
+                now,
+                now
         );
     }
 

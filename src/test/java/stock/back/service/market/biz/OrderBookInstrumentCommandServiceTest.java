@@ -9,11 +9,14 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import stock.back.service.common.exception.StockException;
+import stock.back.service.database.entity.StockAutoMarketConfig;
 import stock.back.service.database.entity.StockCorporateAction;
 import stock.back.service.database.entity.StockCorporateActionStatus;
 import stock.back.service.database.entity.StockCorporateActionType;
 import stock.back.service.database.entity.StockListingAutoAccountConfig;
 import stock.back.service.database.entity.StockOrderBookInstrument;
+import stock.back.service.database.entity.StockOrderBookMarketConfig;
+import stock.back.service.database.entity.StockPrice;
 import stock.back.service.database.repository.StockAutoMarketConfigRepository;
 import stock.back.service.database.repository.StockCorporateActionRepository;
 import stock.back.service.database.repository.StockInstrumentRepository;
@@ -62,6 +65,7 @@ class OrderBookInstrumentCommandServiceTest {
     @Mock
     private SimulationClockService simulationClockService;
 
+    private final LocalDateTime simulationNow = LocalDateTime.of(2026, 7, 1, 10, 0);
     private JdbcTemplate jdbcTemplate;
 
     private OrderBookInstrumentCommandService service;
@@ -69,7 +73,7 @@ class OrderBookInstrumentCommandServiceTest {
     @BeforeEach
     void setUp() {
         jdbcTemplate = createJdbcTemplate();
-        lenient().when(simulationClockService.currentMarketDateTime()).thenReturn(LocalDateTime.of(2026, 7, 1, 10, 0));
+        lenient().when(simulationClockService.currentMarketDateTime()).thenReturn(simulationNow);
         service = new OrderBookInstrumentCommandService(
                 stockInstrumentRepository,
                 stockPriceRepository,
@@ -103,17 +107,34 @@ class OrderBookInstrumentCommandServiceTest {
                 )
         );
 
+        ArgumentCaptor<StockOrderBookInstrument> instrumentCaptor = ArgumentCaptor.forClass(StockOrderBookInstrument.class);
         ArgumentCaptor<StockCorporateAction> actionCaptor = ArgumentCaptor.forClass(StockCorporateAction.class);
+        ArgumentCaptor<StockOrderBookMarketConfig> marketConfigCaptor = ArgumentCaptor.forClass(StockOrderBookMarketConfig.class);
+        ArgumentCaptor<StockAutoMarketConfig> autoMarketConfigCaptor = ArgumentCaptor.forClass(StockAutoMarketConfig.class);
+        ArgumentCaptor<StockPrice> priceCaptor = ArgumentCaptor.forClass(StockPrice.class);
         ArgumentCaptor<StockListingAutoAccountConfig> listingConfigCaptor = ArgumentCaptor.forClass(StockListingAutoAccountConfig.class);
+        verify(stockOrderBookInstrumentRepository).save(instrumentCaptor.capture());
         verify(stockCorporateActionRepository).save(actionCaptor.capture());
+        verify(stockOrderBookMarketConfigRepository).save(marketConfigCaptor.capture());
+        verify(stockAutoMarketConfigRepository).save(autoMarketConfigCaptor.capture());
+        verify(stockPriceRepository).save(priceCaptor.capture());
         verify(stockListingAutoAccountConfigRepository).save(listingConfigCaptor.capture());
         assertThat(response.symbol()).isEqualTo("ZQ001");
         assertThat(response.issuedShares()).isEqualTo(100000L);
         assertThat(response.tickSize()).isEqualByComparingTo(new BigDecimal("100.00"));
+        assertThat(instrumentCaptor.getValue().getCreatedAt()).isEqualTo(simulationNow);
+        assertThat(instrumentCaptor.getValue().getUpdatedAt()).isEqualTo(simulationNow);
         assertThat(actionCaptor.getValue().getActionType()).isEqualTo(StockCorporateActionType.INITIAL_ISSUE);
         assertThat(actionCaptor.getValue().getStatus()).isEqualTo(StockCorporateActionStatus.LISTED);
+        assertThat(actionCaptor.getValue().getCreatedAt()).isEqualTo(simulationNow);
+        assertThat(actionCaptor.getValue().getListedAt()).isEqualTo(simulationNow);
+        assertThat(marketConfigCaptor.getValue().getUpdatedAt()).isEqualTo(simulationNow);
+        assertThat(autoMarketConfigCaptor.getValue().getUpdatedAt()).isEqualTo(simulationNow);
+        assertThat(priceCaptor.getValue().getPriceTime()).isEqualTo(simulationNow);
         assertThat(listingConfigCaptor.getValue().getUserKey()).isEqualTo("stock-listing-zq001");
         assertThat(listingConfigCaptor.getValue().getDisplayName()).isEqualTo("제로큐 주문장 상장주관사");
+        assertThat(listingConfigCaptor.getValue().getCreatedAt()).isEqualTo(simulationNow);
+        assertThat(listingConfigCaptor.getValue().getUpdatedAt()).isEqualTo(simulationNow);
         Long accountId = jdbcTemplate.queryForObject(
                 "select id from stock_account where user_key = ?",
                 Long.class,

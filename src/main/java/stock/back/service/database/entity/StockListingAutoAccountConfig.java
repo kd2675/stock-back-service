@@ -51,8 +51,18 @@ public class StockListingAutoAccountConfig {
     private LocalDateTime updatedAt;
 
     public static StockListingAutoAccountConfig defaults(String symbol, String userKey, String displayName, long issuedShares) {
+        return defaults(symbol, userKey, displayName, issuedShares, LocalDateTime.now());
+    }
+
+    public static StockListingAutoAccountConfig defaults(
+            String symbol,
+            String userKey,
+            String displayName,
+            long issuedShares,
+            LocalDateTime createdAt
+    ) {
         int maxOrderQuantity = (int) Math.clamp(issuedShares / 1000, 1L, 100L);
-        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime now = createdAt == null ? LocalDateTime.now() : createdAt;
         StockListingAutoAccountConfig config = new StockListingAutoAccountConfig();
         config.symbol = symbol;
         config.userKey = userKey;
@@ -75,6 +85,18 @@ public class StockListingAutoAccountConfig {
             Integer orderTtlSeconds,
             Integer priceOffsetTicks
     ) {
+        update(displayName, enabled, positionSide, maxOrderQuantity, orderTtlSeconds, priceOffsetTicks, LocalDateTime.now());
+    }
+
+    public void update(
+            String displayName,
+            Boolean enabled,
+            ListingAutoPosition positionSide,
+            Integer maxOrderQuantity,
+            Integer orderTtlSeconds,
+            Integer priceOffsetTicks,
+            LocalDateTime updatedAt
+    ) {
         if (displayName != null && !displayName.isBlank()) {
             this.displayName = displayName;
         }
@@ -93,6 +115,6 @@ public class StockListingAutoAccountConfig {
         if (priceOffsetTicks != null) {
             this.priceOffsetTicks = priceOffsetTicks;
         }
-        this.updatedAt = LocalDateTime.now();
+        this.updatedAt = updatedAt == null ? LocalDateTime.now() : updatedAt;
     }
 }

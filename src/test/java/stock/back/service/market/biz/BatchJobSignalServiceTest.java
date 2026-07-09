@@ -2,6 +2,7 @@ package stock.back.service.market.biz;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import stock.back.service.market.vo.StockBatchJobRunResponse;
 
@@ -16,7 +17,8 @@ class BatchJobSignalServiceTest {
     @Test
     void enqueueAutoParticipantCashFlow_insertsPendingSignalAndReturnsQueuedResponse() {
         JdbcTemplate jdbcTemplate = createJdbcTemplate();
-        BatchJobSignalService service = new BatchJobSignalService(jdbcTemplate);
+        disableAutoParticipantCashFlow(jdbcTemplate);
+        BatchJobSignalService service = createService(jdbcTemplate);
 
         StockBatchJobRunResponse response = service.enqueueAutoParticipantCashFlow("admin-user");
 
@@ -36,7 +38,8 @@ class BatchJobSignalServiceTest {
     @Test
     void enqueueAutoParticipantCashFlow_openSignalExists_returnsExistingSignalWithoutInsert() {
         JdbcTemplate jdbcTemplate = createJdbcTemplate();
-        BatchJobSignalService service = new BatchJobSignalService(jdbcTemplate);
+        disableAutoParticipantCashFlow(jdbcTemplate);
+        BatchJobSignalService service = createService(jdbcTemplate);
 
         StockBatchJobRunResponse firstResponse = service.enqueueAutoParticipantCashFlow("admin-user");
         StockBatchJobRunResponse secondResponse = service.enqueueAutoParticipantCashFlow("admin-user");
@@ -50,7 +53,8 @@ class BatchJobSignalServiceTest {
     @Test
     void enqueueAutoParticipantCashFlow_completedSignalExists_insertsNewSignal() {
         JdbcTemplate jdbcTemplate = createJdbcTemplate();
-        BatchJobSignalService service = new BatchJobSignalService(jdbcTemplate);
+        disableAutoParticipantCashFlow(jdbcTemplate);
+        BatchJobSignalService service = createService(jdbcTemplate);
 
         service.enqueueAutoParticipantCashFlow("admin-user");
         jdbcTemplate.update("update stock_batch_job_signal set status = 'COMPLETED'");
@@ -63,9 +67,24 @@ class BatchJobSignalServiceTest {
     }
 
     @Test
+    void enqueueAutoParticipantCashFlow_autoCashFlowEnabled_returnsSkippedWithoutInsert() {
+        JdbcTemplate jdbcTemplate = createJdbcTemplate();
+        BatchJobSignalService service = createService(jdbcTemplate);
+
+        StockBatchJobRunResponse response = service.enqueueAutoParticipantCashFlow("admin-user");
+
+        assertThat(response.job()).isEqualTo("auto-participant-cash-flow");
+        assertThat(response.status()).isEqualTo("SKIPPED");
+        assertThat(response.executionMode()).isEqualTo("manual-recurring-cash");
+        assertThat(response.message()).isEqualTo("Manual recurring cash is allowed only when automatic cash flow is disabled");
+        assertThat(jdbcTemplate.queryForObject("select count(*) from stock_batch_job_signal", Long.class))
+                .isZero();
+    }
+
+    @Test
     void enqueueMarketCloseRolloverSymbol_insertsSymbolScopedSignal() {
         JdbcTemplate jdbcTemplate = createJdbcTemplate();
-        BatchJobSignalService service = new BatchJobSignalService(jdbcTemplate);
+        BatchJobSignalService service = createService(jdbcTemplate);
 
         StockBatchJobRunResponse response = service.enqueueMarketCloseRollover("demo001", "admin-user");
 
@@ -85,7 +104,7 @@ class BatchJobSignalServiceTest {
     @Test
     void enqueueOpenOrderBookOrderCancel_insertsDeferredCancelSignal() {
         JdbcTemplate jdbcTemplate = createJdbcTemplate();
-        BatchJobSignalService service = new BatchJobSignalService(jdbcTemplate);
+        BatchJobSignalService service = createService(jdbcTemplate);
 
         StockBatchJobRunResponse response = service.enqueueOpenOrderBookOrderCancel("demo002", "admin-user");
 
@@ -116,6 +135,27 @@ class BatchJobSignalServiceTest {
                 """);
     }
 
+    private BatchJobSignalService createService(JdbcTemplate jdbcTemplate) {
+        return new BatchJobSignalService(
+                jdbcTemplate,
+                new BatchJobRuntimeControlService(JdbcClient.create(jdbcTemplate))
+        );
+    }
+
+    private void disableAutoParticipantCashFlow(JdbcTemplate jdbcTemplate) {
+        jdbcTemplate.update("""
+                insert into stock_batch_job_control(
+                    job_name,
+                    runtime_enabled,
+                    scheduler_configured,
+                    updated_by,
+                    created_at,
+                    updated_at
+                )
+                values ('auto-participant-cash-flow', false, true, 'TEST', current_timestamp, current_timestamp)
+                """);
+    }
+
     private JdbcTemplate createJdbcTemplate() {
         JdbcTemplate jdbcTemplate = new JdbcTemplate(createDataSource());
         jdbcTemplate.execute("""
@@ -132,6 +172,16 @@ class BatchJobSignalServiceTest {
                   claimed_at timestamp,
                   completed_at timestamp,
                   message varchar(500),
+                  created_at timestamp not null,
+                  updated_at timestamp not null
+                )
+                """);
+        jdbcTemplate.execute("""
+                create table stock_batch_job_control (
+                  job_name varchar(100) primary key,
+                  runtime_enabled boolean not null,
+                  scheduler_configured boolean not null,
+                  updated_by varchar(64),
                   created_at timestamp not null,
                   updated_at timestamp not null
                 )

@@ -57,43 +57,51 @@ public class CorporateActionCommandService {
         if (request.actionType() != StockCorporateActionType.DELISTING) {
             assertNoOpenOrderBookOrders(normalizedSymbol);
         }
+        LocalDateTime createdAt = simulationClockService.currentMarketDateTime();
+        LocalDate currentSimulationDate = createdAt.toLocalDate();
 
         return switch (request.actionType()) {
-            case PAID_IN_CAPITAL_INCREASE, ADDITIONAL_ISSUE -> applyShareIssue(instrument, request);
-            case BONUS_ISSUE, STOCK_DIVIDEND -> applyFreeShareDistribution(instrument, request);
-            case STOCK_SPLIT -> applyStockSplit(instrument, request);
-            case CASH_DIVIDEND -> applyCashDividend(instrument, request);
-            case DELISTING -> applyDelisting(instrument, request);
+            case PAID_IN_CAPITAL_INCREASE, ADDITIONAL_ISSUE -> applyShareIssue(instrument, request, createdAt, currentSimulationDate);
+            case BONUS_ISSUE, STOCK_DIVIDEND -> applyFreeShareDistribution(instrument, request, createdAt, currentSimulationDate);
+            case STOCK_SPLIT -> applyStockSplit(instrument, request, createdAt, currentSimulationDate);
+            case CASH_DIVIDEND -> applyCashDividend(instrument, request, createdAt, currentSimulationDate);
+            case DELISTING -> applyDelisting(instrument, request, createdAt, currentSimulationDate);
             case INITIAL_ISSUE -> throw StockException.badRequest("Initial issue is only allowed when creating an instrument");
         };
     }
 
-    private OrderBookInstrumentResponse applyShareIssue(StockOrderBookInstrument instrument, CorporateActionRequest request) {
+    private OrderBookInstrumentResponse applyShareIssue(
+            StockOrderBookInstrument instrument,
+            CorporateActionRequest request,
+            LocalDateTime createdAt,
+            LocalDate currentSimulationDate
+    ) {
         long shares = CorporateActionPolicy.requirePositiveShareQuantity(request.shareQuantity());
         BigDecimal issuePrice = CorporateActionPolicy.requirePositiveIssuePrice(request.issuePrice());
 
         if (request.actionType() == StockCorporateActionType.PAID_IN_CAPITAL_INCREASE) {
-            return announcePaidInCapitalIncrease(instrument, request, shares, issuePrice);
+            return announcePaidInCapitalIncrease(instrument, request, shares, issuePrice, createdAt, currentSimulationDate);
         }
 
-        return announceAdditionalIssue(instrument, request, shares, issuePrice);
+        return announceAdditionalIssue(instrument, request, shares, issuePrice, createdAt, currentSimulationDate);
     }
 
     private OrderBookInstrumentResponse announcePaidInCapitalIncrease(
             StockOrderBookInstrument instrument,
             CorporateActionRequest request,
             long shares,
-            BigDecimal issuePrice
+            BigDecimal issuePrice,
+            LocalDateTime createdAt,
+            LocalDate currentSimulationDate
     ) {
         LocalDate exRightsDate = request.exRightsDate();
         LocalDate paymentDate = request.paymentDate();
         LocalDate listingDate = request.listingDate();
-        CorporateActionPolicy.requirePaidInCapitalIncreaseDates(exRightsDate, paymentDate, listingDate);
+        CorporateActionPolicy.requirePaidInCapitalIncreaseDates(exRightsDate, paymentDate, listingDate, currentSimulationDate);
 
         StockPrice price = stockPriceRepository.findById(instrument.getSymbol())
                 .orElseThrow(() -> StockException.notFound("Price not found: " + instrument.getSymbol()));
         BigDecimal basePrice = price.getCurrentPrice();
-        LocalDateTime createdAt = simulationClockService.currentMarketDateTime();
         BigDecimal theoreticalExRightsPrice = CorporateActionPolicy.calculateTheoreticalExRightsPrice(
                 instrument.getIssuedShares(),
                 basePrice,
@@ -119,30 +127,36 @@ public class CorporateActionCommandService {
             StockOrderBookInstrument instrument,
             CorporateActionRequest request,
             long shares,
-            BigDecimal issuePrice
+            BigDecimal issuePrice,
+            LocalDateTime createdAt,
+            LocalDate currentSimulationDate
     ) {
-        LocalDate listingDate = CorporateActionPolicy.requireAdditionalIssueListingDate(request.listingDate());
+        LocalDate listingDate = CorporateActionPolicy.requireAdditionalIssueListingDate(request.listingDate(), currentSimulationDate);
         stockCorporateActionRepository.save(StockCorporateAction.additionalIssue(
                 instrument.getSymbol(),
                 shares,
                 issuePrice,
                 listingDate,
                 CorporateActionPolicy.normalizeNullableDescription(request.description()),
-                simulationClockService.currentMarketDateTime()
+                createdAt
         ));
         return OrderBookInstrumentResponseMapper.toResponse(instrument, findPrice(instrument));
     }
 
-    private OrderBookInstrumentResponse applyFreeShareDistribution(StockOrderBookInstrument instrument, CorporateActionRequest request) {
+    private OrderBookInstrumentResponse applyFreeShareDistribution(
+            StockOrderBookInstrument instrument,
+            CorporateActionRequest request,
+            LocalDateTime createdAt,
+            LocalDate currentSimulationDate
+    ) {
         long shares = CorporateActionPolicy.requirePositiveShareQuantity(request.shareQuantity());
         LocalDate exRightsDate = request.exRightsDate();
         LocalDate listingDate = request.listingDate();
-        CorporateActionPolicy.requireFreeShareDistributionDates(exRightsDate, listingDate);
+        CorporateActionPolicy.requireFreeShareDistributionDates(exRightsDate, listingDate, currentSimulationDate);
 
         StockPrice price = stockPriceRepository.findById(instrument.getSymbol())
                 .orElseThrow(() -> StockException.notFound("Price not found: " + instrument.getSymbol()));
         BigDecimal basePrice = price.getCurrentPrice();
-        LocalDateTime createdAt = simulationClockService.currentMarketDateTime();
         BigDecimal theoreticalExRightsPrice = CorporateActionPolicy.calculateTheoreticalFreeSharePrice(
                 instrument.getIssuedShares(),
                 basePrice,
@@ -173,32 +187,41 @@ public class CorporateActionCommandService {
         return OrderBookInstrumentResponseMapper.toResponse(instrument, price);
     }
 
-    private OrderBookInstrumentResponse applyStockSplit(StockOrderBookInstrument instrument, CorporateActionRequest request) {
+    private OrderBookInstrumentResponse applyStockSplit(
+            StockOrderBookInstrument instrument,
+            CorporateActionRequest request,
+            LocalDateTime createdAt,
+            LocalDate currentSimulationDate
+    ) {
         Integer splitFrom = request.splitFrom();
         Integer splitTo = request.splitTo();
         CorporateActionPolicy.requireSupportedStockSplitRatio(splitFrom, splitTo);
-        LocalDate listingDate = CorporateActionPolicy.requireStockSplitListingDate(request.listingDate());
+        LocalDate listingDate = CorporateActionPolicy.requireStockSplitListingDate(request.listingDate(), currentSimulationDate);
         stockCorporateActionRepository.save(StockCorporateAction.stockSplit(
                 instrument.getSymbol(),
                 splitFrom,
                 splitTo,
                 listingDate,
                 CorporateActionPolicy.normalizeNullableDescription(request.description()),
-                simulationClockService.currentMarketDateTime()
+                createdAt
         ));
         return OrderBookInstrumentResponseMapper.toResponse(instrument, findPrice(instrument));
     }
 
-    private OrderBookInstrumentResponse applyCashDividend(StockOrderBookInstrument instrument, CorporateActionRequest request) {
+    private OrderBookInstrumentResponse applyCashDividend(
+            StockOrderBookInstrument instrument,
+            CorporateActionRequest request,
+            LocalDateTime createdAt,
+            LocalDate currentSimulationDate
+    ) {
         BigDecimal dividendAmount = CorporateActionPolicy.requirePositiveDividendAmount(request.dividendAmount());
         LocalDate exRightsDate = request.exRightsDate();
         LocalDate paymentDate = request.paymentDate();
-        CorporateActionPolicy.requireCashDividendDates(exRightsDate, paymentDate);
+        CorporateActionPolicy.requireCashDividendDates(exRightsDate, paymentDate, currentSimulationDate);
 
         StockPrice price = stockPriceRepository.findById(instrument.getSymbol())
                 .orElseThrow(() -> StockException.notFound("Price not found: " + instrument.getSymbol()));
         BigDecimal basePrice = price.getCurrentPrice();
-        LocalDateTime createdAt = simulationClockService.currentMarketDateTime();
 
         stockCorporateActionRepository.save(StockCorporateAction.cashDividend(
                 instrument.getSymbol(),
@@ -213,13 +236,18 @@ public class CorporateActionCommandService {
         return OrderBookInstrumentResponseMapper.toResponse(instrument, price);
     }
 
-    private OrderBookInstrumentResponse applyDelisting(StockOrderBookInstrument instrument, CorporateActionRequest request) {
-        LocalDate delistingDate = CorporateActionPolicy.requireDelistingDate(request.delistingDate());
+    private OrderBookInstrumentResponse applyDelisting(
+            StockOrderBookInstrument instrument,
+            CorporateActionRequest request,
+            LocalDateTime createdAt,
+            LocalDate currentSimulationDate
+    ) {
+        LocalDate delistingDate = CorporateActionPolicy.requireDelistingDate(request.delistingDate(), currentSimulationDate);
         stockCorporateActionRepository.save(StockCorporateAction.delisting(
                 instrument.getSymbol(),
                 delistingDate,
                 CorporateActionPolicy.normalizeNullableDescription(request.description()),
-                simulationClockService.currentMarketDateTime()
+                createdAt
         ));
         return OrderBookInstrumentResponseMapper.toResponse(instrument, findPrice(instrument));
     }

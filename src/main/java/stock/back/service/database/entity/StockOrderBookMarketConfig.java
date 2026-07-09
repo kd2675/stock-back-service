@@ -33,11 +33,15 @@ public class StockOrderBookMarketConfig {
     private LocalDateTime updatedAt;
 
     public static StockOrderBookMarketConfig enabled(String symbol) {
+        return enabled(symbol, LocalDateTime.now());
+    }
+
+    public static StockOrderBookMarketConfig enabled(String symbol, LocalDateTime updatedAt) {
         StockOrderBookMarketConfig config = new StockOrderBookMarketConfig();
         config.symbol = symbol;
         config.enabled = true;
         config.marketStatus = MarketSessionStatus.OPEN;
-        config.updatedAt = LocalDateTime.now();
+        config.updatedAt = updatedAt == null ? LocalDateTime.now() : updatedAt;
         return config;
     }
 

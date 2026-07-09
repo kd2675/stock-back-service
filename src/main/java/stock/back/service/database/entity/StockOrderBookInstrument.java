@@ -70,7 +70,20 @@ public class StockOrderBookInstrument {
             BigDecimal tickSize,
             BigDecimal priceLimitRate
     ) {
-        LocalDateTime now = LocalDateTime.now();
+        return listed(symbol, name, market, initialPrice, issuedShares, tickSize, priceLimitRate, LocalDateTime.now());
+    }
+
+    public static StockOrderBookInstrument listed(
+            String symbol,
+            String name,
+            String market,
+            BigDecimal initialPrice,
+            long issuedShares,
+            BigDecimal tickSize,
+            BigDecimal priceLimitRate,
+            LocalDateTime listedAt
+    ) {
+        LocalDateTime now = listedAt == null ? LocalDateTime.now() : listedAt;
         StockOrderBookInstrument instrument = new StockOrderBookInstrument();
         instrument.symbol = symbol;
         instrument.name = name;

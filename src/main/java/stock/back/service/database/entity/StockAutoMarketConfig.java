@@ -36,13 +36,17 @@ public class StockAutoMarketConfig {
     private LocalDateTime updatedAt;
 
     public static StockAutoMarketConfig defaults(String symbol) {
+        return defaults(symbol, LocalDateTime.now());
+    }
+
+    public static StockAutoMarketConfig defaults(String symbol, LocalDateTime updatedAt) {
         StockAutoMarketConfig config = new StockAutoMarketConfig();
         config.symbol = symbol;
         config.enabled = true;
         config.intensity = 5;
         config.maxOrderQuantity = 4;
         config.orderTtlSeconds = 15;
-        config.updatedAt = LocalDateTime.now();
+        config.updatedAt = updatedAt == null ? LocalDateTime.now() : updatedAt;
         return config;
     }
 

@@ -155,6 +155,251 @@ class CorporateActionCommandServiceTest {
     }
 
     @Test
+    void applyCorporateAction_cashDividendBeforeCurrentSimulationDate_throwsBadRequest() {
+        StockOrderBookInstrument instrument = StockOrderBookInstrument.listed(
+                "ZQ001",
+                "테스트",
+                "ORDERBOOK",
+                new BigDecimal("70000.00"),
+                100000L,
+                new BigDecimal("100.00"),
+                new BigDecimal("30.00")
+        );
+        when(stockOrderBookInstrumentRepository.findById("ZQ001")).thenReturn(Optional.of(instrument));
+
+        assertThatThrownBy(() -> service.applyCorporateAction(
+                "ZQ001",
+                new CorporateActionRequest(
+                        StockCorporateActionType.CASH_DIVIDEND,
+                        null,
+                        null,
+                        null,
+                        null,
+                        LocalDate.of(2026, 6, 30),
+                        LocalDate.of(2026, 7, 2),
+                        null,
+                        null,
+                        new BigDecimal("1000.00"),
+                        null
+                )
+        ))
+                .isInstanceOf(StockException.class)
+                .hasMessageContaining("must not be before current simulation date");
+
+        verify(stockCorporateActionRepository, never()).save(any());
+    }
+
+    @Test
+    void applyCorporateAction_paidInCapitalIncreaseSameDayPayment_throwsBadRequest() {
+        StockOrderBookInstrument instrument = StockOrderBookInstrument.listed(
+                "ZQ001",
+                "테스트",
+                "ORDERBOOK",
+                new BigDecimal("70000.00"),
+                100000L,
+                new BigDecimal("100.00"),
+                new BigDecimal("30.00")
+        );
+        when(stockOrderBookInstrumentRepository.findById("ZQ001")).thenReturn(Optional.of(instrument));
+
+        assertThatThrownBy(() -> service.applyCorporateAction(
+                "ZQ001",
+                new CorporateActionRequest(
+                        StockCorporateActionType.PAID_IN_CAPITAL_INCREASE,
+                        10000L,
+                        new BigDecimal("50000.00"),
+                        null,
+                        null,
+                        LocalDate.of(2026, 7, 1),
+                        LocalDate.of(2026, 7, 1),
+                        LocalDate.of(2026, 7, 3),
+                        null,
+                        null,
+                        "유상증자"
+                )
+        ))
+                .isInstanceOf(StockException.class)
+                .hasMessageContaining("must be ordered by ex-rights, payment, listing on later dates");
+
+        verify(stockCorporateActionRepository, never()).save(any());
+    }
+
+    @Test
+    void applyCorporateAction_cashDividendSameDayPayment_throwsBadRequest() {
+        StockOrderBookInstrument instrument = StockOrderBookInstrument.listed(
+                "ZQ001",
+                "테스트",
+                "ORDERBOOK",
+                new BigDecimal("70000.00"),
+                100000L,
+                new BigDecimal("100.00"),
+                new BigDecimal("30.00")
+        );
+        when(stockOrderBookInstrumentRepository.findById("ZQ001")).thenReturn(Optional.of(instrument));
+
+        assertThatThrownBy(() -> service.applyCorporateAction(
+                "ZQ001",
+                new CorporateActionRequest(
+                        StockCorporateActionType.CASH_DIVIDEND,
+                        null,
+                        null,
+                        null,
+                        null,
+                        LocalDate.of(2026, 7, 1),
+                        LocalDate.of(2026, 7, 1),
+                        null,
+                        null,
+                        new BigDecimal("1000.00"),
+                        null
+                )
+        ))
+                .isInstanceOf(StockException.class)
+                .hasMessageContaining("payment date must be after ex-dividend date");
+
+        verify(stockCorporateActionRepository, never()).save(any());
+    }
+
+    @Test
+    void applyCorporateAction_additionalIssueBeforeCurrentSimulationDate_throwsBadRequest() {
+        StockOrderBookInstrument instrument = StockOrderBookInstrument.listed(
+                "ZQ001",
+                "테스트",
+                "ORDERBOOK",
+                new BigDecimal("70000.00"),
+                100000L,
+                new BigDecimal("100.00"),
+                new BigDecimal("30.00")
+        );
+        when(stockOrderBookInstrumentRepository.findById("ZQ001")).thenReturn(Optional.of(instrument));
+
+        assertThatThrownBy(() -> service.applyCorporateAction(
+                "ZQ001",
+                new CorporateActionRequest(
+                        StockCorporateActionType.ADDITIONAL_ISSUE,
+                        30000L,
+                        new BigDecimal("60000.00"),
+                        null,
+                        null,
+                        null,
+                        null,
+                        LocalDate.of(2026, 6, 30),
+                        null,
+                        null,
+                        "추가발행"
+                )
+        ))
+                .isInstanceOf(StockException.class)
+                .hasMessageContaining("must not be before current simulation date");
+
+        verify(stockCorporateActionRepository, never()).save(any());
+    }
+
+    @Test
+    void applyCorporateAction_stockSplitBeforeCurrentSimulationDate_throwsBadRequest() {
+        StockOrderBookInstrument instrument = StockOrderBookInstrument.listed(
+                "ZQ001",
+                "테스트",
+                "ORDERBOOK",
+                new BigDecimal("70000.00"),
+                100000L,
+                new BigDecimal("100.00"),
+                new BigDecimal("30.00")
+        );
+        when(stockOrderBookInstrumentRepository.findById("ZQ001")).thenReturn(Optional.of(instrument));
+
+        assertThatThrownBy(() -> service.applyCorporateAction(
+                "ZQ001",
+                new CorporateActionRequest(
+                        StockCorporateActionType.STOCK_SPLIT,
+                        null,
+                        null,
+                        1,
+                        5,
+                        null,
+                        null,
+                        LocalDate.of(2026, 6, 30),
+                        null,
+                        null,
+                        "액면분할"
+                )
+        ))
+                .isInstanceOf(StockException.class)
+                .hasMessageContaining("must not be before current simulation date");
+
+        verify(stockCorporateActionRepository, never()).save(any());
+    }
+
+    @Test
+    void applyCorporateAction_stockDividendSameDayListing_throwsBadRequest() {
+        StockOrderBookInstrument instrument = StockOrderBookInstrument.listed(
+                "ZQ001",
+                "테스트",
+                "ORDERBOOK",
+                new BigDecimal("70000.00"),
+                100000L,
+                new BigDecimal("100.00"),
+                new BigDecimal("30.00")
+        );
+        when(stockOrderBookInstrumentRepository.findById("ZQ001")).thenReturn(Optional.of(instrument));
+
+        assertThatThrownBy(() -> service.applyCorporateAction(
+                "ZQ001",
+                new CorporateActionRequest(
+                        StockCorporateActionType.STOCK_DIVIDEND,
+                        10000L,
+                        null,
+                        null,
+                        null,
+                        LocalDate.of(2026, 7, 1),
+                        null,
+                        LocalDate.of(2026, 7, 1),
+                        null,
+                        null,
+                        "주식배당"
+                )
+        ))
+                .isInstanceOf(StockException.class)
+                .hasMessageContaining("listing date must be after ex-rights date");
+
+        verify(stockCorporateActionRepository, never()).save(any());
+    }
+
+    @Test
+    void applyCorporateAction_delistingBeforeCurrentSimulationDate_throwsBadRequest() {
+        StockOrderBookInstrument instrument = StockOrderBookInstrument.listed(
+                "ZQ001",
+                "테스트",
+                "ORDERBOOK",
+                new BigDecimal("70000.00"),
+                100000L,
+                new BigDecimal("100.00"),
+                new BigDecimal("30.00")
+        );
+        when(stockOrderBookInstrumentRepository.findById("ZQ001")).thenReturn(Optional.of(instrument));
+
+        assertThatThrownBy(() -> service.applyCorporateAction(
+                "ZQ001",
+                new CorporateActionRequest(
+                        StockCorporateActionType.DELISTING,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        LocalDate.of(2026, 6, 30),
+                        null,
+                        "상장폐지"
+                )
+        ))
+                .isInstanceOf(StockException.class)
+                .hasMessageContaining("must not be before current simulation date");
+
+        verify(stockCorporateActionRepository, never()).save(any());
+    }
+
+    @Test
     void applyCorporateAction_delisting_skipsOpenOrderPrecondition() {
         JdbcTemplate unusedJdbcTemplate = mock(JdbcTemplate.class);
         CorporateActionCommandService delistingService = new CorporateActionCommandService(

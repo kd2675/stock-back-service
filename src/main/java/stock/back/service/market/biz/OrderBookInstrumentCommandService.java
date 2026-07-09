@@ -90,15 +90,15 @@ public class OrderBookInstrumentCommandService {
 
         BigDecimal tickSize = KoreanStockTickSizePolicy.tickSizeForCurrentPrice(market, request.initialPrice());
         BigDecimal priceLimitRate = request.priceLimitRate() == null ? BigDecimal.valueOf(30) : request.priceLimitRate();
-        StockOrderBookInstrument instrument = stockOrderBookInstrumentRepository.save(
-                StockOrderBookInstrument.listed(symbol, name, market, request.initialPrice(), request.issuedShares(), tickSize, priceLimitRate)
-        );
         LocalDateTime now = simulationClockService.currentMarketDateTime();
+        StockOrderBookInstrument instrument = stockOrderBookInstrumentRepository.save(
+                StockOrderBookInstrument.listed(symbol, name, market, request.initialPrice(), request.issuedShares(), tickSize, priceLimitRate, now)
+        );
         stockCorporateActionRepository.save(
                 StockCorporateAction.initialIssue(symbol, request.issuedShares(), request.initialPrice(), now)
         );
-        stockOrderBookMarketConfigRepository.save(StockOrderBookMarketConfig.enabled(symbol));
-        stockAutoMarketConfigRepository.save(StockAutoMarketConfig.defaults(symbol));
+        stockOrderBookMarketConfigRepository.save(StockOrderBookMarketConfig.enabled(symbol, now));
+        stockAutoMarketConfigRepository.save(StockAutoMarketConfig.defaults(symbol, now));
         stockPriceRepository.save(StockPrice.initial(symbol, request.initialPrice(), now));
         seedListingAutoAccount(symbol, name, request.initialPrice(), request.issuedShares(), request.listingAutoAccount(), now);
         return OrderBookInstrumentResponseMapper.toResponse(instrument, findPrice(instrument));
@@ -189,7 +189,7 @@ public class OrderBookInstrumentCommandService {
                 initialPrice,
                 now
         );
-        StockListingAutoAccountConfig config = StockListingAutoAccountConfig.defaults(symbol, listingUserKey, displayName, tradableShares);
+        StockListingAutoAccountConfig config = StockListingAutoAccountConfig.defaults(symbol, listingUserKey, displayName, tradableShares, now);
         if (request != null) {
             config.update(
                     displayName,
@@ -197,7 +197,8 @@ public class OrderBookInstrumentCommandService {
                     request.positionSide(),
                     request.maxOrderQuantity(),
                     request.orderTtlSeconds(),
-                    request.priceOffsetTicks()
+                    request.priceOffsetTicks(),
+                    now
             );
             ListingAutoAccountConfigValidator.validate(config);
         }
