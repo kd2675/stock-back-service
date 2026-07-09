@@ -202,12 +202,12 @@ class StockBackAuthorizationBoundaryTest {
         );
     }
 
-    private String additionalIssueBody() {
+    private String corporateActionBody() {
         return """
                 {
-                  "actionType": "ADDITIONAL_ISSUE",
-                  "shareQuantity": 1000,
-                  "issuePrice": 60000,
+                  "actionType": "STOCK_SPLIT",
+                  "splitFrom": 1,
+                  "splitTo": 2,
                   "listingDate": "%s"
                 }
                 """.formatted(LocalDate.now().plusDays(1));
@@ -387,7 +387,7 @@ class StockBackAuthorizationBoundaryTest {
                         .header("X-User-Key", "stock-user-key")
                         .header("X-User-Role", "ROLE_USER")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(additionalIssueBody()))
+                        .content(corporateActionBody()))
                 .andExpect(status().isForbidden())
                 .andExpect(content().string(containsString("Required role: ADMIN")));
     }
@@ -400,7 +400,7 @@ class StockBackAuthorizationBoundaryTest {
                         .header("X-User-Key", "stock-admin-key")
                         .header("X-User-Role", "ROLE_ADMIN")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(additionalIssueBody()))
+                        .content(corporateActionBody()))
                 .andExpect(status().isOk())
                 .andExpect(content().string(containsString("\"symbol\":\"ZQAUTH03\"")));
     }

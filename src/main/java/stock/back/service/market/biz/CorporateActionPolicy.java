@@ -80,14 +80,6 @@ final class CorporateActionPolicy {
         }
     }
 
-    static LocalDate requireAdditionalIssueListingDate(LocalDate listingDate, LocalDate currentSimulationDate) {
-        if (listingDate == null) {
-            throw StockException.badRequest("Additional issue requires a listing date");
-        }
-        requireNotBeforeCurrentSimulationDate("Additional issue listing date", listingDate, currentSimulationDate);
-        return listingDate;
-    }
-
     static LocalDate requireStockSplitListingDate(LocalDate listingDate, LocalDate currentSimulationDate) {
         if (listingDate == null) {
             throw StockException.badRequest("Stock split requires an effective date");

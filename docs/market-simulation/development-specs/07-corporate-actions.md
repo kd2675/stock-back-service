@@ -6,7 +6,6 @@
 
 - `INITIAL_ISSUE`: 주문장 종목 생성 시 자동 기록.
 - `PAID_IN_CAPITAL_INCREASE`: 유상증자. 권리락 가격 계산, 납입 상태, 신주 상장.
-- `ADDITIONAL_ISSUE`: 추가발행. 신주 상장 시 발행주식수와 유통주식수 증가.
 - `STOCK_SPLIT`: 액면분할. 주식수 증가, 보유수량 증가, 평균단가/가격 하향 조정.
 - `CASH_DIVIDEND`: 현금배당. 보유자별 현금 지급.
 - `BONUS_ISSUE`: 무상증자. 권리락 가격 조정, 신주 entitlement 지급.
@@ -50,11 +49,6 @@ front:
 3. batch가 권리락일에 가격을 조정한다.
 4. batch가 납입일에 action status를 `PAID`로 바꾼다.
 5. batch가 신주상장일에 발행/유통주식수를 늘린다.
-
-추가발행:
-
-1. admin이 발행수, 발행가, 신주상장일을 등록한다.
-2. 권리락 없이 신주상장일에 발행/유통주식수를 늘린다.
 
 액면분할:
 

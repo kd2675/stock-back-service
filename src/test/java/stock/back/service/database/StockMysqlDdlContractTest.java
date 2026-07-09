@@ -18,7 +18,6 @@ class StockMysqlDdlContractTest {
     private static final List<String> INITIAL_CORPORATE_ACTION_SCOPE = List.of(
             "INITIAL_ISSUE",
             "PAID_IN_CAPITAL_INCREASE",
-            "ADDITIONAL_ISSUE",
             "STOCK_SPLIT",
             "CASH_DIVIDEND",
             "BONUS_ISSUE",
@@ -50,7 +49,6 @@ class StockMysqlDdlContractTest {
             "chk_stock_corporate_action_split_to",
             "chk_stock_corporate_action_issue_required",
             "chk_stock_corporate_action_paid_schedule_required",
-            "chk_stock_corporate_action_additional_listing_required",
             "chk_stock_corporate_action_split_required",
             "chk_stock_corporate_action_dividend_required",
             "chk_stock_corporate_action_free_share_required",

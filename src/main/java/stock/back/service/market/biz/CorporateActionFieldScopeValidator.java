@@ -16,14 +16,6 @@ final class CorporateActionFieldScopeValidator {
                 rejectPresent(request.dividendAmount(), "Paid-in capital increase does not use dividendAmount");
                 rejectPresent(request.delistingDate(), "Paid-in capital increase does not use delistingDate");
             }
-            case ADDITIONAL_ISSUE -> {
-                rejectPresent(request.splitFrom(), "Additional issue does not use splitFrom");
-                rejectPresent(request.splitTo(), "Additional issue does not use splitTo");
-                rejectPresent(request.exRightsDate(), "Additional issue does not use exRightsDate");
-                rejectPresent(request.paymentDate(), "Additional issue does not use paymentDate");
-                rejectPresent(request.dividendAmount(), "Additional issue does not use dividendAmount");
-                rejectPresent(request.delistingDate(), "Additional issue does not use delistingDate");
-            }
             case STOCK_SPLIT -> {
                 rejectPresent(request.shareQuantity(), "Stock split does not use shareQuantity");
                 rejectPresent(request.issuePrice(), "Stock split does not use issuePrice");

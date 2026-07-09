@@ -8,7 +8,6 @@
 
 - `INITIAL_ISSUE`: 주문장 종목 생성 시 최초 발행 기록
 - `PAID_IN_CAPITAL_INCREASE`: 유상증자
-- `ADDITIONAL_ISSUE`: 추가발행
 - `STOCK_SPLIT`: 액면분할
 - `CASH_DIVIDEND`: 현금배당
 - `BONUS_ISSUE`: 무상증자
@@ -76,19 +75,6 @@ batch 처리:
 2. `stock_price_tick`을 남긴다.
 3. 납입일에 status를 `PAID`로 바꾼다.
 4. 신주상장일에 `issued_shares`, `tradable_shares`를 증가시키고 `LISTED`로 바꾼다.
-
-## 추가발행
-
-관리자 입력:
-
-- 발행수
-- 발행가
-- 신주상장일
-
-batch 처리:
-
-- 신주상장일에 `issued_shares`, `tradable_shares`를 증가시킨다.
-- 가격은 직접 조정하지 않는다.
 
 ## 액면분할
 

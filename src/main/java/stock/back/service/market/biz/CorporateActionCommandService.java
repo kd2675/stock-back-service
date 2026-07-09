@@ -61,7 +61,7 @@ public class CorporateActionCommandService {
         LocalDate currentSimulationDate = createdAt.toLocalDate();
 
         return switch (request.actionType()) {
-            case PAID_IN_CAPITAL_INCREASE, ADDITIONAL_ISSUE -> applyShareIssue(instrument, request, createdAt, currentSimulationDate);
+            case PAID_IN_CAPITAL_INCREASE -> announcePaidInCapitalIncrease(instrument, request, createdAt, currentSimulationDate);
             case BONUS_ISSUE, STOCK_DIVIDEND -> applyFreeShareDistribution(instrument, request, createdAt, currentSimulationDate);
             case STOCK_SPLIT -> applyStockSplit(instrument, request, createdAt, currentSimulationDate);
             case CASH_DIVIDEND -> applyCashDividend(instrument, request, createdAt, currentSimulationDate);
@@ -70,7 +70,7 @@ public class CorporateActionCommandService {
         };
     }
 
-    private OrderBookInstrumentResponse applyShareIssue(
+    private OrderBookInstrumentResponse announcePaidInCapitalIncrease(
             StockOrderBookInstrument instrument,
             CorporateActionRequest request,
             LocalDateTime createdAt,
@@ -78,22 +78,6 @@ public class CorporateActionCommandService {
     ) {
         long shares = CorporateActionPolicy.requirePositiveShareQuantity(request.shareQuantity());
         BigDecimal issuePrice = CorporateActionPolicy.requirePositiveIssuePrice(request.issuePrice());
-
-        if (request.actionType() == StockCorporateActionType.PAID_IN_CAPITAL_INCREASE) {
-            return announcePaidInCapitalIncrease(instrument, request, shares, issuePrice, createdAt, currentSimulationDate);
-        }
-
-        return announceAdditionalIssue(instrument, request, shares, issuePrice, createdAt, currentSimulationDate);
-    }
-
-    private OrderBookInstrumentResponse announcePaidInCapitalIncrease(
-            StockOrderBookInstrument instrument,
-            CorporateActionRequest request,
-            long shares,
-            BigDecimal issuePrice,
-            LocalDateTime createdAt,
-            LocalDate currentSimulationDate
-    ) {
         LocalDate exRightsDate = request.exRightsDate();
         LocalDate paymentDate = request.paymentDate();
         LocalDate listingDate = request.listingDate();
@@ -121,26 +105,6 @@ public class CorporateActionCommandService {
                 createdAt
         ));
         return OrderBookInstrumentResponseMapper.toResponse(instrument, price);
-    }
-
-    private OrderBookInstrumentResponse announceAdditionalIssue(
-            StockOrderBookInstrument instrument,
-            CorporateActionRequest request,
-            long shares,
-            BigDecimal issuePrice,
-            LocalDateTime createdAt,
-            LocalDate currentSimulationDate
-    ) {
-        LocalDate listingDate = CorporateActionPolicy.requireAdditionalIssueListingDate(request.listingDate(), currentSimulationDate);
-        stockCorporateActionRepository.save(StockCorporateAction.additionalIssue(
-                instrument.getSymbol(),
-                shares,
-                issuePrice,
-                listingDate,
-                CorporateActionPolicy.normalizeNullableDescription(request.description()),
-                createdAt
-        ));
-        return OrderBookInstrumentResponseMapper.toResponse(instrument, findPrice(instrument));
     }
 
     private OrderBookInstrumentResponse applyFreeShareDistribution(

@@ -28,7 +28,7 @@
 - `VIRTUAL_PRICE`와 `ORDER_BOOK`은 같은 주문 테이블을 쓰지만 `market_type`으로 분리한다.
 - 주문장 종목은 admin이 생성하는 `stock_order_book_instrument` 기준이며, 기존 현재가 시장 종목과 공유하지 않는다.
 - 현재 초기 범위의 주문 타입은 `LIMIT`, `MARKET`이다.
-- 현재 초기 범위의 기업 이벤트는 `INITIAL_ISSUE`, `PAID_IN_CAPITAL_INCREASE`, `ADDITIONAL_ISSUE`, `STOCK_SPLIT`, `CASH_DIVIDEND`, `BONUS_ISSUE`, `STOCK_DIVIDEND`이다.
+- 현재 초기 범위의 기업 이벤트는 `INITIAL_ISSUE`, `PAID_IN_CAPITAL_INCREASE`, `STOCK_SPLIT`, `CASH_DIVIDEND`, `BONUS_ISSUE`, `STOCK_DIVIDEND`이다.
 
 ## 문서 갱신 규칙
 

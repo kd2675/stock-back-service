@@ -100,30 +100,6 @@ public class StockCorporateAction {
         return action;
     }
 
-    public static StockCorporateAction additionalIssue(
-            String symbol,
-            long shares,
-            BigDecimal issuePrice,
-            LocalDate listingDate,
-            String description
-    ) {
-        return additionalIssue(symbol, shares, issuePrice, listingDate, description, LocalDateTime.now());
-    }
-
-    public static StockCorporateAction additionalIssue(
-            String symbol,
-            long shares,
-            BigDecimal issuePrice,
-            LocalDate listingDate,
-            String description,
-            LocalDateTime createdAt
-    ) {
-        StockCorporateAction action = create(symbol, StockCorporateActionType.ADDITIONAL_ISSUE, shares, issuePrice, null, null, description, createdAt);
-        action.status = StockCorporateActionStatus.ANNOUNCED;
-        action.listingDate = listingDate;
-        return action;
-    }
-
     public static StockCorporateAction paidInCapitalIncrease(
             String symbol,
             long shares,
