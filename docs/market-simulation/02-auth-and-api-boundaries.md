@@ -29,6 +29,8 @@ Public read API:
 - `GET /api/stock/v1/markets/prices/stream`
 - `GET /api/stock/v1/markets/prices/{symbol}/ticks`
 - `GET /api/stock/v1/markets/order-books/{symbol}`
+- `GET /api/stock/v1/markets/corporate-actions`
+  - optional query: `actionType`, `limit`(기본 100, 최대 200)
 - `GET /api/stock/v1/markets/order-book-instruments/{symbol}/corporate-actions`
 - `GET /api/stock/v1/markets/rankings`
 - `GET /api/stock/v1/markets/virtual-market`
@@ -44,6 +46,7 @@ User protected API:
 - `GET /api/stock/v1/portfolio/me/snapshots`
 - `GET /api/stock/v1/portfolio/me/profit-summary`
 - `GET /api/stock/v1/markets/corporate-action-entitlements/me`
+- `POST /api/stock/v1/markets/corporate-actions/{actionId}/subscriptions/me`
 - `GET /api/stock/v1/orders`
   - optional query: `marketType=VIRTUAL_PRICE|ORDER_BOOK`
 - `POST /api/stock/v1/orders`

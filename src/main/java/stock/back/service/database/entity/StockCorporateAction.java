@@ -145,7 +145,7 @@ public class StockCorporateAction {
                 theoreticalExRightsPrice,
                 exRightsDate,
                 defaultShareholderSubscriptionStartDate(exRightsDate),
-                paymentDate,
+                paymentDate == null ? null : paymentDate.minusDays(1),
                 paymentDate,
                 listingDate,
                 description,

@@ -10,12 +10,14 @@ import stock.back.service.database.entity.MarketType;
 import stock.back.service.database.entity.OrderSide;
 import stock.back.service.database.entity.OrderStatus;
 import stock.back.service.database.entity.StockAccount;
+import stock.back.service.database.entity.StockCorporateActionEntitlementStatus;
 import stock.back.service.database.entity.StockExecution;
 import stock.back.service.database.entity.StockHolding;
 import stock.back.service.database.entity.StockOrder;
 import stock.back.service.database.entity.StockPrice;
 import stock.back.service.database.repository.PortfolioSnapshotRepository;
 import stock.back.service.database.repository.StockAccountCashFlowRepository;
+import stock.back.service.database.repository.StockCorporateActionEntitlementRepository;
 import stock.back.service.database.repository.StockExecutionRepository;
 import stock.back.service.database.repository.StockHoldingRepository;
 import stock.back.service.database.repository.StockOrderRepository;
@@ -55,6 +57,7 @@ public class TradingQueryService {
     private final StockHoldingRepository stockHoldingRepository;
     private final StockExecutionRepository stockExecutionRepository;
     private final StockAccountCashFlowRepository stockAccountCashFlowRepository;
+    private final StockCorporateActionEntitlementRepository stockCorporateActionEntitlementRepository;
     private final PortfolioSnapshotRepository portfolioSnapshotRepository;
     private final StockPriceRepository stockPriceRepository;
     private final StockPriceCacheService stockPriceCacheService;
@@ -130,11 +133,7 @@ public class TradingQueryService {
     public PortfolioResponse getPortfolio(String userKey) {
         StockAccount account = accountService.requireAccount(userKey);
         List<HoldingResponse> holdings = buildHoldingResponses(account.getId());
-        BigDecimal reservedBuyCash = stockOrderRepository.sumReservedCashByAccountIdAndSideAndStatusIn(
-                account.getId(),
-                OrderSide.BUY,
-                ACTIVE_ORDER_STATUSES
-        );
+        BigDecimal reservedBuyCash = reservedAssetCash(account.getId());
         BigDecimal netCashFlow = accountService.getNetCashFlow(account.getId());
         long pendingCount = stockOrderRepository.countByAccountIdAndStatusIn(
                 account.getId(),
@@ -179,11 +178,7 @@ public class TradingQueryService {
     public FundFlowResponse getFundFlow(String userKey) {
         StockAccount account = accountService.requireAccount(userKey);
         List<HoldingResponse> holdings = buildHoldingResponses(account.getId());
-        BigDecimal reservedBuyCash = stockOrderRepository.sumReservedCashByAccountIdAndSideAndStatusIn(
-                account.getId(),
-                OrderSide.BUY,
-                ACTIVE_ORDER_STATUSES
-        );
+        BigDecimal reservedBuyCash = reservedAssetCash(account.getId());
         StockAccountCashFlowRepository.CashFlowSummaryProjection cashFlowSummary =
                 stockAccountCashFlowRepository.summarizeCashFlowsByAccountId(account.getId());
         StockExecutionRepository.ProfitSummaryProjection profitSummary =
@@ -200,6 +195,24 @@ public class TradingQueryService {
                 profitSummary,
                 recentCashFlows
         );
+    }
+
+    private BigDecimal reservedAssetCash(Long accountId) {
+        BigDecimal orderCash = stockOrderRepository.sumReservedCashByAccountIdAndSideAndStatusIn(
+                accountId,
+                OrderSide.BUY,
+                ACTIVE_ORDER_STATUSES
+        );
+        BigDecimal subscriptionCash = stockCorporateActionEntitlementRepository
+                .sumSubscribedCashAmountByAccountIdAndStatus(
+                        accountId,
+                        StockCorporateActionEntitlementStatus.SUBSCRIBED
+                );
+        return zeroIfNull(orderCash).add(zeroIfNull(subscriptionCash));
+    }
+
+    private BigDecimal zeroIfNull(BigDecimal value) {
+        return value == null ? BigDecimal.ZERO : value;
     }
 
     private List<HoldingResponse> buildHoldingResponses(Long accountId) {

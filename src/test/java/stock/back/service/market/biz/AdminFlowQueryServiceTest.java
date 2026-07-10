@@ -30,8 +30,8 @@ class AdminFlowQueryServiceTest {
         var summary = service.getAdminFundFlowSummary();
 
         assertThat(summary.activeAccountCount()).isEqualTo(2L);
-        assertThat(summary.totalCashBalance()).isEqualByComparingTo(new BigDecimal("3000.00"));
-        assertThat(summary.totalReservedBuyCash()).isEqualByComparingTo(new BigDecimal("150.00"));
+        assertThat(summary.totalCashBalance()).isEqualByComparingTo(new BigDecimal("2880.00"));
+        assertThat(summary.totalReservedBuyCash()).isEqualByComparingTo(new BigDecimal("270.00"));
         assertThat(summary.totalHoldingMarketValue()).isEqualByComparingTo(new BigDecimal("260.00"));
         assertThat(summary.totalAsset()).isEqualByComparingTo(new BigDecimal("3410.00"));
         assertThat(summary.externalDepositAmount()).isEqualByComparingTo(new BigDecimal("500.00"));
@@ -339,6 +339,13 @@ class AdminFlowQueryServiceTest {
                 )
                 """);
         jdbcTemplate.execute("""
+                create table stock_corporate_action_entitlement (
+                    account_id bigint not null,
+                    subscribed_cash_amount decimal(19, 2),
+                    status varchar(20) not null
+                )
+                """);
+        jdbcTemplate.execute("""
                 create table stock_execution (
                     id bigint primary key,
                     account_id bigint not null,
@@ -358,7 +365,7 @@ class AdminFlowQueryServiceTest {
     }
 
     private void seedFundFlow(JdbcTemplate jdbcTemplate) {
-        insertAccount(jdbcTemplate, 1L, "active-user-1", "ACTIVE", "1000.00");
+        insertAccount(jdbcTemplate, 1L, "active-user-1", "ACTIVE", "880.00");
         insertAccount(jdbcTemplate, 2L, "active-user-2", "ACTIVE", "2000.00");
         insertAccount(jdbcTemplate, 3L, "closed-user", "CLOSED", "9999.00");
         insertOrder(jdbcTemplate, 1L, 1L, "BUY", "PENDING", "100.00");
@@ -372,6 +379,10 @@ class AdminFlowQueryServiceTest {
         insertCashFlow(jdbcTemplate, 2L, 1L, "WITHDRAW", "120.00", "ADMIN_WITHDRAW", 2);
         insertCashFlow(jdbcTemplate, 3L, 2L, "DEPOSIT", "30.00", "DIVIDEND_PAYMENT", 1);
         insertCashFlow(jdbcTemplate, 4L, 3L, "DEPOSIT", "9999.00", "ADMIN_DEPOSIT", 0);
+        insertCashFlow(jdbcTemplate, 50L, 1L, "WITHDRAW", "120.00", "CAPITAL_INCREASE_SUBSCRIPTION", 1);
+        jdbcTemplate.update(
+                "insert into stock_corporate_action_entitlement(account_id, subscribed_cash_amount, status) values (1, 120.00, 'SUBSCRIBED')"
+        );
         insertExecution(jdbcTemplate, 1L, 1L, "BUY", "700.00", "7.00", "0.00", "0.00");
         insertExecution(jdbcTemplate, 2L, 2L, "SELL", "900.00", "3.00", "5.00", "200.00");
         insertExecution(jdbcTemplate, 3L, 3L, "SELL", "9999.00", "1.00", "1.00", "9999.00");

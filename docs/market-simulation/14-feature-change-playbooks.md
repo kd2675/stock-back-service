@@ -282,7 +282,7 @@
 
 현재 구현:
 
-- MySQL full DDL은 back/batch에 각각 있다.
+- MySQL full DDL은 `stock-back-service/src/main/resources/db/ddl/stock_all.sql` 하나를 canonical source로 사용한다.
 - batch test와 smoke는 H2 DDL을 사용한다.
 
 변경 순서:

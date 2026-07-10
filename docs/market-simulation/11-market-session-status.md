@@ -48,7 +48,6 @@
 DDL:
 
 - `stock-back-service/src/main/resources/db/ddl/stock_all.sql`
-- `stock-batch-service/src/main/resources/db/ddl/stock_all.sql`
 - `stock-batch-service/src/main/resources/db/ddl/stock_h2.sql`
 
 ## 데이터 계약

@@ -2,7 +2,7 @@
 
 ## 현재 구현
 
-stock 원장은 주문, 체결, 계좌, 보유, 가격, 주문장 종목, 기업 이벤트, 정산 snapshot으로 나뉜다. back과 batch는 같은 MySQL schema를 바라보므로 DDL은 두 서비스가 같은 계약을 가져야 한다.
+stock 원장은 주문, 체결, 계좌, 보유, 가격, 주문장 종목, 기업 이벤트, 정산 snapshot으로 나뉜다. back과 batch는 같은 MySQL schema를 바라보며, MySQL business DDL은 back의 단일 canonical 파일을 사용한다.
 
 ## 주요 테이블과 코드
 
@@ -21,7 +21,6 @@ stock 원장은 주문, 체결, 계좌, 보유, 가격, 주문장 종목, 기업
 ## DDL 파일
 
 - `stock-back-service/src/main/resources/db/ddl/stock_all.sql`
-- `stock-batch-service/src/main/resources/db/ddl/stock_all.sql`
 - `stock-batch-service/src/main/resources/db/ddl/stock_h2.sql`
 - `stock-batch-service/src/main/resources/db/ddl/stock_h2_smoke_data.sql`
 

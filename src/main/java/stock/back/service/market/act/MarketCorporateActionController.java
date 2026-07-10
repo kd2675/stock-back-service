@@ -12,7 +12,9 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import stock.back.service.database.entity.StockCorporateActionType;
 import stock.back.service.market.biz.CorporateActionCommandService;
 import stock.back.service.market.biz.CorporateActionQueryService;
 import stock.back.service.market.biz.CorporateActionSubscriptionService;
@@ -50,6 +52,14 @@ public class MarketCorporateActionController {
     @GetMapping("/order-book-instruments/{symbol}/corporate-actions")
     public ResponseDataDTO<List<CorporateActionResponse>> getCorporateActions(@PathVariable String symbol) {
         return ResponseDataDTO.of(corporateActionQueryService.getCorporateActions(symbol));
+    }
+
+    @GetMapping("/corporate-actions")
+    public ResponseDataDTO<List<CorporateActionResponse>> getCorporateActions(
+            @RequestParam(required = false) StockCorporateActionType actionType,
+            @RequestParam(required = false) Integer limit
+    ) {
+        return ResponseDataDTO.of(corporateActionQueryService.getCorporateActions(actionType, limit));
     }
 
     @GetMapping("/order-book-instruments/{symbol}/reports")

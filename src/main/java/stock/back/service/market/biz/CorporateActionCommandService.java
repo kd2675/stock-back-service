@@ -5,8 +5,9 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import stock.back.service.common.exception.StockException;
-import stock.back.service.database.entity.StockCorporateAction;
 import stock.back.service.database.entity.StockCapitalIncreaseOfferingType;
+import stock.back.service.database.entity.StockCorporateAction;
+import stock.back.service.database.entity.StockCorporateActionStatus;
 import stock.back.service.database.entity.StockCorporateActionType;
 import stock.back.service.database.entity.StockOrderBookInstrument;
 import stock.back.service.database.entity.StockPrice;
@@ -19,9 +20,23 @@ import stock.back.service.market.vo.OrderBookInstrumentResponse;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.List;
 
 @Service
 public class CorporateActionCommandService {
+
+    private static final List<StockCorporateActionType> EXCLUSIVE_INSTRUMENT_ACTION_TYPES = List.of(
+            StockCorporateActionType.PAID_IN_CAPITAL_INCREASE,
+            StockCorporateActionType.STOCK_SPLIT,
+            StockCorporateActionType.BONUS_ISSUE,
+            StockCorporateActionType.STOCK_DIVIDEND,
+            StockCorporateActionType.DELISTING
+    );
+    private static final List<StockCorporateActionStatus> ACTIVE_EXCLUSIVE_ACTION_STATUSES = List.of(
+            StockCorporateActionStatus.ANNOUNCED,
+            StockCorporateActionStatus.EX_RIGHTS_APPLIED,
+            StockCorporateActionStatus.PAID
+    );
 
     private final StockOrderBookInstrumentRepository stockOrderBookInstrumentRepository;
     private final StockCorporateActionRepository stockCorporateActionRepository;
@@ -53,13 +68,17 @@ public class CorporateActionCommandService {
             throw StockException.badRequest("Initial issue is only allowed when creating an instrument");
         }
         CorporateActionFieldScopeValidator.validate(request);
-        StockOrderBookInstrument instrument = stockOrderBookInstrumentRepository.findById(normalizedSymbol)
+        StockOrderBookInstrument instrument = stockOrderBookInstrumentRepository.findByIdForUpdate(normalizedSymbol)
                 .orElseThrow(() -> StockException.notFound("Unknown order book symbol: " + normalizedSymbol));
+        if (!Boolean.TRUE.equals(instrument.getEnabled())) {
+            throw StockException.conflict("Corporate action is not allowed for a disabled or delisted instrument: " + normalizedSymbol);
+        }
         if (request.actionType() != StockCorporateActionType.DELISTING) {
             assertNoOpenOrderBookOrders(normalizedSymbol);
         }
         LocalDateTime createdAt = simulationClockService.currentMarketDateTime();
         LocalDate currentSimulationDate = createdAt.toLocalDate();
+        assertNoActiveExclusiveInstrumentAction(normalizedSymbol, request.actionType());
 
         return switch (request.actionType()) {
             case PAID_IN_CAPITAL_INCREASE -> announcePaidInCapitalIncrease(instrument, request, createdAt, currentSimulationDate);
@@ -87,7 +106,7 @@ public class CorporateActionCommandService {
                 ? CorporateActionPolicy.defaultPaidInSubscriptionStartDate(offeringType, exRightsDate, currentSimulationDate)
                 : request.subscriptionStartDate();
         LocalDate subscriptionEndDate = request.subscriptionEndDate() == null
-                ? request.paymentDate()
+                ? CorporateActionPolicy.defaultPaidInSubscriptionEndDate(request.paymentDate())
                 : request.subscriptionEndDate();
         LocalDate paymentDate = request.paymentDate();
         LocalDate listingDate = request.listingDate();
@@ -254,6 +273,19 @@ public class CorporateActionCommandService {
                 .single();
         if (openOrderCount > 0) {
             throw StockException.conflict("Corporate action requires no open order book orders: " + symbol);
+        }
+    }
+
+    private void assertNoActiveExclusiveInstrumentAction(String symbol, StockCorporateActionType requestedActionType) {
+        if (!EXCLUSIVE_INSTRUMENT_ACTION_TYPES.contains(requestedActionType)) {
+            return;
+        }
+        if (stockCorporateActionRepository.existsBySymbolAndActionTypeInAndStatusIn(
+                symbol,
+                EXCLUSIVE_INSTRUMENT_ACTION_TYPES,
+                ACTIVE_EXCLUSIVE_ACTION_STATUSES
+        )) {
+            throw StockException.conflict("Another instrument-changing corporate action is already in progress: " + symbol);
         }
     }
 

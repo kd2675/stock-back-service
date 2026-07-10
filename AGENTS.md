@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Updated: 2026-06-17 -->
+<!-- Updated: 2026-07-10 -->
 
 # stock-back-service
 
@@ -54,7 +54,7 @@
 - 주문장 API는 미체결/부분체결 LIMIT 주문만 가격대별로 집계합니다. 시장가 주문은 가격 레벨이 없으므로 호가에 넣지 않습니다.
 - 자동장 API는 `stock_auto_participant`, `stock_auto_market_config`, 자동 주문/체결 원장을 읽는 조회 API입니다. 주문 생성과 체결은 batch 서버 책임입니다.
 - `portfolio_snapshot`은 batch 정산 결과의 원장이며 사용자 화면에서는 최근 정산 기록/랭킹 근거로만 읽습니다.
-- DDL은 `src/main/resources/db/ddl/stock_all.sql`입니다.
+- MySQL business DDL의 단일 canonical source는 `src/main/resources/db/ddl/stock_all.sql`입니다.
 - 기능별 현재 구현과 다음 개발 순서는 `docs/market-simulation/00-overview.md`, 코드 파일별 책임은 `docs/market-simulation/13-code-ownership-map.md`, 기능별 변경 절차는 `docs/market-simulation/14-feature-change-playbooks.md`를 기준으로 확인합니다.
 
 ## For AI Agents

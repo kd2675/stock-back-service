@@ -7,6 +7,7 @@ import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import stock.back.service.market.vo.StockBatchJobRunResponse;
 
 import javax.sql.DataSource;
+import java.time.LocalDateTime;
 import java.util.Map;
 import java.util.UUID;
 
@@ -64,6 +65,45 @@ class BatchJobSignalServiceTest {
         assertThat(response.message()).contains("Batch job signal queued: id=");
         assertThat(jdbcTemplate.queryForObject("select count(*) from stock_batch_job_signal", Long.class))
                 .isEqualTo(2L);
+    }
+
+    @Test
+    void latestAutoParticipantCashFlow_completedSignal_returnsProcessedCount() {
+        JdbcTemplate jdbcTemplate = createJdbcTemplate();
+        disableAutoParticipantCashFlow(jdbcTemplate);
+        BatchJobSignalService service = createService(jdbcTemplate);
+        service.enqueueAutoParticipantCashFlow("admin-user");
+        LocalDateTime completedAt = LocalDateTime.of(2026, 7, 10, 17, 30);
+        jdbcTemplate.update(
+                """
+                update stock_batch_job_signal
+                   set status = 'COMPLETED',
+                       processed_count = 12,
+                       message = 'Job completed',
+                       completed_at = ?
+                """,
+                completedAt
+        );
+
+        StockBatchJobRunResponse response = service.latestAutoParticipantCashFlow().orElseThrow();
+
+        assertThat(response.status()).isEqualTo("COMPLETED");
+        assertThat(response.processedCount()).isEqualTo(12);
+        assertThat(response.completedAt()).isEqualTo(completedAt);
+    }
+
+    @Test
+    void latestAutoParticipantCashFlow_pendingSignal_returnsQueued() {
+        JdbcTemplate jdbcTemplate = createJdbcTemplate();
+        disableAutoParticipantCashFlow(jdbcTemplate);
+        BatchJobSignalService service = createService(jdbcTemplate);
+        service.enqueueAutoParticipantCashFlow("admin-user");
+
+        StockBatchJobRunResponse response = service.latestAutoParticipantCashFlow().orElseThrow();
+
+        assertThat(response.status()).isEqualTo("QUEUED");
+        assertThat(response.processedCount()).isZero();
+        assertThat(response.completedAt()).isNull();
     }
 
     @Test
@@ -169,9 +209,11 @@ class BatchJobSignalServiceTest {
                   status varchar(20) not null,
                   requested_by varchar(64),
                   requested_at timestamp not null,
-                  claimed_at timestamp,
+                  picked_at timestamp,
                   completed_at timestamp,
+                  processed_count int,
                   message varchar(500),
+                  error_message varchar(1000),
                   created_at timestamp not null,
                   updated_at timestamp not null
                 )

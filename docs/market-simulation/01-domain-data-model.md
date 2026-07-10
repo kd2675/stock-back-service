@@ -96,15 +96,18 @@
   - `CASH_DIVIDEND`
   - `BONUS_ISSUE`
   - `STOCK_DIVIDEND`
+  - `DELISTING`
 - batch job이 날짜와 상태에 따라 적용한다.
 
 `stock_corporate_action_entitlement`
 
-- 현금배당과 무료 신주 배정 원장이다.
-- 배당락일 현재 보유자별 현금 지급액 또는 신주 배정 수량을 고정한다.
+- 현금배당, 무료 신주 배정, 유상증자 배정/청약 원장이다.
+- 권리락일 전 마지막 완료 장마감 snapshot으로 보유자별 현금 지급액 또는 신주 배정 수량을 고정한다.
+- 주주배정 유상증자는 권리락 보유 snapshot으로 배정 수량을 고정하고, 일반공모는 청약 시 사용자별 배정 row를 만든다.
+- 유상증자 청약금은 계좌 사용 가능 현금에서 차감하지만 상장 전까지 `SUBSCRIBED` entitlement의 예약 자산으로 합산한다. 이 출금은 외부 순입출금과 수익률 원금에서 제외한다.
 - 지급일에는 현금배당 원장을 기준으로 `stock_account.cash_balance`를 증가시킨다.
 - 신주상장일에는 무상증자/주식배당 원장을 기준으로 `stock_holding.quantity`와 평균단가를 조정한다.
-- 사용자별 최근 배정 내역 조회를 위해 `(user_key, created_at)` index를 둔다.
+- 사용자별 최근 배정 내역 조회를 위해 `(account_id, created_at)` index를 둔다.
 
 `stock_instrument_report_event`
 

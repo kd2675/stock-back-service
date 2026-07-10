@@ -64,7 +64,7 @@ final class CorporateActionPolicy {
             throw StockException.badRequest("Public offering does not use an ex-rights date");
         }
         if (exRightsDate != null) {
-            requireNotBeforeCurrentSimulationDate("Paid-in capital increase ex-rights date", exRightsDate, currentSimulationDate);
+            requireAfterCurrentSimulationDate("Paid-in capital increase ex-rights date", exRightsDate, currentSimulationDate);
         }
         requireNotBeforeCurrentSimulationDate("Paid-in capital increase subscription start date", subscriptionStartDate, currentSimulationDate);
         requireNotBeforeCurrentSimulationDate("Paid-in capital increase subscription end date", subscriptionEndDate, currentSimulationDate);
@@ -96,11 +96,15 @@ final class CorporateActionPolicy {
         return currentSimulationDate;
     }
 
+    static LocalDate defaultPaidInSubscriptionEndDate(LocalDate paymentDate) {
+        return paymentDate == null ? null : paymentDate.minusDays(1);
+    }
+
     static void requireFreeShareDistributionDates(LocalDate exRightsDate, LocalDate listingDate, LocalDate currentSimulationDate) {
         if (exRightsDate == null || listingDate == null) {
             throw StockException.badRequest("Free share distribution requires ex-rights and listing dates");
         }
-        requireNotBeforeCurrentSimulationDate("Free share distribution ex-rights date", exRightsDate, currentSimulationDate);
+        requireAfterCurrentSimulationDate("Free share distribution ex-rights date", exRightsDate, currentSimulationDate);
         requireNotBeforeCurrentSimulationDate("Free share distribution listing date", listingDate, currentSimulationDate);
         if (!listingDate.isAfter(exRightsDate)) {
             throw StockException.badRequest("Free share distribution listing date must be after ex-rights date");
@@ -111,7 +115,7 @@ final class CorporateActionPolicy {
         if (exRightsDate == null || paymentDate == null) {
             throw StockException.badRequest("Cash dividend requires ex-dividend and payment dates");
         }
-        requireNotBeforeCurrentSimulationDate("Cash dividend ex-dividend date", exRightsDate, currentSimulationDate);
+        requireAfterCurrentSimulationDate("Cash dividend ex-dividend date", exRightsDate, currentSimulationDate);
         requireNotBeforeCurrentSimulationDate("Cash dividend payment date", paymentDate, currentSimulationDate);
         if (!paymentDate.isAfter(exRightsDate)) {
             throw StockException.badRequest("Cash dividend payment date must be after ex-dividend date");
@@ -144,6 +148,16 @@ final class CorporateActionPolicy {
         }
     }
 
+    private static void requireAfterCurrentSimulationDate(
+            String fieldName,
+            LocalDate date,
+            LocalDate currentSimulationDate
+    ) {
+        if (currentSimulationDate != null && !date.isAfter(currentSimulationDate)) {
+            throw StockException.badRequest(fieldName + " must be after current simulation date");
+        }
+    }
+
     static void requireSupportedStockSplitRatio(Integer splitFrom, Integer splitTo) {
         if (splitFrom == null || splitTo == null || splitFrom <= 0 || splitTo <= 0 || splitTo <= splitFrom) {
             throw StockException.badRequest("Stock split ratio must be positive and greater than 1:1");
@@ -170,10 +184,13 @@ final class CorporateActionPolicy {
             long newShares,
             BigDecimal issuePrice
     ) {
+        if (basePrice.compareTo(issuePrice) <= 0) {
+            return basePrice;
+        }
         BigDecimal existingValue = basePrice.multiply(BigDecimal.valueOf(existingShares));
         BigDecimal issueValue = issuePrice.multiply(BigDecimal.valueOf(newShares));
         return existingValue.add(issueValue)
-                .divide(BigDecimal.valueOf(existingShares + newShares), 2, RoundingMode.HALF_UP);
+                .divide(BigDecimal.valueOf(existingShares + newShares), 0, RoundingMode.DOWN);
     }
 
     static BigDecimal calculateTheoreticalFreeSharePrice(
@@ -182,6 +199,6 @@ final class CorporateActionPolicy {
             long newShares
     ) {
         BigDecimal existingValue = basePrice.multiply(BigDecimal.valueOf(existingShares));
-        return existingValue.divide(BigDecimal.valueOf(existingShares + newShares), 2, RoundingMode.HALF_UP);
+        return existingValue.divide(BigDecimal.valueOf(existingShares + newShares), 0, RoundingMode.DOWN);
     }
 }

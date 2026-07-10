@@ -248,6 +248,15 @@ class StockBackAuthorizationBoundaryTest {
     }
 
     @Test
+    void corporateActionFeed_withoutPrincipalHeaders_isPublic() throws Exception {
+        mockMvc.perform(get("/api/stock/v1/markets/corporate-actions")
+                        .param("actionType", "PAID_IN_CAPITAL_INCREASE")
+                        .param("limit", "200"))
+                .andExpect(status().isOk())
+                .andExpect(content().string(containsString("\"success\":true")));
+    }
+
+    @Test
     void createOrderBookInstrument_withoutPrincipalHeaders_returnsUnauthorized() throws Exception {
         mockMvc.perform(post("/api/stock/v1/markets/order-book-instruments")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -406,6 +415,34 @@ class StockBackAuthorizationBoundaryTest {
     }
 
     @Test
+    void subscribeCorporateAction_withoutPrincipalHeaders_returnsUnauthorized() throws Exception {
+        mockMvc.perform(post("/api/stock/v1/markets/corporate-actions/1/subscriptions/me")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "shareQuantity": 1
+                                }
+                                """))
+                .andExpect(status().isUnauthorized())
+                .andExpect(content().string(containsString("Login required")));
+    }
+
+    @Test
+    void subscribeCorporateAction_nonPositiveQuantity_returnsValidationError() throws Exception {
+        mockMvc.perform(post("/api/stock/v1/markets/corporate-actions/1/subscriptions/me")
+                        .header("X-User-Key", "stock-user-auth-subscription")
+                        .header("X-User-Role", "ROLE_USER")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "shareQuantity": 0
+                                }
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().string(containsString("shareQuantity")));
+    }
+
+    @Test
     void updateAutoMarketConfig_userPrincipalHeaders_returnsForbidden() throws Exception {
         seedOrderBookInstrument("ZQAUTH04");
 
@@ -553,6 +590,7 @@ class StockBackAuthorizationBoundaryTest {
     @ParameterizedTest
     @ValueSource(strings = {
             "GET /api/stock/v1/markets/auto-market/cash-flow",
+            "GET /api/stock/v1/markets/auto-market/cash-flow/run/latest",
             "PATCH /api/stock/v1/markets/auto-market/cash-flow",
             "POST /api/stock/v1/markets/auto-market/cash-flow/run",
             "POST /api/stock/v1/markets/batch-jobs/market-close/rollover",
@@ -588,6 +626,7 @@ class StockBackAuthorizationBoundaryTest {
     @ParameterizedTest
     @ValueSource(strings = {
             "GET /api/stock/v1/markets/auto-market/cash-flow",
+            "GET /api/stock/v1/markets/auto-market/cash-flow/run/latest",
             "PATCH /api/stock/v1/markets/auto-market/cash-flow",
             "POST /api/stock/v1/markets/auto-market/cash-flow/run",
             "POST /api/stock/v1/markets/batch-jobs/market-close/rollover",

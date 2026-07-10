@@ -59,6 +59,12 @@ public class MarketBatchJobController {
         return ResponseDataDTO.of(batchJobSignalService.enqueueAutoParticipantCashFlow(userContext.getUserKey()));
     }
 
+    @GetMapping("/auto-market/cash-flow/run/latest")
+    @RequirePrincipalRole(anyOf = {UserRole.ADMIN})
+    public ResponseDataDTO<StockBatchJobRunResponse> getLatestAutoParticipantCashFlowRun() {
+        return ResponseDataDTO.of(batchJobSignalService.latestAutoParticipantCashFlow().orElse(null));
+    }
+
     @PostMapping("/batch-jobs/market-close/rollover")
     @RequirePrincipalRole(anyOf = {UserRole.ADMIN})
     public ResponseDataDTO<StockBatchJobRunResponse> runMarketCloseRollover(UserContext userContext) {

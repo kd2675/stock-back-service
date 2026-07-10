@@ -17,7 +17,7 @@ public interface StockAccountCashFlowRepository extends JpaRepository<StockAccou
                     select coalesce(sum(
 	                        case
 	                            when flow_type = 'DEPOSIT' and reason <> 'DIVIDEND_PAYMENT' then amount
-	                            when flow_type = 'WITHDRAW' then -amount
+	                            when flow_type = 'WITHDRAW' and reason <> 'CAPITAL_INCREASE_SUBSCRIPTION' then -amount
 	                            else 0
 	                        end
                     ), 0)
@@ -32,7 +32,7 @@ public interface StockAccountCashFlowRepository extends JpaRepository<StockAccou
             value = """
                     select
                       coalesce(sum(case when flow_type = 'DEPOSIT' and reason <> 'DIVIDEND_PAYMENT' then amount else 0 end), 0) as externalDepositAmount,
-                      coalesce(sum(case when flow_type = 'WITHDRAW' then amount else 0 end), 0) as externalWithdrawAmount,
+                      coalesce(sum(case when flow_type = 'WITHDRAW' and reason <> 'CAPITAL_INCREASE_SUBSCRIPTION' then amount else 0 end), 0) as externalWithdrawAmount,
                       coalesce(sum(case when flow_type = 'DEPOSIT' and reason = 'DIVIDEND_PAYMENT' then amount else 0 end), 0) as dividendIncomeAmount
                     from stock_account_cash_flow
                     where account_id = :accountId

@@ -3,6 +3,8 @@ package stock.back.service.market.biz;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -11,6 +13,7 @@ import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import stock.back.service.common.exception.StockException;
 import stock.back.service.database.entity.StockCapitalIncreaseOfferingType;
 import stock.back.service.database.entity.StockCorporateAction;
+import stock.back.service.database.entity.StockCorporateActionStatus;
 import stock.back.service.database.entity.StockCorporateActionType;
 import stock.back.service.database.entity.StockOrderBookInstrument;
 import stock.back.service.database.entity.StockPrice;
@@ -22,11 +25,13 @@ import stock.back.service.market.vo.CorporateActionRequest;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -57,6 +62,8 @@ class CorporateActionCommandServiceTest {
         jdbcTemplate = createJdbcTemplate();
         simulationClockService = mock(SimulationClockService.class);
         lenient().when(simulationClockService.currentMarketDateTime()).thenReturn(simulationNow);
+        lenient().when(stockOrderBookInstrumentRepository.findByIdForUpdate(anyString()))
+                .thenAnswer(invocation -> stockOrderBookInstrumentRepository.findById(invocation.getArgument(0)));
         service = new CorporateActionCommandService(
                 stockOrderBookInstrumentRepository,
                 stockCorporateActionRepository,
@@ -89,14 +96,14 @@ class CorporateActionCommandServiceTest {
                         new BigDecimal("50000.00"),
                         null,
                         null,
-                        LocalDate.of(2026, 7, 1),
-                        LocalDate.of(2026, 7, 4),
+                        LocalDate.of(2026, 7, 2),
+                        LocalDate.of(2026, 7, 5),
                         LocalDate.of(2026, 7, 8),
                         null,
                         null,
                         StockCapitalIncreaseOfferingType.SHAREHOLDER_ALLOCATION,
-                        LocalDate.of(2026, 7, 2),
                         LocalDate.of(2026, 7, 3),
+                        LocalDate.of(2026, 7, 4),
                         " 유상증자 "
                 )
         );
@@ -106,9 +113,242 @@ class CorporateActionCommandServiceTest {
         assertThat(response.symbol()).isEqualTo("ZQ001");
         assertThat(response.issuedShares()).isEqualTo(100000L);
         assertThat(actionCaptor.getValue().getActionType()).isEqualTo(StockCorporateActionType.PAID_IN_CAPITAL_INCREASE);
-        assertThat(actionCaptor.getValue().getTheoreticalExRightsPrice()).isEqualByComparingTo(new BigDecimal("68181.82"));
+        assertThat(actionCaptor.getValue().getTheoreticalExRightsPrice()).isEqualByComparingTo(new BigDecimal("68181.00"));
         assertThat(actionCaptor.getValue().getDescription()).isEqualTo("유상증자");
         assertThat(actionCaptor.getValue().getCreatedAt()).isEqualTo(simulationNow);
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = StockCorporateActionType.class, names = "INITIAL_ISSUE", mode = EnumSource.Mode.EXCLUDE)
+    void applyCorporateAction_disabledInstrument_throwsConflictWithoutSaving(StockCorporateActionType actionType) {
+        StockOrderBookInstrument instrument = StockOrderBookInstrument.listed(
+                "ZQ001",
+                "테스트",
+                "ORDERBOOK",
+                new BigDecimal("70000.00"),
+                100000L,
+                new BigDecimal("100.00"),
+                new BigDecimal("30.00")
+        );
+        instrument.delist();
+        when(stockOrderBookInstrumentRepository.findById("ZQ001")).thenReturn(Optional.of(instrument));
+
+        CorporateActionRequest request = new CorporateActionRequest(
+                actionType,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null
+        );
+
+        assertThatThrownBy(() -> service.applyCorporateAction("ZQ001", request))
+                .isInstanceOf(StockException.class)
+                .hasMessageContaining("disabled or delisted instrument: ZQ001");
+
+        verify(stockOrderBookInstrumentRepository).findByIdForUpdate("ZQ001");
+        verify(stockCorporateActionRepository, never()).save(any());
+    }
+
+    @Test
+    void applyCorporateAction_paidInCapitalIncreaseWithoutSubscriptionEnd_defaultsToDayBeforePayment() {
+        StockOrderBookInstrument instrument = StockOrderBookInstrument.listed(
+                "ZQ001",
+                "테스트",
+                "ORDERBOOK",
+                new BigDecimal("70000.00"),
+                100000L,
+                new BigDecimal("100.00"),
+                new BigDecimal("30.00")
+        );
+        when(stockOrderBookInstrumentRepository.findById("ZQ001")).thenReturn(Optional.of(instrument));
+        when(stockPriceRepository.findById("ZQ001"))
+                .thenReturn(Optional.of(StockPrice.initial("ZQ001", new BigDecimal("70000.00"))));
+
+        service.applyCorporateAction(
+                "ZQ001",
+                new CorporateActionRequest(
+                        StockCorporateActionType.PAID_IN_CAPITAL_INCREASE,
+                        10000L,
+                        new BigDecimal("50000.00"),
+                        null,
+                        null,
+                        LocalDate.of(2026, 7, 2),
+                        LocalDate.of(2026, 7, 5),
+                        LocalDate.of(2026, 7, 8),
+                        null,
+                        null,
+                        StockCapitalIncreaseOfferingType.SHAREHOLDER_ALLOCATION,
+                        LocalDate.of(2026, 7, 3),
+                        null,
+                        "유상증자"
+                )
+        );
+
+        ArgumentCaptor<StockCorporateAction> actionCaptor = ArgumentCaptor.forClass(StockCorporateAction.class);
+        verify(stockCorporateActionRepository).save(actionCaptor.capture());
+        assertThat(actionCaptor.getValue().getSubscriptionEndDate()).isEqualTo(LocalDate.of(2026, 7, 4));
+    }
+
+    @Test
+    void applyCorporateAction_activePaidInCapitalIncrease_throwsConflictBeforePriceRead() {
+        StockOrderBookInstrument instrument = StockOrderBookInstrument.listed(
+                "ZQ001",
+                "테스트",
+                "ORDERBOOK",
+                new BigDecimal("70000.00"),
+                100000L,
+                new BigDecimal("100.00"),
+                new BigDecimal("30.00")
+        );
+        when(stockOrderBookInstrumentRepository.findById("ZQ001")).thenReturn(Optional.of(instrument));
+        when(stockCorporateActionRepository.existsBySymbolAndActionTypeInAndStatusIn(
+                "ZQ001",
+                List.of(
+                        StockCorporateActionType.PAID_IN_CAPITAL_INCREASE,
+                        StockCorporateActionType.STOCK_SPLIT,
+                        StockCorporateActionType.BONUS_ISSUE,
+                        StockCorporateActionType.STOCK_DIVIDEND,
+                        StockCorporateActionType.DELISTING
+                ),
+                List.of(
+                        StockCorporateActionStatus.ANNOUNCED,
+                        StockCorporateActionStatus.EX_RIGHTS_APPLIED,
+                        StockCorporateActionStatus.PAID
+                )
+        )).thenReturn(true);
+
+        assertThatThrownBy(() -> service.applyCorporateAction(
+                "ZQ001",
+                new CorporateActionRequest(
+                        StockCorporateActionType.PAID_IN_CAPITAL_INCREASE,
+                        10000L,
+                        new BigDecimal("50000.00"),
+                        null,
+                        null,
+                        LocalDate.of(2026, 7, 1),
+                        LocalDate.of(2026, 7, 4),
+                        LocalDate.of(2026, 7, 8),
+                        null,
+                        null,
+                        StockCapitalIncreaseOfferingType.SHAREHOLDER_ALLOCATION,
+                        LocalDate.of(2026, 7, 2),
+                        LocalDate.of(2026, 7, 3),
+                        "유상증자"
+                )
+        ))
+                .isInstanceOf(StockException.class)
+                .hasMessageContaining("instrument-changing corporate action is already in progress");
+
+        verifyNoInteractions(stockPriceRepository);
+    }
+
+    @Test
+    void applyCorporateAction_stockSplitWhilePaidInIsActive_throwsConflict() {
+        StockOrderBookInstrument instrument = StockOrderBookInstrument.listed(
+                "ZQ001",
+                "테스트",
+                "ORDERBOOK",
+                new BigDecimal("70000.00"),
+                100000L,
+                new BigDecimal("100.00"),
+                new BigDecimal("30.00")
+        );
+        when(stockOrderBookInstrumentRepository.findById("ZQ001")).thenReturn(Optional.of(instrument));
+        when(stockCorporateActionRepository.existsBySymbolAndActionTypeInAndStatusIn(
+                "ZQ001",
+                List.of(
+                        StockCorporateActionType.PAID_IN_CAPITAL_INCREASE,
+                        StockCorporateActionType.STOCK_SPLIT,
+                        StockCorporateActionType.BONUS_ISSUE,
+                        StockCorporateActionType.STOCK_DIVIDEND,
+                        StockCorporateActionType.DELISTING
+                ),
+                List.of(
+                        StockCorporateActionStatus.ANNOUNCED,
+                        StockCorporateActionStatus.EX_RIGHTS_APPLIED,
+                        StockCorporateActionStatus.PAID
+                )
+        )).thenReturn(true);
+
+        assertThatThrownBy(() -> service.applyCorporateAction(
+                "ZQ001",
+                new CorporateActionRequest(
+                        StockCorporateActionType.STOCK_SPLIT,
+                        null,
+                        null,
+                        1,
+                        5,
+                        null,
+                        null,
+                        LocalDate.of(2026, 7, 3),
+                        null,
+                        null,
+                        null
+                )
+        ))
+                .isInstanceOf(StockException.class)
+                .hasMessageContaining("instrument-changing corporate action is already in progress");
+
+        verify(stockCorporateActionRepository, never()).save(any());
+    }
+
+    @Test
+    void applyCorporateAction_delistingWhilePaidInIsActive_throwsConflict() {
+        StockOrderBookInstrument instrument = StockOrderBookInstrument.listed(
+                "ZQ001",
+                "테스트",
+                "ORDERBOOK",
+                new BigDecimal("70000.00"),
+                100000L,
+                new BigDecimal("100.00"),
+                new BigDecimal("30.00")
+        );
+        when(stockOrderBookInstrumentRepository.findById("ZQ001")).thenReturn(Optional.of(instrument));
+        when(stockCorporateActionRepository.existsBySymbolAndActionTypeInAndStatusIn(
+                "ZQ001",
+                List.of(
+                        StockCorporateActionType.PAID_IN_CAPITAL_INCREASE,
+                        StockCorporateActionType.STOCK_SPLIT,
+                        StockCorporateActionType.BONUS_ISSUE,
+                        StockCorporateActionType.STOCK_DIVIDEND,
+                        StockCorporateActionType.DELISTING
+                ),
+                List.of(
+                        StockCorporateActionStatus.ANNOUNCED,
+                        StockCorporateActionStatus.EX_RIGHTS_APPLIED,
+                        StockCorporateActionStatus.PAID
+                )
+        )).thenReturn(true);
+
+        assertThatThrownBy(() -> service.applyCorporateAction(
+                "ZQ001",
+                new CorporateActionRequest(
+                        StockCorporateActionType.DELISTING,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        LocalDate.of(2026, 7, 3),
+                        null,
+                        "상장폐지"
+                )
+        ))
+                .isInstanceOf(StockException.class)
+                .hasMessageContaining("instrument-changing corporate action is already in progress");
+
+        verify(stockCorporateActionRepository, never()).save(any());
     }
 
     @Test
@@ -188,7 +428,7 @@ class CorporateActionCommandServiceTest {
                 )
         ))
                 .isInstanceOf(StockException.class)
-                .hasMessageContaining("must not be before current simulation date");
+                .hasMessageContaining("must be after current simulation date");
 
         verify(stockCorporateActionRepository, never()).save(any());
     }
@@ -214,7 +454,7 @@ class CorporateActionCommandServiceTest {
                         new BigDecimal("50000.00"),
                         null,
                         null,
-                        LocalDate.of(2026, 7, 1),
+                        LocalDate.of(2026, 7, 2),
                         LocalDate.of(2026, 7, 1),
                         LocalDate.of(2026, 7, 3),
                         null,
@@ -223,7 +463,7 @@ class CorporateActionCommandServiceTest {
                 )
         ))
                 .isInstanceOf(StockException.class)
-                .hasMessageContaining("subscription end date must not be before subscription start date");
+                .hasMessageContaining("subscription end date must not be before current simulation date");
 
         verify(stockCorporateActionRepository, never()).save(any());
     }
@@ -249,14 +489,14 @@ class CorporateActionCommandServiceTest {
                         new BigDecimal("50000.00"),
                         null,
                         null,
-                        LocalDate.of(2026, 7, 1),
-                        LocalDate.of(2026, 7, 3),
+                        LocalDate.of(2026, 7, 2),
                         LocalDate.of(2026, 7, 4),
+                        LocalDate.of(2026, 7, 5),
                         null,
                         null,
                         StockCapitalIncreaseOfferingType.SHAREHOLDER_ALLOCATION,
-                        LocalDate.of(2026, 7, 2),
                         LocalDate.of(2026, 7, 3),
+                        LocalDate.of(2026, 7, 4),
                         "유상증자"
                 )
         ))
@@ -287,8 +527,8 @@ class CorporateActionCommandServiceTest {
                         null,
                         null,
                         null,
-                        LocalDate.of(2026, 7, 1),
-                        LocalDate.of(2026, 7, 1),
+                        LocalDate.of(2026, 7, 2),
+                        LocalDate.of(2026, 7, 2),
                         null,
                         null,
                         new BigDecimal("1000.00"),
@@ -299,6 +539,8 @@ class CorporateActionCommandServiceTest {
                 .hasMessageContaining("payment date must be after ex-dividend date");
 
         verify(stockCorporateActionRepository, never()).save(any());
+        verify(stockCorporateActionRepository, never())
+                .existsBySymbolAndActionTypeInAndStatusIn(anyString(), any(), any());
     }
 
     @Test
@@ -357,9 +599,9 @@ class CorporateActionCommandServiceTest {
                         null,
                         null,
                         null,
-                        LocalDate.of(2026, 7, 1),
+                        LocalDate.of(2026, 7, 2),
                         null,
-                        LocalDate.of(2026, 7, 1),
+                        LocalDate.of(2026, 7, 2),
                         null,
                         null,
                         "주식배당"

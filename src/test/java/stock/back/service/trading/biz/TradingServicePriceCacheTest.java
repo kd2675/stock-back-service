@@ -18,6 +18,7 @@ import stock.back.service.common.exception.StockException;
 import stock.back.service.database.repository.PortfolioSnapshotRepository;
 import stock.back.service.database.repository.StockAccountCashFlowRepository;
 import stock.back.service.database.repository.StockExecutionRepository;
+import stock.back.service.database.repository.StockCorporateActionEntitlementRepository;
 import stock.back.service.database.repository.StockHoldingRepository;
 import stock.back.service.database.repository.StockInstrumentRepository;
 import stock.back.service.database.repository.StockOrderBookInstrumentRepository;
@@ -81,6 +82,9 @@ class TradingServicePriceCacheTest {
     private StockAccountCashFlowRepository stockAccountCashFlowRepository;
 
     @Mock
+    private StockCorporateActionEntitlementRepository stockCorporateActionEntitlementRepository;
+
+    @Mock
     private PortfolioSnapshotRepository portfolioSnapshotRepository;
 
     @Mock
@@ -107,6 +111,7 @@ class TradingServicePriceCacheTest {
                 stockHoldingRepository,
                 stockExecutionRepository,
                 stockAccountCashFlowRepository,
+                stockCorporateActionEntitlementRepository,
                 portfolioSnapshotRepository,
                 stockPriceRepository,
                 stockPriceCacheService

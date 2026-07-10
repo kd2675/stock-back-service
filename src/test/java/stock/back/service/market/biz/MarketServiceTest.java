@@ -79,6 +79,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.AdditionalMatchers.aryEq;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.lenient;
@@ -167,6 +168,8 @@ class MarketServiceTest {
     void setUp() {
         commandJdbcTemplate = createCommandJdbcTemplate();
         autoMarketSummaryStatusQuery = new StubAutoMarketSummaryStatusQuery(jdbcTemplate);
+        lenient().when(stockOrderBookInstrumentRepository.findByIdForUpdate(anyString()))
+                .thenAnswer(invocation -> stockOrderBookInstrumentRepository.findById(invocation.getArgument(0)));
         SimulationClockService simulationClockService = mock(SimulationClockService.class);
         lenient().when(simulationClockService.currentMarketDayStart()).thenReturn(SimulationDayClock.currentDayStart());
         lenient().when(simulationClockService.currentMarketDateTime()).thenAnswer(invocation -> LocalDateTime.now());
@@ -810,7 +813,7 @@ class MarketServiceTest {
         assertThat(overview.totalProfit()).isEqualByComparingTo(new BigDecimal("400.00"));
         assertThat(overview.returnRate()).isEqualByComparingTo(new BigDecimal("36.3636"));
         assertThat(overview.lastOrderAt()).isEqualTo(lastTerminalOrderAt);
-        assertThat(overview.reservedBuyCash()).isEqualByComparingTo(new BigDecimal("50.00"));
+        assertThat(overview.reservedBuyCash()).isEqualByComparingTo(new BigDecimal("150.00"));
         assertThat(overview.openOrderCount()).isEqualTo(2);
         assertThat(overview.openBuyOrderCount()).isEqualTo(1);
         assertThat(overview.openSellOrderCount()).isEqualTo(1);
@@ -1262,6 +1265,13 @@ class MarketServiceTest {
                 )
                 """);
         template.execute("""
+                create table stock_corporate_action_entitlement (
+                    account_id bigint not null,
+                    subscribed_cash_amount decimal(19, 2),
+                    status varchar(20) not null
+                )
+                """);
+        template.execute("""
                 create table stock_execution (
                     account_id bigint not null,
                     side varchar(10) not null,
@@ -1289,7 +1299,7 @@ class MarketServiceTest {
         template.update("insert into stock_auto_participant(user_key, enabled, profile_type, withdrawn_at) values (?, true, ?, null)", "stock-auto-001", AutoParticipantProfileType.MOMENTUM_FOLLOWER.name());
         template.update("insert into stock_auto_participant(user_key, enabled, profile_type, withdrawn_at) values (?, true, ?, null)", "stock-auto-002", AutoParticipantProfileType.MOMENTUM_FOLLOWER.name());
         template.update("insert into stock_auto_participant(user_key, enabled, profile_type, withdrawn_at) values (?, false, ?, null)", "stock-auto-003", AutoParticipantProfileType.MOMENTUM_FOLLOWER.name());
-        template.update("insert into stock_account(id, user_key, cash_balance) values (?, ?, ?)", 11L, "stock-auto-001", new BigDecimal("600.00"));
+        template.update("insert into stock_account(id, user_key, cash_balance) values (?, ?, ?)", 11L, "stock-auto-001", new BigDecimal("500.00"));
         template.update("insert into stock_account(id, user_key, cash_balance) values (?, ?, ?)", 12L, "stock-auto-002", new BigDecimal("400.00"));
         template.update(
                 "insert into stock_order(account_id, market_type, side, status, quantity, filled_quantity, reserved_cash, created_at) values (?, 'ORDER_BOOK', ?, ?, ?, ?, ?, ?)",
@@ -1330,6 +1340,8 @@ class MarketServiceTest {
         template.update("insert into stock_account_cash_flow(account_id, flow_type, amount, reason) values (?, 'DEPOSIT', ?, 'ADMIN_DEPOSIT')", 12L, new BigDecimal("500.00"));
         template.update("insert into stock_account_cash_flow(account_id, flow_type, amount, reason) values (?, 'DEPOSIT', ?, 'DIVIDEND_PAYMENT')", 12L, new BigDecimal("200.00"));
         template.update("insert into stock_account_cash_flow(account_id, flow_type, amount, reason) values (?, 'WITHDRAW', ?, 'ADMIN_WITHDRAW')", 12L, new BigDecimal("100.00"));
+        template.update("insert into stock_account_cash_flow(account_id, flow_type, amount, reason) values (?, 'WITHDRAW', ?, 'CAPITAL_INCREASE_SUBSCRIPTION')", 11L, new BigDecimal("100.00"));
+        template.update("insert into stock_corporate_action_entitlement(account_id, subscribed_cash_amount, status) values (?, ?, 'SUBSCRIBED')", 11L, new BigDecimal("100.00"));
         template.update("insert into stock_execution(account_id, side, quantity, gross_amount, source, executed_at) values (?, ?, ?, ?, 'INTERNAL_ORDER_BOOK', ?)", 11L, "BUY", 80L, new BigDecimal("600.00"), lastExecutionAt);
         template.update("insert into stock_execution(account_id, side, quantity, gross_amount, source, executed_at) values (?, ?, ?, ?, 'INTERNAL_ORDER_BOOK', ?)", 12L, "SELL", 20L, new BigDecimal("300.00"), lastExecutionAt.minusMinutes(1));
         template.update("insert into stock_execution(account_id, side, quantity, gross_amount, source, executed_at) values (?, ?, ?, ?, 'INTERNAL_ORDER_BOOK', ?)", 12L, "BUY", 1L, BigDecimal.ONE, lastExecutionAt.minusHours(3));
@@ -1551,7 +1563,7 @@ class MarketServiceTest {
         assertThat(actionCaptor.getValue().getShareQuantity()).isEqualTo(50000L);
         assertThat(actionCaptor.getValue().getIssuePrice()).isEqualByComparingTo(new BigDecimal("50000.00"));
         assertThat(actionCaptor.getValue().getBasePrice()).isEqualByComparingTo(new BigDecimal("70000.00"));
-        assertThat(actionCaptor.getValue().getTheoreticalExRightsPrice()).isEqualByComparingTo(new BigDecimal("63333.33"));
+        assertThat(actionCaptor.getValue().getTheoreticalExRightsPrice()).isEqualByComparingTo(new BigDecimal("63333.00"));
     }
 
     @Test
@@ -1828,7 +1840,7 @@ class MarketServiceTest {
         assertThat(actionCaptor.getValue().getActionType()).isEqualTo(StockCorporateActionType.BONUS_ISSUE);
         assertThat(actionCaptor.getValue().getShareQuantity()).isEqualTo(10000L);
         assertThat(actionCaptor.getValue().getBasePrice()).isEqualByComparingTo(new BigDecimal("70000.00"));
-        assertThat(actionCaptor.getValue().getTheoreticalExRightsPrice()).isEqualByComparingTo(new BigDecimal("63636.36"));
+        assertThat(actionCaptor.getValue().getTheoreticalExRightsPrice()).isEqualByComparingTo(new BigDecimal("63636.00"));
     }
 
     @Test
@@ -1866,7 +1878,7 @@ class MarketServiceTest {
         assertThat(actionCaptor.getValue().getActionType()).isEqualTo(StockCorporateActionType.STOCK_DIVIDEND);
         assertThat(actionCaptor.getValue().getShareQuantity()).isEqualTo(10000L);
         assertThat(actionCaptor.getValue().getBasePrice()).isEqualByComparingTo(new BigDecimal("70000.00"));
-        assertThat(actionCaptor.getValue().getTheoreticalExRightsPrice()).isEqualByComparingTo(new BigDecimal("63636.36"));
+        assertThat(actionCaptor.getValue().getTheoreticalExRightsPrice()).isEqualByComparingTo(new BigDecimal("63636.00"));
     }
 
     @Test

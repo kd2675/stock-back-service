@@ -12,6 +12,7 @@ import stock.back.service.market.vo.BatchJobRuntimeStatusResponse;
 import stock.back.service.market.vo.StockBatchJobRunResponse;
 
 import java.time.LocalDateTime;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
@@ -102,6 +103,25 @@ class MarketBatchJobControllerTest {
                 .build());
 
         verify(batchJobSignalService).enqueueMarketCloseRollover("admin-user-key");
+        assertThat(response.getData()).isEqualTo(batchResponse);
+    }
+
+    @Test
+    void getLatestAutoParticipantCashFlowRun_returnsLatestSignal() {
+        StockBatchJobRunResponse batchResponse = new StockBatchJobRunResponse(
+                "auto-participant-cash-flow",
+                "COMPLETED",
+                "manual-recurring-cash",
+                12,
+                "Job completed",
+                LocalDateTime.now().minusSeconds(1),
+                LocalDateTime.now()
+        );
+        when(batchJobSignalService.latestAutoParticipantCashFlow()).thenReturn(Optional.of(batchResponse));
+
+        var response = marketBatchJobController.getLatestAutoParticipantCashFlowRun();
+
+        verify(batchJobSignalService).latestAutoParticipantCashFlow();
         assertThat(response.getData()).isEqualTo(batchResponse);
     }
 }

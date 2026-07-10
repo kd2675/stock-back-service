@@ -8,6 +8,7 @@ import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import jakarta.persistence.UniqueConstraint;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -17,7 +18,13 @@ import java.time.LocalDateTime;
 
 @Getter
 @Entity
-@Table(name = "stock_corporate_action_entitlement")
+@Table(
+        name = "stock_corporate_action_entitlement",
+        uniqueConstraints = @UniqueConstraint(
+                name = "uk_stock_corporate_action_entitlement_action_account",
+                columnNames = {"action_id", "account_id"}
+        )
+)
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class StockCorporateActionEntitlement {
 
@@ -49,6 +56,9 @@ public class StockCorporateActionEntitlement {
     @Column(name = "subscribed_cash_amount", precision = 19, scale = 2)
     private BigDecimal subscribedCashAmount;
 
+    @Column(name = "holding_snapshot_run_id")
+    private Long holdingSnapshotRunId;
+
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false, length = 20)
     private StockCorporateActionEntitlementStatus status;
@@ -61,4 +71,11 @@ public class StockCorporateActionEntitlement {
 
     @Column(name = "paid_at")
     private LocalDateTime paidAt;
+
+    public void subscribe(long shareQuantity, BigDecimal cashAmount, LocalDateTime subscribedAt) {
+        this.subscribedShareQuantity = shareQuantity;
+        this.subscribedCashAmount = cashAmount;
+        this.status = StockCorporateActionEntitlementStatus.SUBSCRIBED;
+        this.subscribedAt = subscribedAt;
+    }
 }

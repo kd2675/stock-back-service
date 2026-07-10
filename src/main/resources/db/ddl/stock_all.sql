@@ -194,6 +194,8 @@ CREATE TABLE IF NOT EXISTS stock_corporate_action (
   created_at DATETIME NOT NULL,
   PRIMARY KEY (id),
   KEY idx_stock_corporate_action_symbol_created (symbol, created_at),
+  KEY idx_stock_corporate_action_created (created_at, id),
+  KEY idx_stock_corporate_action_type_created (action_type, created_at, id),
   KEY idx_stock_corporate_action_status_dates (status, ex_rights_date, payment_date, listing_date, delisting_date),
   KEY idx_stock_corporate_action_status_symbol (status, symbol),
   CONSTRAINT chk_stock_corporate_action_type_valid CHECK (CASE `action_type` WHEN 'INITIAL_ISSUE' THEN 1 WHEN 'PAID_IN_CAPITAL_INCREASE' THEN 1 WHEN 'STOCK_SPLIT' THEN 1 WHEN 'CASH_DIVIDEND' THEN 1 WHEN 'BONUS_ISSUE' THEN 1 WHEN 'STOCK_DIVIDEND' THEN 1 WHEN 'DELISTING' THEN 1 ELSE 0 END = 1),
@@ -208,6 +210,15 @@ CREATE TABLE IF NOT EXISTS stock_corporate_action (
   CONSTRAINT chk_stock_corporate_action_paid_dates CHECK (ex_rights_date IS NULL OR payment_date IS NULL OR payment_date >= ex_rights_date),
   CONSTRAINT chk_stock_corporate_action_listing_dates CHECK (payment_date IS NULL OR listing_date IS NULL OR listing_date >= payment_date),
   CONSTRAINT chk_stock_corporate_action_subscription_dates CHECK (subscription_start_date IS NULL OR subscription_end_date IS NULL OR subscription_end_date >= subscription_start_date),
+  CONSTRAINT chk_stock_corporate_action_paid_date_order CHECK (
+    action_type <> 'PAID_IN_CAPITAL_INCREASE'
+    OR (
+      subscription_end_date >= subscription_start_date
+      AND payment_date > subscription_end_date
+      AND listing_date > payment_date
+      AND (offering_type <> 'SHAREHOLDER_ALLOCATION' OR subscription_start_date > ex_rights_date)
+    )
+  ),
   CONSTRAINT chk_stock_corporate_action_split_from CHECK (split_from IS NULL OR split_from > 0),
   CONSTRAINT chk_stock_corporate_action_split_to CHECK (split_to IS NULL OR split_to > 0),
   CONSTRAINT chk_stock_corporate_action_issue_required CHECK (
@@ -324,6 +335,11 @@ CREATE TABLE IF NOT EXISTS stock_corporate_action_entitlement (
   CONSTRAINT chk_stock_corporate_action_entitlement_share CHECK (share_quantity IS NULL OR share_quantity > 0),
   CONSTRAINT chk_stock_corporate_action_entitlement_cash CHECK (cash_amount IS NULL OR cash_amount > 0),
   CONSTRAINT chk_stock_corporate_action_entitlement_subscribed_share CHECK (subscribed_share_quantity IS NULL OR subscribed_share_quantity > 0),
+  CONSTRAINT chk_stock_corporate_action_entitlement_subscribed_share_limit CHECK (
+    subscribed_share_quantity IS NULL
+    OR share_quantity IS NULL
+    OR subscribed_share_quantity <= share_quantity
+  ),
   CONSTRAINT chk_stock_corporate_action_entitlement_subscribed_cash CHECK (subscribed_cash_amount IS NULL OR subscribed_cash_amount > 0),
   CONSTRAINT chk_stock_corporate_action_entitlement_subscription_complete CHECK (
     status <> 'SUBSCRIBED'
@@ -352,7 +368,7 @@ CREATE TABLE IF NOT EXISTS stock_price_tick (
   price_time DATETIME NOT NULL,
   created_at DATETIME NOT NULL,
   PRIMARY KEY (id),
-  KEY idx_stock_price_tick_symbol_time (symbol, price_time),
+  KEY idx_stock_price_tick_symbol_time_id (symbol, price_time, id),
   CONSTRAINT chk_stock_price_tick_price_non_negative CHECK (price >= 0)
 );
 
@@ -708,7 +724,38 @@ CREATE TABLE IF NOT EXISTS stock_auto_participant_event_profile_config (
   max_cash_allocation_rate DECIMAL(8,4) NOT NULL DEFAULT 0.2000,
   updated_at DATETIME NOT NULL,
   PRIMARY KEY (profile_type),
-  CONSTRAINT chk_stock_auto_event_profile_type CHECK (profile_type <> ''),
+  CONSTRAINT chk_stock_auto_event_profile_type CHECK (
+    CASE `profile_type`
+      WHEN 'NEWS_REACTIVE' THEN 1
+      WHEN 'MOMENTUM_FOLLOWER' THEN 1
+      WHEN 'CONTRARIAN' THEN 1
+      WHEN 'LOSS_AVERSE' THEN 1
+      WHEN 'OVERCONFIDENT' THEN 1
+      WHEN 'HERD_FOLLOWER' THEN 1
+      WHEN 'MARKET_MAKER' THEN 1
+      WHEN 'NOISE_TRADER' THEN 1
+      WHEN 'VALUE_ANCHOR' THEN 1
+      WHEN 'SCALPER' THEN 1
+      WHEN 'DAY_TRADER' THEN 1
+      WHEN 'SWING_TRADER' THEN 1
+      WHEN 'LONG_TERM_HOLDER' THEN 1
+      WHEN 'PAYDAY_ACCUMULATOR' THEN 1
+      WHEN 'DIVIDEND_REINVESTOR' THEN 1
+      WHEN 'LIMIT_DOWN_TRAPPED' THEN 1
+      WHEN 'AVERAGE_DOWN_BUYER' THEN 1
+      WHEN 'STOP_LOSS_TRADER' THEN 1
+      WHEN 'FOMO_BUYER' THEN 1
+      WHEN 'PANIC_SELLER' THEN 1
+      WHEN 'DIP_BUYER' THEN 1
+      WHEN 'PROFIT_LOCKER' THEN 1
+      WHEN 'LIQUIDITY_AVOIDANT' THEN 1
+      WHEN 'CASH_DEFENSIVE' THEN 1
+      WHEN 'WHALE' THEN 1
+      WHEN 'SMALL_DIVERSIFIER' THEN 1
+      WHEN 'OBSERVER' THEN 1
+      ELSE 0
+    END = 1
+  ),
   CONSTRAINT chk_stock_auto_event_profile_shareholder_rate CHECK (shareholder_subscription_rate >= 0 AND shareholder_subscription_rate <= 1),
   CONSTRAINT chk_stock_auto_event_profile_public_rate CHECK (public_offering_subscription_rate >= 0 AND public_offering_subscription_rate <= 1),
   CONSTRAINT chk_stock_auto_event_profile_cash_rate CHECK (max_cash_allocation_rate >= 0 AND max_cash_allocation_rate <= 1)

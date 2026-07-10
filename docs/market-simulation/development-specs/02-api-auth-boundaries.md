@@ -21,6 +21,8 @@ batch internal API는 외부 사용자 API가 아니라 운영/테스트용 job 
 - `GET /api/stock/v1/markets/virtual-market`
 - `GET /api/stock/v1/markets/order-book-market`
 - `GET /api/stock/v1/markets/auto-market`
+- `GET /api/stock/v1/markets/corporate-actions`
+  - optional query: `actionType`, `limit`(기본 100, 최대 200)
 - `GET /api/stock/v1/markets/order-book-instruments/{symbol}/corporate-actions`
 
 로그인 필요:
@@ -40,6 +42,7 @@ batch internal API는 외부 사용자 API가 아니라 운영/테스트용 job 
 - `GET /api/stock/v1/executions`
 - `GET /api/stock/v1/holdings`
 - `GET /api/stock/v1/markets/corporate-action-entitlements/me`
+- `POST /api/stock/v1/markets/corporate-actions/{actionId}/subscriptions/me`
 
 관리자 필요:
 

@@ -20,12 +20,14 @@
 - `POST /api/stock/v1/markets/order-book-instruments` (`ADMIN`)
 - `POST /api/stock/v1/markets/order-book-instruments/{symbol}/corporate-actions` (`ADMIN`)
 - `GET /api/stock/v1/markets/order-book-instruments/{symbol}/corporate-actions`
+- `GET /api/stock/v1/markets/corporate-actions` (`actionType`, `limit` optional)
 - `GET /api/stock/v1/markets/order-book-instruments/{symbol}/reports`
 - `GET /api/stock/v1/markets/order-book-instruments/{symbol}/reports/latest`
 - `POST /api/stock/v1/markets/order-book-instruments/{symbol}/reports` (`ADMIN`)
 - `PATCH /api/stock/v1/markets/order-book-instruments/{symbol}/reports` (`ADMIN`)
 - `DELETE /api/stock/v1/markets/order-book-instruments/{symbol}/reports` (`ADMIN`)
 - `GET /api/stock/v1/markets/corporate-action-entitlements/me`
+- `POST /api/stock/v1/markets/corporate-actions/{actionId}/subscriptions/me`
 - `GET /api/stock/v1/markets/order-books/{symbol}`
 - `GET /api/stock/v1/markets/virtual-market`
 - `GET /api/stock/v1/markets/order-book-market`
@@ -86,7 +88,7 @@ scripts/stock-smoke.sh
 ## 데이터베이스
 
 - schema: `STOCK_SERVICE`
-- DDL: `src/main/resources/db/ddl/stock_all.sql`
+- MySQL business DDL (canonical): `src/main/resources/db/ddl/stock_all.sql`
 - `local`/`dev` 기본값은 다른 백엔드 서비스와 맞춰 원격 개발 MySQL `kimd0.iptime.org:23306`과 Redis `kimd0.iptime.org:26379`입니다.
 - `local`/`dev` 접속값은 기존 백엔드 프로젝트처럼 `application-local.yml`, `application-dev.yml`에 직접 둡니다.
 - `prod`는 DB와 Redis 값을 환경 변수로 명시 주입합니다.
@@ -114,6 +116,7 @@ scripts/stock-smoke.sh
 - `stock_holding`
 - `stock_order_book_instrument`
 - `stock_corporate_action`
+- `stock_corporate_action_entitlement`
 - `stock_auto_participant`
 - `stock_virtual_market_config`
 - `stock_order_book_market_config`
@@ -135,11 +138,15 @@ scripts/stock-smoke.sh
 - 현재가 시장은 초기 기본값으로 1원 tick과 `stock_price.previous_close` 기준 ±30% 가격제한폭을 사용합니다.
 - 주문 원장은 공유하되 `stock_order.market_type`으로 `VIRTUAL_PRICE`와 `ORDER_BOOK` 주문을 분리합니다.
 - 자동장 상태 조회는 `stock_auto_participant`, `stock_auto_market_config`, 자동 참여자 주문/체결 원장을 읽어 현재 활성 상태와 종목별 설정을 반환합니다.
-- 유상증자는 API 호출 시점에 주식 수를 즉시 늘리지 않고, `stock_corporate_action`에 권리락일/납입일/신주상장일을 기록합니다. 권리락 가격 조정과 신주상장일 주식 수 반영은 `stock-batch-service`가 처리합니다.
+- 유상증자는 `SHAREHOLDER_ALLOCATION`과 `PUBLIC_OFFERING`만 지원합니다. 관리자 등록 시 청약 시작일/종료일, 납입일, 신주상장일을 기록하고, 주주배정만 권리락일과 이론권리락가격을 사용합니다. 발행주식수 기준과 폐지 상태가 교차하지 않도록 동일 종목의 진행 중 유상증자/액면분할/무상증자/주식배당/상장폐지는 서로 겹쳐 등록할 수 없고, 현금배당은 이 제한에서 제외합니다.
+- 사용자 청약은 인증된 본인 계좌로 장 마감 후 청약 기간 안에서만 허용합니다. 주주배정은 배정 entitlement 수량, 일반공모는 전체 잔여 발행수량을 서버 트랜잭션과 row lock으로 검증합니다.
+- 청약 대금은 즉시 현금에서 차감하고 `CAPITAL_INCREASE_SUBSCRIPTION` 원장을 남기지만 외부 출금으로 계산하지 않습니다. 신주 상장 전에는 `SUBSCRIBED` entitlement의 금액을 예약자산으로 총자산에 포함하고, 상장 시 보유주식 가치로 대체합니다.
+- 권리락·미청약 권리 만료·납입·실제 청약수량만큼의 신주 상장은 `stock-batch-service`가 처리합니다.
 - 액면분할은 API 호출 시점에 주식 수를 즉시 늘리지 않고, 효력일에 `stock-batch-service`가 주식 수, 보유수량, 가격을 비례 조정합니다.
 - 현금배당은 배당금, 배당락일, 지급일을 `stock_corporate_action`에 기록합니다. 배당락일 보유자별 지급 원장 생성과 지급일 현금 반영은 `stock-batch-service`가 처리하며, 현금배당 자체는 현재가를 강제로 조정하지 않습니다.
 - 무상증자와 주식배당은 권리락일, 신주상장일, 배정 주식수를 `stock_corporate_action`에 기록합니다. 권리락 가격 조정, 보유자별 신주 entitlement 생성, 상장일 보유수량/평균단가 반영은 `stock-batch-service`가 처리합니다.
-- 기업 이벤트 이력은 종목별로 조회할 수 있고, 사용자별 배당/신주 배정 내역은 최근 50건을 조회합니다.
+- 기업 이벤트 이력은 종목별 API와 전체 feed API로 조회합니다. 전체 feed는 `createdAt desc, id desc`, 기본 100건/최대 200건이며 `actionType`으로 필터링할 수 있습니다. 무필터/유상증자 feed에는 최근 제한 밖의 상장 전(`ANNOUNCED`/`EX_RIGHTS_APPLIED`/`PAID`) 유상증자도 합치므로 응답 건수가 `limit`을 넘을 수 있습니다.
+- 사용자별 entitlement 조회는 진행 중인 `ANNOUNCED`/`SUBSCRIBED` 권리를 모두 포함하고, 완료/만료 이력은 최근 50건을 함께 반환합니다.
 - 체결 이력 응답은 체결가/수량뿐 아니라 `grossAmount`, `feeAmount`, `taxAmount`, `netAmount`, `realizedProfit`을 포함합니다.
 - 손익 요약 응답은 `stock_execution`의 누적 실현손익/비용/세금과 현재 보유 평가손익을 조합해 반환합니다.
 - 공개 랭킹 응답은 내부 식별자인 `userKey`와 함께 화면 노출용 `displayName`을 제공합니다. 화면에서는 `displayName`을 우선 사용합니다.

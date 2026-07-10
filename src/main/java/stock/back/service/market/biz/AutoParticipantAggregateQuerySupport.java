@@ -14,16 +14,38 @@ final class AutoParticipantAggregateQuerySupport {
 
     static final String OPEN_ORDER_AGGREGATE_SQL = """
                     select account_id,
-                           sum(case when side = 'BUY' then reserved_cash else 0 end) as reserved_buy_cash,
-                           count(*) as open_order_count,
-                           sum(case when side = 'BUY' then 1 else 0 end) as open_buy_order_count,
-                           sum(case when side = 'SELL' then 1 else 0 end) as open_sell_order_count,
-                           sum(case when side = 'BUY' then quantity - filled_quantity else 0 end) as open_buy_quantity,
-                           sum(case when side = 'SELL' then quantity - filled_quantity else 0 end) as open_sell_quantity
-                      from stock_order
-                     where account_id in (:accountIds)
-                       and market_type = 'ORDER_BOOK'
-                       and status in ('PENDING', 'PARTIALLY_FILLED')
+                           sum(reserved_buy_cash) as reserved_buy_cash,
+                           sum(open_order_count) as open_order_count,
+                           sum(open_buy_order_count) as open_buy_order_count,
+                           sum(open_sell_order_count) as open_sell_order_count,
+                           sum(open_buy_quantity) as open_buy_quantity,
+                           sum(open_sell_quantity) as open_sell_quantity
+                      from (
+                            select account_id,
+                                   sum(case when side = 'BUY' then reserved_cash else 0 end) as reserved_buy_cash,
+                                   count(*) as open_order_count,
+                                   sum(case when side = 'BUY' then 1 else 0 end) as open_buy_order_count,
+                                   sum(case when side = 'SELL' then 1 else 0 end) as open_sell_order_count,
+                                   sum(case when side = 'BUY' then quantity - filled_quantity else 0 end) as open_buy_quantity,
+                                   sum(case when side = 'SELL' then quantity - filled_quantity else 0 end) as open_sell_quantity
+                              from stock_order
+                             where account_id in (:accountIds)
+                               and market_type = 'ORDER_BOOK'
+                               and status in ('PENDING', 'PARTIALLY_FILLED')
+                             group by account_id
+                            union all
+                            select account_id,
+                                   sum(subscribed_cash_amount) as reserved_buy_cash,
+                                   0 as open_order_count,
+                                   0 as open_buy_order_count,
+                                   0 as open_sell_order_count,
+                                   0 as open_buy_quantity,
+                                   0 as open_sell_quantity
+                              from stock_corporate_action_entitlement
+                             where account_id in (:accountIds)
+                               and status = 'SUBSCRIBED'
+                             group by account_id
+                      ) reserved_assets
                      group by account_id
                     """;
 
@@ -235,12 +257,13 @@ final class AutoParticipantAggregateQuerySupport {
                         select account_id,
                                sum(case
                                        when flow_type = 'DEPOSIT' and reason <> 'DIVIDEND_PAYMENT' then amount
-                                       when flow_type = 'WITHDRAW' then -amount
+                                       when flow_type = 'WITHDRAW' and reason <> 'CAPITAL_INCREASE_SUBSCRIPTION' then -amount
                                        else 0
                                    end) as net_cash_flow
                           from stock_account_cash_flow
                          where account_id in (:accountIds)
-                           and (flow_type = 'WITHDRAW' or (flow_type = 'DEPOSIT' and reason <> 'DIVIDEND_PAYMENT'))
+                           and ((flow_type = 'WITHDRAW' and reason <> 'CAPITAL_INCREASE_SUBSCRIPTION')
+                               or (flow_type = 'DEPOSIT' and reason <> 'DIVIDEND_PAYMENT'))
                          group by account_id
                         """)
                 .param("accountIds", accountIds)

@@ -8,6 +8,7 @@ import org.springframework.data.repository.query.Param;
 import stock.back.service.database.entity.StockCorporateActionEntitlement;
 import stock.back.service.database.entity.StockCorporateActionEntitlementStatus;
 
+import java.math.BigDecimal;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
@@ -16,6 +17,11 @@ public interface StockCorporateActionEntitlementRepository extends JpaRepository
 
     List<StockCorporateActionEntitlement> findTop50ByAccountIdOrderByCreatedAtDesc(Long accountId);
 
+    List<StockCorporateActionEntitlement> findByAccountIdAndStatusInOrderByCreatedAtDesc(
+            Long accountId,
+            Collection<StockCorporateActionEntitlementStatus> statuses
+    );
+
     Optional<StockCorporateActionEntitlement> findByActionIdAndAccountId(Long actionId, Long accountId);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
@@ -23,6 +29,17 @@ public interface StockCorporateActionEntitlementRepository extends JpaRepository
     Optional<StockCorporateActionEntitlement> findByActionIdAndAccountIdForUpdate(
             @Param("actionId") Long actionId,
             @Param("accountId") Long accountId
+    );
+
+    @Query("""
+            select coalesce(sum(e.subscribedCashAmount), 0)
+              from StockCorporateActionEntitlement e
+             where e.accountId = :accountId
+               and e.status = :status
+            """)
+    BigDecimal sumSubscribedCashAmountByAccountIdAndStatus(
+            @Param("accountId") Long accountId,
+            @Param("status") StockCorporateActionEntitlementStatus status
     );
 
     @Query("""

@@ -33,7 +33,7 @@
 ## 문서 갱신 규칙
 
 - 새 API를 추가하면 `02-api-auth-boundaries.md`, `10-frontend-workspaces.md`, `12-change-order-and-verification.md`를 같이 본다.
-- 새 원장 컬럼을 추가하면 `03-ledger-ddl-contract.md`와 back/batch/H2 DDL을 같이 본다.
+- 새 원장 컬럼을 추가하면 `03-ledger-ddl-contract.md`와 back canonical MySQL DDL, batch H2 DDL을 같이 본다.
 - 새 배치 job을 추가하면 `01-service-boundaries.md`, `11-runtime-config-and-smoke.md`, `12-change-order-and-verification.md`를 같이 본다.
 - 기업 이벤트를 추가하면 먼저 `../15-corporate-action-scope.md`에서 초기 범위인지 확인한다.
 - 종목 평가 보고서를 바꾸면 `13-instrument-report-events.md`, `06-auto-market.md`, `10-frontend-workspaces.md`를 같이 본다.

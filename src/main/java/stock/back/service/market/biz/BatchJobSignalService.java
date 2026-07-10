@@ -58,6 +58,44 @@ public class BatchJobSignalService {
         );
     }
 
+    @Transactional(readOnly = true)
+    public Optional<StockBatchJobRunResponse> latestAutoParticipantCashFlow() {
+        return jdbcTemplate.query(
+                        """
+                        select job_name,
+                               case when status = 'PENDING' then 'QUEUED' else status end as response_status,
+                               execution_mode,
+                               coalesce(processed_count, 0) as processed_count,
+                               coalesce(message, case
+                                   when status = 'PENDING' then 'Batch job signal queued'
+                                   when status = 'PROCESSING' then 'Batch job signal processing'
+                                   else 'Batch job signal completed'
+                               end) as response_message,
+                               requested_at,
+                               completed_at
+                          from stock_batch_job_signal
+                         where signal_type = ?
+                           and job_name = ?
+                           and execution_mode = 'manual-recurring-cash'
+                         order by id desc
+                         limit 1
+                        """,
+                        (rs, rowNum) -> new StockBatchJobRunResponse(
+                                rs.getString("job_name"),
+                                rs.getString("response_status"),
+                                rs.getString("execution_mode"),
+                                rs.getInt("processed_count"),
+                                rs.getString("response_message"),
+                                rs.getObject("requested_at", LocalDateTime.class),
+                                rs.getObject("completed_at", LocalDateTime.class)
+                        ),
+                        SIGNAL_AUTO_PARTICIPANT_CASH_FLOW_RUN,
+                        BatchJobNames.AUTO_PARTICIPANT_CASH_FLOW
+                )
+                .stream()
+                .findFirst();
+    }
+
     @Transactional
     public StockBatchJobRunResponse enqueueMarketCloseRollover(String requestedBy) {
         return enqueue(

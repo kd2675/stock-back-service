@@ -59,7 +59,12 @@ public class AdminFlowQueryService {
                 from active_accounts
             ) a
             cross join (
-              select sum(reserved_cash) as total_reserved_buy_cash
+              select coalesce(sum(reserved_cash), 0) + coalesce((
+                       select sum(e.subscribed_cash_amount)
+                         from stock_corporate_action_entitlement e
+                         join active_accounts aa on aa.id = e.account_id
+                        where e.status = 'SUBSCRIBED'
+                     ), 0) as total_reserved_buy_cash
                 from stock_order
                where market_type = 'ORDER_BOOK'
                  and side = 'BUY'
@@ -73,7 +78,7 @@ public class AdminFlowQueryService {
             ) h
             cross join (
               select sum(case when f.flow_type = 'DEPOSIT' and f.reason <> 'DIVIDEND_PAYMENT' then f.amount else 0 end) as external_deposit_amount,
-                     sum(case when f.flow_type = 'WITHDRAW' then f.amount else 0 end) as external_withdraw_amount,
+                     sum(case when f.flow_type = 'WITHDRAW' and f.reason <> 'CAPITAL_INCREASE_SUBSCRIPTION' then f.amount else 0 end) as external_withdraw_amount,
                      sum(case when f.flow_type = 'DEPOSIT' and f.reason = 'DIVIDEND_PAYMENT' then f.amount else 0 end) as dividend_income_amount
                 from stock_account_cash_flow f
                 join active_accounts aa on aa.id = f.account_id
