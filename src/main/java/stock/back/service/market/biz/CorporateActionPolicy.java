@@ -1,6 +1,7 @@
 package stock.back.service.market.biz;
 
 import stock.back.service.common.exception.StockException;
+import stock.back.service.database.entity.StockCapitalIncreaseOfferingType;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -42,20 +43,57 @@ final class CorporateActionPolicy {
     }
 
     static void requirePaidInCapitalIncreaseDates(
+            StockCapitalIncreaseOfferingType offeringType,
             LocalDate exRightsDate,
+            LocalDate subscriptionStartDate,
+            LocalDate subscriptionEndDate,
             LocalDate paymentDate,
             LocalDate listingDate,
             LocalDate currentSimulationDate
     ) {
-        if (exRightsDate == null || paymentDate == null || listingDate == null) {
-            throw StockException.badRequest("Paid-in capital increase requires ex-rights, payment, and listing dates");
+        StockCapitalIncreaseOfferingType normalizedOfferingType = offeringType == null
+                ? StockCapitalIncreaseOfferingType.defaultType()
+                : offeringType;
+        if (paymentDate == null || listingDate == null || subscriptionStartDate == null || subscriptionEndDate == null) {
+            throw StockException.badRequest("Paid-in capital increase requires subscription, payment, and listing dates");
         }
-        requireNotBeforeCurrentSimulationDate("Paid-in capital increase ex-rights date", exRightsDate, currentSimulationDate);
+        if (normalizedOfferingType == StockCapitalIncreaseOfferingType.SHAREHOLDER_ALLOCATION && exRightsDate == null) {
+            throw StockException.badRequest("Shareholder allocation requires an ex-rights date");
+        }
+        if (normalizedOfferingType == StockCapitalIncreaseOfferingType.PUBLIC_OFFERING && exRightsDate != null) {
+            throw StockException.badRequest("Public offering does not use an ex-rights date");
+        }
+        if (exRightsDate != null) {
+            requireNotBeforeCurrentSimulationDate("Paid-in capital increase ex-rights date", exRightsDate, currentSimulationDate);
+        }
+        requireNotBeforeCurrentSimulationDate("Paid-in capital increase subscription start date", subscriptionStartDate, currentSimulationDate);
+        requireNotBeforeCurrentSimulationDate("Paid-in capital increase subscription end date", subscriptionEndDate, currentSimulationDate);
         requireNotBeforeCurrentSimulationDate("Paid-in capital increase payment date", paymentDate, currentSimulationDate);
         requireNotBeforeCurrentSimulationDate("Paid-in capital increase listing date", listingDate, currentSimulationDate);
-        if (!paymentDate.isAfter(exRightsDate) || !listingDate.isAfter(paymentDate)) {
-            throw StockException.badRequest("Paid-in capital increase dates must be ordered by ex-rights, payment, listing on later dates");
+        if (subscriptionEndDate.isBefore(subscriptionStartDate)) {
+            throw StockException.badRequest("Paid-in capital increase subscription end date must not be before subscription start date");
         }
+        if (normalizedOfferingType == StockCapitalIncreaseOfferingType.SHAREHOLDER_ALLOCATION
+                && !subscriptionStartDate.isAfter(exRightsDate)) {
+            throw StockException.badRequest("Shareholder allocation subscription must start after ex-rights date");
+        }
+        if (!paymentDate.isAfter(subscriptionEndDate) || !listingDate.isAfter(paymentDate)) {
+            throw StockException.badRequest("Paid-in capital increase dates must be ordered by subscription, payment, listing");
+        }
+    }
+
+    static LocalDate defaultPaidInSubscriptionStartDate(
+            StockCapitalIncreaseOfferingType offeringType,
+            LocalDate exRightsDate,
+            LocalDate currentSimulationDate
+    ) {
+        StockCapitalIncreaseOfferingType normalizedOfferingType = offeringType == null
+                ? StockCapitalIncreaseOfferingType.defaultType()
+                : offeringType;
+        if (normalizedOfferingType == StockCapitalIncreaseOfferingType.SHAREHOLDER_ALLOCATION && exRightsDate != null) {
+            return exRightsDate.plusDays(1);
+        }
+        return currentSimulationDate;
     }
 
     static void requireFreeShareDistributionDates(LocalDate exRightsDate, LocalDate listingDate, LocalDate currentSimulationDate) {

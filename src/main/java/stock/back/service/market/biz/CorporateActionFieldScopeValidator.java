@@ -19,6 +19,9 @@ final class CorporateActionFieldScopeValidator {
             case STOCK_SPLIT -> {
                 rejectPresent(request.shareQuantity(), "Stock split does not use shareQuantity");
                 rejectPresent(request.issuePrice(), "Stock split does not use issuePrice");
+                rejectPresent(request.offeringType(), "Stock split does not use offeringType");
+                rejectPresent(request.subscriptionStartDate(), "Stock split does not use subscriptionStartDate");
+                rejectPresent(request.subscriptionEndDate(), "Stock split does not use subscriptionEndDate");
                 rejectPresent(request.exRightsDate(), "Stock split does not use exRightsDate");
                 rejectPresent(request.paymentDate(), "Stock split does not use paymentDate");
                 rejectPresent(request.dividendAmount(), "Stock split does not use dividendAmount");
@@ -27,6 +30,9 @@ final class CorporateActionFieldScopeValidator {
             case CASH_DIVIDEND -> {
                 rejectPresent(request.shareQuantity(), "Cash dividend does not use shareQuantity");
                 rejectPresent(request.issuePrice(), "Cash dividend does not use issuePrice");
+                rejectPresent(request.offeringType(), "Cash dividend does not use offeringType");
+                rejectPresent(request.subscriptionStartDate(), "Cash dividend does not use subscriptionStartDate");
+                rejectPresent(request.subscriptionEndDate(), "Cash dividend does not use subscriptionEndDate");
                 rejectPresent(request.splitFrom(), "Cash dividend does not use splitFrom");
                 rejectPresent(request.splitTo(), "Cash dividend does not use splitTo");
                 rejectPresent(request.listingDate(), "Cash dividend does not use listingDate");
@@ -34,6 +40,9 @@ final class CorporateActionFieldScopeValidator {
             }
             case BONUS_ISSUE, STOCK_DIVIDEND -> {
                 rejectPresent(request.issuePrice(), "Free share distribution does not use issuePrice");
+                rejectPresent(request.offeringType(), "Free share distribution does not use offeringType");
+                rejectPresent(request.subscriptionStartDate(), "Free share distribution does not use subscriptionStartDate");
+                rejectPresent(request.subscriptionEndDate(), "Free share distribution does not use subscriptionEndDate");
                 rejectPresent(request.splitFrom(), "Free share distribution does not use splitFrom");
                 rejectPresent(request.splitTo(), "Free share distribution does not use splitTo");
                 rejectPresent(request.paymentDate(), "Free share distribution does not use paymentDate");
@@ -43,6 +52,9 @@ final class CorporateActionFieldScopeValidator {
             case DELISTING -> {
                 rejectPresent(request.shareQuantity(), "Delisting does not use shareQuantity");
                 rejectPresent(request.issuePrice(), "Delisting does not use issuePrice");
+                rejectPresent(request.offeringType(), "Delisting does not use offeringType");
+                rejectPresent(request.subscriptionStartDate(), "Delisting does not use subscriptionStartDate");
+                rejectPresent(request.subscriptionEndDate(), "Delisting does not use subscriptionEndDate");
                 rejectPresent(request.splitFrom(), "Delisting does not use splitFrom");
                 rejectPresent(request.splitTo(), "Delisting does not use splitTo");
                 rejectPresent(request.exRightsDate(), "Delisting does not use exRightsDate");

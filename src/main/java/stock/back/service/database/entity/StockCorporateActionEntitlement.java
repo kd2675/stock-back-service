@@ -43,12 +43,21 @@ public class StockCorporateActionEntitlement {
     @Column(name = "cash_amount", precision = 19, scale = 2)
     private BigDecimal cashAmount;
 
+    @Column(name = "subscribed_share_quantity")
+    private Long subscribedShareQuantity;
+
+    @Column(name = "subscribed_cash_amount", precision = 19, scale = 2)
+    private BigDecimal subscribedCashAmount;
+
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false, length = 20)
     private StockCorporateActionEntitlementStatus status;
 
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
+
+    @Column(name = "subscribed_at")
+    private LocalDateTime subscribedAt;
 
     @Column(name = "paid_at")
     private LocalDateTime paidAt;

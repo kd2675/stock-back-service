@@ -6,6 +6,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import stock.back.service.common.exception.StockException;
 import stock.back.service.database.entity.StockCorporateAction;
+import stock.back.service.database.entity.StockCapitalIncreaseOfferingType;
 import stock.back.service.database.entity.StockCorporateActionType;
 import stock.back.service.database.entity.StockOrderBookInstrument;
 import stock.back.service.database.entity.StockPrice;
@@ -79,26 +80,48 @@ public class CorporateActionCommandService {
         long shares = CorporateActionPolicy.requirePositiveShareQuantity(request.shareQuantity());
         BigDecimal issuePrice = CorporateActionPolicy.requirePositiveIssuePrice(request.issuePrice());
         LocalDate exRightsDate = request.exRightsDate();
+        StockCapitalIncreaseOfferingType offeringType = request.offeringType() == null
+                ? StockCapitalIncreaseOfferingType.defaultType()
+                : request.offeringType();
+        LocalDate subscriptionStartDate = request.subscriptionStartDate() == null
+                ? CorporateActionPolicy.defaultPaidInSubscriptionStartDate(offeringType, exRightsDate, currentSimulationDate)
+                : request.subscriptionStartDate();
+        LocalDate subscriptionEndDate = request.subscriptionEndDate() == null
+                ? request.paymentDate()
+                : request.subscriptionEndDate();
         LocalDate paymentDate = request.paymentDate();
         LocalDate listingDate = request.listingDate();
-        CorporateActionPolicy.requirePaidInCapitalIncreaseDates(exRightsDate, paymentDate, listingDate, currentSimulationDate);
+        CorporateActionPolicy.requirePaidInCapitalIncreaseDates(
+                offeringType,
+                exRightsDate,
+                subscriptionStartDate,
+                subscriptionEndDate,
+                paymentDate,
+                listingDate,
+                currentSimulationDate
+        );
 
         StockPrice price = stockPriceRepository.findById(instrument.getSymbol())
                 .orElseThrow(() -> StockException.notFound("Price not found: " + instrument.getSymbol()));
         BigDecimal basePrice = price.getCurrentPrice();
-        BigDecimal theoreticalExRightsPrice = CorporateActionPolicy.calculateTheoreticalExRightsPrice(
-                instrument.getIssuedShares(),
-                basePrice,
-                shares,
-                issuePrice
-        );
+        BigDecimal theoreticalExRightsPrice = offeringType == StockCapitalIncreaseOfferingType.SHAREHOLDER_ALLOCATION
+                ? CorporateActionPolicy.calculateTheoreticalExRightsPrice(
+                        instrument.getIssuedShares(),
+                        basePrice,
+                        shares,
+                        issuePrice
+                )
+                : null;
         stockCorporateActionRepository.save(StockCorporateAction.paidInCapitalIncrease(
                 instrument.getSymbol(),
+                offeringType,
                 shares,
                 issuePrice,
                 basePrice,
                 theoreticalExRightsPrice,
                 exRightsDate,
+                subscriptionStartDate,
+                subscriptionEndDate,
                 paymentDate,
                 listingDate,
                 CorporateActionPolicy.normalizeNullableDescription(request.description()),

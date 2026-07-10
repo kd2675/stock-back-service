@@ -9,6 +9,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import stock.back.service.common.exception.StockException;
+import stock.back.service.database.entity.StockCapitalIncreaseOfferingType;
 import stock.back.service.database.entity.StockCorporateAction;
 import stock.back.service.database.entity.StockCorporateActionType;
 import stock.back.service.database.entity.StockOrderBookInstrument;
@@ -89,10 +90,13 @@ class CorporateActionCommandServiceTest {
                         null,
                         null,
                         LocalDate.of(2026, 7, 1),
-                        LocalDate.of(2026, 7, 3),
+                        LocalDate.of(2026, 7, 4),
                         LocalDate.of(2026, 7, 8),
                         null,
                         null,
+                        StockCapitalIncreaseOfferingType.SHAREHOLDER_ALLOCATION,
+                        LocalDate.of(2026, 7, 2),
+                        LocalDate.of(2026, 7, 3),
                         " 유상증자 "
                 )
         );
@@ -219,7 +223,45 @@ class CorporateActionCommandServiceTest {
                 )
         ))
                 .isInstanceOf(StockException.class)
-                .hasMessageContaining("must be ordered by ex-rights, payment, listing on later dates");
+                .hasMessageContaining("subscription end date must not be before subscription start date");
+
+        verify(stockCorporateActionRepository, never()).save(any());
+    }
+
+    @Test
+    void applyCorporateAction_paidInCapitalIncreasePaymentOnSubscriptionEndDate_throwsBadRequest() {
+        StockOrderBookInstrument instrument = StockOrderBookInstrument.listed(
+                "ZQ001",
+                "테스트",
+                "ORDERBOOK",
+                new BigDecimal("70000.00"),
+                100000L,
+                new BigDecimal("100.00"),
+                new BigDecimal("30.00")
+        );
+        when(stockOrderBookInstrumentRepository.findById("ZQ001")).thenReturn(Optional.of(instrument));
+
+        assertThatThrownBy(() -> service.applyCorporateAction(
+                "ZQ001",
+                new CorporateActionRequest(
+                        StockCorporateActionType.PAID_IN_CAPITAL_INCREASE,
+                        10000L,
+                        new BigDecimal("50000.00"),
+                        null,
+                        null,
+                        LocalDate.of(2026, 7, 1),
+                        LocalDate.of(2026, 7, 3),
+                        LocalDate.of(2026, 7, 4),
+                        null,
+                        null,
+                        StockCapitalIncreaseOfferingType.SHAREHOLDER_ALLOCATION,
+                        LocalDate.of(2026, 7, 2),
+                        LocalDate.of(2026, 7, 3),
+                        "유상증자"
+                )
+        ))
+                .isInstanceOf(StockException.class)
+                .hasMessageContaining("dates must be ordered by subscription, payment, listing");
 
         verify(stockCorporateActionRepository, never()).save(any());
     }

@@ -15,10 +15,12 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import stock.back.service.market.biz.CorporateActionCommandService;
 import stock.back.service.market.biz.CorporateActionQueryService;
+import stock.back.service.market.biz.CorporateActionSubscriptionService;
 import stock.back.service.market.biz.InstrumentReportService;
 import stock.back.service.market.vo.CorporateActionEntitlementResponse;
 import stock.back.service.market.vo.CorporateActionRequest;
 import stock.back.service.market.vo.CorporateActionResponse;
+import stock.back.service.market.vo.CorporateActionSubscriptionRequest;
 import stock.back.service.market.vo.InstrumentReportRequest;
 import stock.back.service.market.vo.InstrumentReportResponse;
 import stock.back.service.market.vo.OrderBookInstrumentResponse;
@@ -33,6 +35,7 @@ public class MarketCorporateActionController {
 
     private final CorporateActionCommandService corporateActionCommandService;
     private final CorporateActionQueryService corporateActionQueryService;
+    private final CorporateActionSubscriptionService corporateActionSubscriptionService;
     private final InstrumentReportService instrumentReportService;
 
     @PostMapping("/order-book-instruments/{symbol}/corporate-actions")
@@ -92,5 +95,15 @@ public class MarketCorporateActionController {
     @RequirePrincipalRole
     public ResponseDataDTO<List<CorporateActionEntitlementResponse>> getMyCorporateActionEntitlements(UserContext userContext) {
         return ResponseDataDTO.of(corporateActionQueryService.getMyCorporateActionEntitlements(userContext.getUserKey()));
+    }
+
+    @PostMapping("/corporate-actions/{actionId}/subscriptions/me")
+    @RequirePrincipalRole
+    public ResponseDataDTO<CorporateActionEntitlementResponse> subscribeCorporateAction(
+            @PathVariable long actionId,
+            @Valid @RequestBody CorporateActionSubscriptionRequest request,
+            UserContext userContext
+    ) {
+        return ResponseDataDTO.of(corporateActionSubscriptionService.subscribe(actionId, request, userContext.getUserKey()));
     }
 }

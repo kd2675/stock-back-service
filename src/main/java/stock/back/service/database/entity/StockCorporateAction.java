@@ -65,6 +65,16 @@ public class StockCorporateAction {
     private LocalDate delistingDate;
 
     @Enumerated(EnumType.STRING)
+    @Column(name = "offering_type", length = 40)
+    private StockCapitalIncreaseOfferingType offeringType;
+
+    @Column(name = "subscription_start_date")
+    private LocalDate subscriptionStartDate;
+
+    @Column(name = "subscription_end_date")
+    private LocalDate subscriptionEndDate;
+
+    @Enumerated(EnumType.STRING)
     @Column(name = "delisting_treatment", length = 30)
     private StockDelistingTreatment delistingTreatment;
 
@@ -126,14 +136,53 @@ public class StockCorporateAction {
             String description,
             LocalDateTime createdAt
     ) {
+        return paidInCapitalIncrease(
+                symbol,
+                StockCapitalIncreaseOfferingType.defaultType(),
+                shares,
+                issuePrice,
+                basePrice,
+                theoreticalExRightsPrice,
+                exRightsDate,
+                defaultShareholderSubscriptionStartDate(exRightsDate),
+                paymentDate,
+                paymentDate,
+                listingDate,
+                description,
+                createdAt
+        );
+    }
+
+    public static StockCorporateAction paidInCapitalIncrease(
+            String symbol,
+            StockCapitalIncreaseOfferingType offeringType,
+            long shares,
+            BigDecimal issuePrice,
+            BigDecimal basePrice,
+            BigDecimal theoreticalExRightsPrice,
+            LocalDate exRightsDate,
+            LocalDate subscriptionStartDate,
+            LocalDate subscriptionEndDate,
+            LocalDate paymentDate,
+            LocalDate listingDate,
+            String description,
+            LocalDateTime createdAt
+    ) {
         StockCorporateAction action = create(symbol, StockCorporateActionType.PAID_IN_CAPITAL_INCREASE, shares, issuePrice, null, null, description, createdAt);
         action.status = StockCorporateActionStatus.ANNOUNCED;
+        action.offeringType = offeringType == null ? StockCapitalIncreaseOfferingType.defaultType() : offeringType;
         action.basePrice = basePrice;
         action.theoreticalExRightsPrice = theoreticalExRightsPrice;
         action.exRightsDate = exRightsDate;
+        action.subscriptionStartDate = subscriptionStartDate;
+        action.subscriptionEndDate = subscriptionEndDate;
         action.paymentDate = paymentDate;
         action.listingDate = listingDate;
         return action;
+    }
+
+    private static LocalDate defaultShareholderSubscriptionStartDate(LocalDate exRightsDate) {
+        return exRightsDate == null ? null : exRightsDate.plusDays(1);
     }
 
     public static StockCorporateAction cashDividend(

@@ -7,6 +7,8 @@ import stock.back.service.common.exception.StockException;
 import stock.back.service.database.entity.StockAccountStatus;
 import stock.back.service.database.entity.StockCorporateAction;
 import stock.back.service.database.entity.StockCorporateActionEntitlement;
+import stock.back.service.database.entity.StockCorporateActionEntitlementStatus;
+import stock.back.service.database.entity.StockCorporateActionType;
 import stock.back.service.database.repository.StockAccountRepository;
 import stock.back.service.database.repository.StockCorporateActionEntitlementRepository;
 import stock.back.service.database.repository.StockCorporateActionRepository;
@@ -37,8 +39,10 @@ public class CorporateActionQueryService {
         if (!stockOrderBookInstrumentRepository.existsById(normalizedSymbol)) {
             throw StockException.notFound("Unknown order book symbol: " + normalizedSymbol);
         }
-        return stockCorporateActionRepository.findBySymbolOrderByCreatedAtDesc(normalizedSymbol).stream()
-                .map(this::toCorporateActionResponse)
+        List<StockCorporateAction> actions = stockCorporateActionRepository.findBySymbolOrderByCreatedAtDesc(normalizedSymbol);
+        Map<Long, Long> subscribedShareQuantities = subscribedShareQuantities(actions);
+        return actions.stream()
+                .map(action -> toCorporateActionResponse(action, subscribedShareQuantities.getOrDefault(action.getId(), 0L)))
                 .toList();
     }
 
@@ -63,12 +67,41 @@ public class CorporateActionQueryService {
                 .toList();
     }
 
-    private CorporateActionResponse toCorporateActionResponse(StockCorporateAction action) {
+    private Map<Long, Long> subscribedShareQuantities(List<StockCorporateAction> actions) {
+        List<Long> actionIds = actions.stream()
+                .filter(action -> action.getActionType() == StockCorporateActionType.PAID_IN_CAPITAL_INCREASE)
+                .map(StockCorporateAction::getId)
+                .filter(id -> id != null)
+                .toList();
+        if (actionIds.isEmpty()) {
+            return Map.of();
+        }
+        return stockCorporateActionEntitlementRepository.sumSubscribedShareQuantityByActionIdInAndStatusIn(
+                        actionIds,
+                        List.of(StockCorporateActionEntitlementStatus.SUBSCRIBED, StockCorporateActionEntitlementStatus.PAID)
+                ).stream()
+                .collect(Collectors.toMap(
+                        StockCorporateActionEntitlementRepository.SubscribedShareQuantitySummary::getActionId,
+                        summary -> summary.getSubscribedShareQuantity() == null ? 0L : summary.getSubscribedShareQuantity()
+                ));
+    }
+
+    private CorporateActionResponse toCorporateActionResponse(StockCorporateAction action, Long subscribedShareQuantity) {
+        Long normalizedSubscribedShareQuantity = null;
+        Long remainingShareQuantity = null;
+        if (action.getActionType() == StockCorporateActionType.PAID_IN_CAPITAL_INCREASE) {
+            normalizedSubscribedShareQuantity = Math.max(0L, subscribedShareQuantity == null ? 0L : subscribedShareQuantity);
+            remainingShareQuantity = action.getShareQuantity() == null
+                    ? null
+                    : Math.max(0L, action.getShareQuantity() - normalizedSubscribedShareQuantity);
+        }
         return new CorporateActionResponse(
                 action.getId(),
                 action.getSymbol(),
                 action.getActionType(),
                 action.getShareQuantity(),
+                normalizedSubscribedShareQuantity,
+                remainingShareQuantity,
                 action.getIssuePrice(),
                 action.getDividendAmount(),
                 action.getStatus(),
@@ -79,6 +112,9 @@ public class CorporateActionQueryService {
                 action.getListingDate(),
                 action.getDelistingDate(),
                 action.getDelistingTreatment() == null ? null : action.getDelistingTreatment().name(),
+                action.getOfferingType(),
+                action.getSubscriptionStartDate(),
+                action.getSubscriptionEndDate(),
                 action.getAppliedAt(),
                 action.getPaidAt(),
                 action.getListedAt(),
@@ -102,8 +138,11 @@ public class CorporateActionQueryService {
                 entitlement.getQuantity() == null ? 0L : entitlement.getQuantity(),
                 entitlement.getShareQuantity(),
                 entitlement.getCashAmount(),
+                entitlement.getSubscribedShareQuantity(),
+                entitlement.getSubscribedCashAmount(),
                 entitlement.getStatus(),
                 entitlement.getCreatedAt(),
+                entitlement.getSubscribedAt(),
                 entitlement.getPaidAt()
         );
     }

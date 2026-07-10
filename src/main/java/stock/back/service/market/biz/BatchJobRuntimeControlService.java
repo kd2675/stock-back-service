@@ -177,7 +177,6 @@ public class BatchJobRuntimeControlService {
     private Map<String, RuntimeDefinition> createDefinitions() {
         Map<String, RuntimeDefinition> createdDefinitions = new LinkedHashMap<>();
         put(createdDefinitions, BatchJobNames.MARKET_DATA_REFRESH);
-        put(createdDefinitions, BatchJobNames.VIRTUAL_PRICE_EXECUTION);
         put(createdDefinitions, BatchJobNames.ORDER_BOOK_EXECUTION);
         put(createdDefinitions, BatchJobNames.CORPORATE_ACTIONS);
         put(createdDefinitions, BatchJobNames.AUTO_MARKET);

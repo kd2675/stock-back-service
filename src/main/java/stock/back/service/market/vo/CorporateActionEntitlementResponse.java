@@ -15,8 +15,11 @@ public record CorporateActionEntitlementResponse(
         long quantity,
         Long shareQuantity,
         BigDecimal cashAmount,
+        Long subscribedShareQuantity,
+        BigDecimal subscribedCashAmount,
         StockCorporateActionEntitlementStatus status,
         LocalDateTime createdAt,
+        LocalDateTime subscribedAt,
         LocalDateTime paidAt
 ) {
 }

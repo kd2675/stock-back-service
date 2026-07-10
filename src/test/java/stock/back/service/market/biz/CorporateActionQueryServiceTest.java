@@ -83,10 +83,39 @@ class CorporateActionQueryServiceTest {
         assertThat(responses.get(0).symbol()).isEqualTo("ZQ001");
         assertThat(responses.get(0).actionType()).isEqualTo(StockCorporateActionType.CASH_DIVIDEND);
         assertThat(responses.get(0).dividendAmount()).isEqualByComparingTo(new BigDecimal("1000.00"));
+        assertThat(responses.get(0).subscribedShareQuantity()).isNull();
+        assertThat(responses.get(0).remainingShareQuantity()).isNull();
         assertThat(responses.get(0).status()).isEqualTo(StockCorporateActionStatus.ANNOUNCED);
         assertThat(responses.get(0).exRightsDate()).isEqualTo(exRightsDate);
         assertThat(responses.get(0).paymentDate()).isEqualTo(paymentDate);
         assertThat(responses.get(0).createdAt()).isEqualTo(createdAt);
+    }
+
+    @Test
+    void getCorporateActions_paidInCapitalIncrease_returnsSubscriptionProgress() {
+        StockCorporateAction action = mock(StockCorporateAction.class);
+        StockCorporateActionEntitlementRepository.SubscribedShareQuantitySummary summary =
+                mock(StockCorporateActionEntitlementRepository.SubscribedShareQuantitySummary.class);
+        when(stockOrderBookInstrumentRepository.existsById("ZQ001")).thenReturn(true);
+        when(stockCorporateActionRepository.findBySymbolOrderByCreatedAtDesc("ZQ001")).thenReturn(List.of(action));
+        when(action.getId()).thenReturn(11L);
+        when(action.getSymbol()).thenReturn("ZQ001");
+        when(action.getActionType()).thenReturn(StockCorporateActionType.PAID_IN_CAPITAL_INCREASE);
+        when(action.getShareQuantity()).thenReturn(1000L);
+        when(action.getStatus()).thenReturn(StockCorporateActionStatus.ANNOUNCED);
+        when(stockCorporateActionEntitlementRepository.sumSubscribedShareQuantityByActionIdInAndStatusIn(
+                List.of(11L),
+                List.of(StockCorporateActionEntitlementStatus.SUBSCRIBED, StockCorporateActionEntitlementStatus.PAID)
+        )).thenReturn(List.of(summary));
+        when(summary.getActionId()).thenReturn(11L);
+        when(summary.getSubscribedShareQuantity()).thenReturn(350L);
+
+        var responses = service.getCorporateActions("zq001");
+
+        assertThat(responses).hasSize(1);
+        assertThat(responses.get(0).shareQuantity()).isEqualTo(1000L);
+        assertThat(responses.get(0).subscribedShareQuantity()).isEqualTo(350L);
+        assertThat(responses.get(0).remainingShareQuantity()).isEqualTo(650L);
     }
 
     @Test

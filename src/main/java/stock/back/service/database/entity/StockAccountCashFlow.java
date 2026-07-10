@@ -73,6 +73,10 @@ public class StockAccountCashFlow {
         return create(accountId, StockAccountCashFlowType.DEPOSIT, amount, StockAccountCashFlowReason.DIVIDEND_PAYMENT, "CORPORATE_ACTION");
     }
 
+    public static StockAccountCashFlow capitalIncreaseSubscription(Long accountId, BigDecimal amount, LocalDateTime createdAt) {
+        return create(accountId, StockAccountCashFlowType.WITHDRAW, amount, StockAccountCashFlowReason.CAPITAL_INCREASE_SUBSCRIPTION, "CORPORATE_ACTION", createdAt);
+    }
+
     private static StockAccountCashFlow create(
             Long accountId,
             StockAccountCashFlowType flowType,

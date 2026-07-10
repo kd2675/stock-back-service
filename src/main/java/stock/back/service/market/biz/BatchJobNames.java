@@ -5,7 +5,6 @@ import org.springframework.util.StringUtils;
 final class BatchJobNames {
 
     static final String MARKET_DATA_REFRESH = "market-data-refresh";
-    static final String VIRTUAL_PRICE_EXECUTION = "virtual-price-execution";
     static final String ORDER_BOOK_EXECUTION = "order-book-execution";
     static final String CORPORATE_ACTIONS = "corporate-actions";
     static final String AUTO_MARKET = "auto-market";
