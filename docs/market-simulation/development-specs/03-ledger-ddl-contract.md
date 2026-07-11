@@ -33,6 +33,7 @@ stock 원장은 주문, 체결, 계좌, 보유, 가격, 주문장 종목, 시장
 - `stock-back-service/src/main/resources/db/ddl/stock_capital_increase_subscription_alter.sql`
 - `stock-back-service/src/main/resources/db/ddl/stock_capital_increase_contract_hardening_alter.sql`
 - `stock-back-service/src/main/resources/db/ddl/stock_schema_contract_alignment_alter.sql`
+- `stock-back-service/src/main/resources/db/ddl/stock_price_tick_latest_lookup_alter.sql`
 - `stock-back-service/src/main/resources/db/maintenance/stock_clear_data.sql`
 - `stock-back-service/src/main/resources/db/maintenance/stock_clear_runtime_history_keep_participants.sql`
 - `stock-batch-service/src/main/resources/db/ddl/stock_h2.sql`
@@ -53,6 +54,7 @@ stock 원장은 주문, 체결, 계좌, 보유, 가격, 주문장 종목, 시장
 - `stock-back-service/src/main/resources/db/ddl/stock_all.sql`만 MySQL business schema를 소유하며, batch에는 중복 MySQL full DDL을 두지 않는다.
 - batch H2 test DDL의 공유 원장 컬럼/제약은 canonical MySQL DDL과 맞춘다.
 - 기존 DB와 canonical DDL의 기본값·CHECK 표현 차이는 `stock_schema_contract_alignment_alter.sql`로 정렬한다. 이 alter는 스냅샷 음수 값, 잘못된 레짐 값, 발행 필수값 누락이 있으면 `stock_migration_required_schema_contract_alignment` marker로 중단한다.
+- `stock_price_tick`의 시점별 최신가 조회는 전체 이력 윈도우 정렬 대신 `(symbol, price_time, id)` 인덱스 역방향 탐색을 사용한다.
 - `stock_clear_data.sql`은 `STOCK_SERVICE`의 전체 stock business schema 초기화용이다. 자동참여자, 계좌, 종목, 자동장 설정까지 모두 지운다.
 - `stock_clear_runtime_history_keep_participants.sql`은 자동참여자와 설정을 보존한 채 주문/체결/차트/원장 히스토리를 새로 시작하는 개발용 초기화 파일이다. 현금 원장을 지우므로 계좌 현금과 일반 보유는 0 상태로 맞추고, 시뮬레이션 clock의 기준일과 1일 길이는 유지한 채 누적 시간을 0으로 되돌린다. enabled 주문장 종목 가격은 초기 상장가와 시뮬레이션 기준일 00:00으로 되돌린다. 자동장 batch가 거래 가능한 `OPEN` 종목의 `SELL_ONLY` 상장주관 자동계정에는 현재 유통주식수만큼 공급 보유분을 재생성해 손익/수익률 기준, 최신가 기준, 주문장 공급 상태가 섞이지 않게 한다.
 
@@ -72,6 +74,7 @@ stock 원장은 주문, 체결, 계좌, 보유, 가격, 주문장 종목, 시장
 ## 실제 DB canonical 정렬
 
 - 기존 `stock_order_book_daily_snapshot_alter.sql`, `stock_order_book_daily_regime_alter.sql`을 적용한 DB는 `stock_schema_contract_alignment_alter.sql`을 추가 적용한다.
+- 기존 `stock_price_tick`에 `(symbol, price_time)` 인덱스만 있는 DB는 `stock_price_tick_latest_lookup_alter.sql`을 적용한다.
 - 이 alter는 migration용 임시 기본값을 제거하고, 기존 테이블 생성 시 빠질 수 있던 스냅샷·레짐 CHECK와 기업 이벤트 발행 필수 CHECK를 canonical 정의로 재생성한다.
 
 ## 바꿀 때 순서
