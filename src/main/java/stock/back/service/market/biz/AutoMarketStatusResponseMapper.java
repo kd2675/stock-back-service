@@ -153,6 +153,14 @@ final class AutoMarketStatusResponseMapper {
                 config.getMaxOrderQuantity(),
                 config.getOrderTtlSeconds(),
                 config.getPriceOffsetTicks(),
+                config.getTargetBuyQuantity(),
+                config.getTargetSellQuantity(),
+                config.getTargetHoldingQuantity(),
+                config.getInventoryBandQuantity(),
+                ledger.openBuyQuantity(),
+                ledger.openSellQuantity(),
+                config.getBuyPriceOffsetDirection(),
+                config.getSellPriceOffsetDirection(),
                 config.getCreatedAt(),
                 config.getUpdatedAt()
         );

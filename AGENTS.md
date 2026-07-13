@@ -19,6 +19,7 @@
 - `/api/stock/v1/markets/**`
 - `/api/stock/v1/markets/prices/{symbol}/ticks`
 - `/api/stock/v1/markets/order-books/{symbol}`
+- `/api/stock/v1/markets/order-book-instruments/{symbol}/market-report`
 - `/api/stock/v1/markets/virtual-market`
 - `/api/stock/v1/markets/order-book-market`
 - `/api/stock/v1/markets/auto-market`

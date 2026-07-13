@@ -68,6 +68,12 @@
 - `market/biz/MarketService.java`
   - 시장 조회 조립, 주문장 종목 생성, 장 상태 변경, 기업 이벤트 등록, 평가 보고서 이벤트 등록을 담당한다.
   - batch가 처리할 원장 이벤트를 여기서 즉시 반영하지 않는다.
+- `market/biz/InstrumentMarketReportQueryService.java`
+  - 현재가·발행/유통주식·당일 체결·미체결 주문을 읽어 공개 종목 시장 보고서의 기본 요약을 계산한다.
+  - 내부 주문장 체결은 매수·매도 2행이므로 거래량과 거래대금은 한쪽 체결만 집계한다.
+- `market/biz/InstrumentMarketReportAnalyticsQueryService.java`
+  - 전체 장마감 기준 기간 성과·거래활동·수급·보유 스냅샷·기업 이벤트·동일 기준일 순위·데이터 품질을 실제 원장에서 집계한다.
+  - 기간별 산식, 원장 중복 제거, 산출 불가 항목은 `19-instrument-market-analytics-report.md`를 따른다.
 - `market/cache/StockPriceCacheService.java`
   - Redis 최신가 캐시 조회와 DB fallback 경계다.
 - `market/stream/PriceStreamService.java`
@@ -149,6 +155,10 @@
 - `app/supply-demand/page.tsx`
   - `ORDER_BOOK` 주문장 워크스페이스다.
   - 주문/체결 조회는 서버 필터를 사용한다.
+- `app/reports/page.tsx`
+  - 종목별 시가총액 비교와 공개 시장 분석 보고서 화면이다.
+  - 성과·거래활동·수급·마감 보유 구조·기업 이벤트·동일 기준일 순위·데이터 품질 패널을 조립하고 종합 응답은 5분 주기로 갱신한다.
+  - 재무 원장에 없는 재무비율을 프론트에서 추정하지 않는다.
 - `app/supply-demand/admin/page.tsx`
   - 관리자 주문장 종목/장 상태/기업 이벤트/평가 보고서 화면이다.
 - `app/components/MarketModeTabs.tsx`

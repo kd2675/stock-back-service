@@ -30,7 +30,17 @@ public class ListingAutoAccountLedgerQueryService {
                        coalesce(h.quantity, 0) as holding_quantity,
                        coalesce(h.reserved_quantity, 0) as reserved_quantity,
                        coalesce(h.average_price, 0) as average_price,
-                       coalesce(p.current_price, 0) as current_price
+                       coalesce(p.current_price, 0) as current_price,
+                       coalesce((select sum(o.quantity - o.filled_quantity)
+                                   from stock_order o
+                                  where o.account_id = a.id and o.symbol = c.symbol and o.side = 'BUY'
+                                    and o.market_type = 'ORDER_BOOK'
+                                    and o.status in ('PENDING', 'PARTIALLY_FILLED')), 0) as open_buy_quantity,
+                       coalesce((select sum(o.quantity - o.filled_quantity)
+                                   from stock_order o
+                                  where o.account_id = a.id and o.symbol = c.symbol and o.side = 'SELL'
+                                    and o.market_type = 'ORDER_BOOK'
+                                    and o.status in ('PENDING', 'PARTIALLY_FILLED')), 0) as open_sell_quantity
                   from stock_listing_auto_account_config c
                   left join stock_account a on a.user_key = c.user_key
                   left join stock_holding h on h.account_id = a.id and h.symbol = c.symbol
@@ -60,16 +70,30 @@ public class ListingAutoAccountLedgerQueryService {
                        coalesce(h.quantity, 0) as holding_quantity,
                        coalesce(h.reserved_quantity, 0) as reserved_quantity,
                        coalesce(h.average_price, 0) as average_price,
-                       coalesce(p.current_price, 0) as current_price
+                       coalesce(p.current_price, 0) as current_price,
+                       coalesce((select sum(o.quantity - o.filled_quantity)
+                                   from stock_order o
+                                  where o.account_id = a.id and o.symbol = ? and o.side = 'BUY'
+                                    and o.market_type = 'ORDER_BOOK'
+                                    and o.status in ('PENDING', 'PARTIALLY_FILLED')), 0) as open_buy_quantity,
+                       coalesce((select sum(o.quantity - o.filled_quantity)
+                                   from stock_order o
+                                  where o.account_id = a.id and o.symbol = ? and o.side = 'SELL'
+                                    and o.market_type = 'ORDER_BOOK'
+                                    and o.status in ('PENDING', 'PARTIALLY_FILLED')), 0) as open_sell_quantity
                 from stock_account a
                 left join stock_holding h on h.account_id = a.id and h.symbol = ?
                 left join stock_price p on p.symbol = ?
                 where a.user_key = ?
                 """
         )
-                .param(config.getSymbol())
-                .param(config.getSymbol())
-                .param(config.getUserKey())
+                .params(
+                        config.getSymbol(),
+                        config.getSymbol(),
+                        config.getSymbol(),
+                        config.getSymbol(),
+                        config.getUserKey()
+                )
                 .query(rs -> {
                     if (!rs.next()) {
                         return ListingAutoAccountLedger.empty();
@@ -85,7 +109,9 @@ public class ListingAutoAccountLedgerQueryService {
                 Math.max(0L, rs.getLong("holding_quantity")),
                 Math.max(0L, rs.getLong("reserved_quantity")),
                 MarketQuerySupport.zeroIfNull(rs.getBigDecimal("average_price")),
-                MarketQuerySupport.zeroIfNull(rs.getBigDecimal("current_price"))
+                MarketQuerySupport.zeroIfNull(rs.getBigDecimal("current_price")),
+                Math.max(0L, rs.getLong("open_buy_quantity")),
+                Math.max(0L, rs.getLong("open_sell_quantity"))
         );
     }
 

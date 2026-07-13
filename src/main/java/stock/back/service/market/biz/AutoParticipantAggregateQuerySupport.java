@@ -1,14 +1,19 @@
 package stock.back.service.market.biz;
 
-import org.springframework.dao.DataAccessResourceFailureException;
-import org.springframework.dao.TransientDataAccessResourceException;
-import org.springframework.jdbc.core.simple.JdbcClient;
-
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.function.Supplier;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
+
+import org.springframework.dao.DataAccessResourceFailureException;
+import org.springframework.dao.TransientDataAccessResourceException;
+import org.springframework.jdbc.core.ConnectionCallback;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.simple.JdbcClient;
 
 final class AutoParticipantAggregateQuerySupport {
 
@@ -49,25 +54,31 @@ final class AutoParticipantAggregateQuerySupport {
                      group by account_id
                     """;
 
-    static final String LAST_ORDER_AGGREGATE_SQL = """
-                    select account_id,
-                           max(created_at) as last_order_at
-                      from stock_order
-                     where account_id in (:accountIds)
-                       and market_type = 'ORDER_BOOK'
-                       and created_at >= :activityStart
-                       and created_at <= :activityEnd
-                     group by account_id
+    static final String LAST_ORDER_LOOKUP_SQL = """
+                    select cast(:accountId%d as %s) as account_id,
+                           (
+                               select created_at
+                                 from stock_order %s
+                                where account_id = :accountId%d
+                                  and market_type = 'ORDER_BOOK'
+                                  and created_at >= :activityStart
+                                  and created_at <= :activityEnd
+                                order by created_at desc
+                                limit 1
+                           ) as last_order_at
                     """;
 
-    static final String LAST_ORDER_AGGREGATE_ALL_SQL = """
-                    select account_id,
-                           max(created_at) as last_order_at
-                      from stock_order
-                     where account_id in (:accountIds)
-                       and market_type = 'ORDER_BOOK'
-                       and created_at <= :activityEnd
-                     group by account_id
+    static final String LAST_ORDER_LOOKUP_ALL_SQL = """
+                    select cast(:accountId%d as %s) as account_id,
+                           (
+                               select created_at
+                                 from stock_order %s
+                                where account_id = :accountId%d
+                                  and market_type = 'ORDER_BOOK'
+                                  and created_at <= :activityEnd
+                                order by created_at desc
+                                limit 1
+                           ) as last_order_at
                     """;
 
     static final String TODAY_EXECUTION_AGGREGATE_SQL = """
@@ -84,31 +95,44 @@ final class AutoParticipantAggregateQuerySupport {
                      group by account_id
                     """;
 
-    static final String LAST_EXECUTION_AGGREGATE_SQL = """
-                    select account_id,
-                           max(executed_at) as last_execution_at
-                      from stock_execution
-                     where account_id in (:accountIds)
-                       and source = 'INTERNAL_ORDER_BOOK'
-                       and executed_at >= :activityStart
-                       and executed_at <= :activityEnd
-                     group by account_id
+    static final String LAST_EXECUTION_LOOKUP_SQL = """
+                    select cast(:accountId%d as %s) as account_id,
+                           (
+                               select executed_at
+                                 from stock_execution %s
+                                where account_id = :accountId%d
+                                  and source = 'INTERNAL_ORDER_BOOK'
+                                  and executed_at >= :activityStart
+                                  and executed_at <= :activityEnd
+                                order by executed_at desc
+                                limit 1
+                           ) as last_execution_at
                     """;
 
-    static final String LAST_EXECUTION_AGGREGATE_ALL_SQL = """
-                    select account_id,
-                           max(executed_at) as last_execution_at
-                      from stock_execution
-                     where account_id in (:accountIds)
-                       and source = 'INTERNAL_ORDER_BOOK'
-                       and executed_at <= :activityEnd
-                     group by account_id
+    static final String LAST_EXECUTION_LOOKUP_ALL_SQL = """
+                    select cast(:accountId%d as %s) as account_id,
+                           (
+                               select executed_at
+                                 from stock_execution %s
+                                where account_id = :accountId%d
+                                  and source = 'INTERNAL_ORDER_BOOK'
+                                  and executed_at <= :activityEnd
+                                order by executed_at desc
+                                limit 1
+                           ) as last_execution_at
                     """;
 
     private final JdbcClient jdbcClient;
+    private final String accountIdCastType;
+    private final String orderIndexHint;
+    private final String executionIndexHint;
 
-    AutoParticipantAggregateQuerySupport(JdbcClient jdbcClient) {
+    AutoParticipantAggregateQuerySupport(JdbcClient jdbcClient, JdbcTemplate jdbcTemplate) {
         this.jdbcClient = jdbcClient;
+        boolean mysql = isMysql(jdbcTemplate);
+        this.accountIdCastType = mysql ? "signed" : "bigint";
+        this.orderIndexHint = mysql ? "force index (idx_stock_order_account_market_created)" : "";
+        this.executionIndexHint = mysql ? "force index (idx_stock_execution_account_source_time)" : "";
     }
 
     <T extends AutoParticipantAggregateTarget> void applyAccountAggregates(
@@ -188,9 +212,15 @@ final class AutoParticipantAggregateQuerySupport {
             ActivityWindow activityWindow,
             Map<Long, T> targetByAccountId
     ) {
-        var statement = jdbcClient.sql(activityWindow.all() ? LAST_ORDER_AGGREGATE_ALL_SQL : LAST_ORDER_AGGREGATE_SQL)
-                .param("accountIds", accountIds)
+        var statement = jdbcClient.sql(latestLookupSql(
+                        accountIds.size(),
+                        activityWindow.all() ? LAST_ORDER_LOOKUP_ALL_SQL : LAST_ORDER_LOOKUP_SQL,
+                        orderIndexHint
+                ))
                 .param("activityEnd", activityWindow.end());
+        for (int index = 0; index < accountIds.size(); index++) {
+            statement = statement.param("accountId" + index, accountIds.get(index));
+        }
         if (!activityWindow.all()) {
             statement = statement.param("activityStart", activityWindow.start());
         }
@@ -203,7 +233,7 @@ final class AutoParticipantAggregateQuerySupport {
                 .list());
         for (LastOrderAggregateRow row : rows) {
             T target = targetByAccountId.get(row.accountId());
-            if (target != null) {
+            if (target != null && row.lastOrderAt() != null) {
                 target.recordLastOrderAt(row.lastOrderAt());
             }
         }
@@ -313,17 +343,24 @@ final class AutoParticipantAggregateQuerySupport {
             ActivityWindow activityWindow,
             Map<Long, T> targetByAccountId
     ) {
-        var statement = jdbcClient.sql(activityWindow.all() ? LAST_EXECUTION_AGGREGATE_ALL_SQL : LAST_EXECUTION_AGGREGATE_SQL)
-                .param("accountIds", accountIds)
+        var statement = jdbcClient.sql(latestLookupSql(
+                        accountIds.size(),
+                        activityWindow.all() ? LAST_EXECUTION_LOOKUP_ALL_SQL : LAST_EXECUTION_LOOKUP_SQL,
+                        executionIndexHint
+                ))
                 .param("activityEnd", activityWindow.end());
+        for (int index = 0; index < accountIds.size(); index++) {
+            statement = statement.param("accountId" + index, accountIds.get(index));
+        }
         if (!activityWindow.all()) {
             statement = statement.param("activityStart", activityWindow.start());
         }
         statement
                 .query(rs -> {
                     T target = targetByAccountId.get(rs.getLong("account_id"));
-                    if (target != null) {
-                        target.recordLastExecutionAt(rs.getObject("last_execution_at", LocalDateTime.class));
+                    LocalDateTime lastExecutionAt = rs.getObject("last_execution_at", LocalDateTime.class);
+                    if (target != null && lastExecutionAt != null) {
+                        target.recordLastExecutionAt(lastExecutionAt);
                     }
                 });
     }
@@ -333,6 +370,22 @@ final class AutoParticipantAggregateQuerySupport {
             return currentValue;
         }
         return nextValue;
+    }
+
+    private String latestLookupSql(int accountCount, String template, String indexHint) {
+        return IntStream.range(0, accountCount)
+                .mapToObj(index -> template.formatted(index, accountIdCastType, indexHint, index))
+                .collect(Collectors.joining("\nunion all\n"));
+    }
+
+    private boolean isMysql(JdbcTemplate jdbcTemplate) {
+        if (jdbcTemplate == null) {
+            return false;
+        }
+        String productName = jdbcTemplate.execute(
+                (ConnectionCallback<String>) connection -> connection.getMetaData().getDatabaseProductName()
+        );
+        return productName != null && productName.toLowerCase(Locale.ROOT).contains("mysql");
     }
 
     private <T> List<T> queryListWithConnectionRetry(Supplier<List<T>> querySupplier) {

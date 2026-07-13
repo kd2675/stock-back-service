@@ -1,6 +1,7 @@
 package stock.back.service.market.vo;
 
 import stock.back.service.database.entity.ListingAutoPosition;
+import stock.back.service.database.entity.ListingAutoPriceDirection;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -23,6 +24,14 @@ public record ListingAutoAccountResponse(
         int maxOrderQuantity,
         int orderTtlSeconds,
         int priceOffsetTicks,
+        long targetBuyQuantity,
+        long targetSellQuantity,
+        long targetHoldingQuantity,
+        long inventoryBandQuantity,
+        long openBuyQuantity,
+        long openSellQuantity,
+        ListingAutoPriceDirection buyPriceOffsetDirection,
+        ListingAutoPriceDirection sellPriceOffsetDirection,
         LocalDateTime createdAt,
         LocalDateTime updatedAt
 ) {

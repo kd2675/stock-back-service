@@ -44,6 +44,26 @@ public class StockListingAutoAccountConfig {
     @Column(name = "price_offset_ticks", nullable = false)
     private Integer priceOffsetTicks;
 
+    @Column(name = "target_buy_quantity", nullable = false)
+    private Long targetBuyQuantity;
+
+    @Column(name = "target_sell_quantity", nullable = false)
+    private Long targetSellQuantity;
+
+    @Column(name = "target_holding_quantity", nullable = false)
+    private Long targetHoldingQuantity;
+
+    @Column(name = "inventory_band_quantity", nullable = false)
+    private Long inventoryBandQuantity;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "buy_price_offset_direction", nullable = false, length = 10)
+    private ListingAutoPriceDirection buyPriceOffsetDirection;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "sell_price_offset_direction", nullable = false, length = 10)
+    private ListingAutoPriceDirection sellPriceOffsetDirection;
+
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
 
@@ -72,6 +92,12 @@ public class StockListingAutoAccountConfig {
         config.maxOrderQuantity = maxOrderQuantity;
         config.orderTtlSeconds = 90;
         config.priceOffsetTicks = 3;
+        config.targetBuyQuantity = 0L;
+        config.targetSellQuantity = (long) maxOrderQuantity;
+        config.targetHoldingQuantity = 0L;
+        config.inventoryBandQuantity = 0L;
+        config.buyPriceOffsetDirection = ListingAutoPriceDirection.DOWN;
+        config.sellPriceOffsetDirection = ListingAutoPriceDirection.UP;
         config.createdAt = now;
         config.updatedAt = now;
         return config;
@@ -83,9 +109,29 @@ public class StockListingAutoAccountConfig {
             ListingAutoPosition positionSide,
             Integer maxOrderQuantity,
             Integer orderTtlSeconds,
-            Integer priceOffsetTicks
+            Integer priceOffsetTicks,
+            Long targetBuyQuantity,
+            Long targetSellQuantity,
+            Long targetHoldingQuantity,
+            Long inventoryBandQuantity,
+            ListingAutoPriceDirection buyPriceOffsetDirection,
+            ListingAutoPriceDirection sellPriceOffsetDirection
     ) {
-        update(displayName, enabled, positionSide, maxOrderQuantity, orderTtlSeconds, priceOffsetTicks, LocalDateTime.now());
+        update(
+                displayName,
+                enabled,
+                positionSide,
+                maxOrderQuantity,
+                orderTtlSeconds,
+                priceOffsetTicks,
+                targetBuyQuantity,
+                targetSellQuantity,
+                targetHoldingQuantity,
+                inventoryBandQuantity,
+                buyPriceOffsetDirection,
+                sellPriceOffsetDirection,
+                LocalDateTime.now()
+        );
     }
 
     public void update(
@@ -95,6 +141,12 @@ public class StockListingAutoAccountConfig {
             Integer maxOrderQuantity,
             Integer orderTtlSeconds,
             Integer priceOffsetTicks,
+            Long targetBuyQuantity,
+            Long targetSellQuantity,
+            Long targetHoldingQuantity,
+            Long inventoryBandQuantity,
+            ListingAutoPriceDirection buyPriceOffsetDirection,
+            ListingAutoPriceDirection sellPriceOffsetDirection,
             LocalDateTime updatedAt
     ) {
         if (displayName != null && !displayName.isBlank()) {
@@ -115,6 +167,46 @@ public class StockListingAutoAccountConfig {
         if (priceOffsetTicks != null) {
             this.priceOffsetTicks = priceOffsetTicks;
         }
+        if (targetBuyQuantity != null) {
+            this.targetBuyQuantity = targetBuyQuantity;
+        }
+        if (targetSellQuantity != null) {
+            this.targetSellQuantity = targetSellQuantity;
+        }
+        if (targetHoldingQuantity != null) {
+            this.targetHoldingQuantity = targetHoldingQuantity;
+        }
+        if (inventoryBandQuantity != null) {
+            this.inventoryBandQuantity = inventoryBandQuantity;
+        }
+        if (buyPriceOffsetDirection != null) {
+            this.buyPriceOffsetDirection = buyPriceOffsetDirection;
+        }
+        if (sellPriceOffsetDirection != null) {
+            this.sellPriceOffsetDirection = sellPriceOffsetDirection;
+        }
+        initializeTargetForNewPosition(positionSide, targetBuyQuantity, targetSellQuantity);
         this.updatedAt = updatedAt == null ? LocalDateTime.now() : updatedAt;
+    }
+
+    private void initializeTargetForNewPosition(
+            ListingAutoPosition requestedPosition,
+            Long requestedBuyTarget,
+            Long requestedSellTarget
+    ) {
+        if (requestedPosition == null) {
+            return;
+        }
+        long defaultTarget = Math.max(1, maxOrderQuantity == null ? 1 : maxOrderQuantity);
+        if ((requestedPosition == ListingAutoPosition.BUY_ONLY || requestedPosition == ListingAutoPosition.TWO_SIDED)
+                && requestedBuyTarget == null
+                && (targetBuyQuantity == null || targetBuyQuantity <= 0)) {
+            targetBuyQuantity = defaultTarget;
+        }
+        if ((requestedPosition == ListingAutoPosition.SELL_ONLY || requestedPosition == ListingAutoPosition.TWO_SIDED)
+                && requestedSellTarget == null
+                && (targetSellQuantity == null || targetSellQuantity <= 0)) {
+            targetSellQuantity = defaultTarget;
+        }
     }
 }

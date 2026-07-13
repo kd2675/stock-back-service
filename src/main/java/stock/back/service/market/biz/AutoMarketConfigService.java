@@ -57,10 +57,17 @@ public class AutoMarketConfigService {
                 request.positionSide(),
                 request.maxOrderQuantity(),
                 request.orderTtlSeconds(),
-                request.priceOffsetTicks()
+                request.priceOffsetTicks(),
+                request.targetBuyQuantity(),
+                request.targetSellQuantity(),
+                request.targetHoldingQuantity(),
+                request.inventoryBandQuantity(),
+                request.buyPriceOffsetDirection(),
+                request.sellPriceOffsetDirection()
         );
-        ListingAutoAccountConfigValidator.validate(config);
-        return toListingAutoAccountResponse(config);
+        long issuedShares = loadIssuedShares(config.getSymbol());
+        ListingAutoAccountConfigValidator.validate(config, issuedShares);
+        return toListingAutoAccountResponse(config, issuedShares);
     }
 
     @Transactional
@@ -166,7 +173,10 @@ public class AutoMarketConfigService {
         );
     }
 
-    private ListingAutoAccountResponse toListingAutoAccountResponse(StockListingAutoAccountConfig config) {
+    private ListingAutoAccountResponse toListingAutoAccountResponse(
+            StockListingAutoAccountConfig config,
+            long issuedShares
+    ) {
         ListingAutoAccountLedger ledger = listingAutoAccountLedgerQueryService.findLedger(config);
         return new ListingAutoAccountResponse(
                 config.getSymbol(),
@@ -174,7 +184,7 @@ public class AutoMarketConfigService {
                 config.getDisplayName(),
                 Boolean.TRUE.equals(config.getEnabled()),
                 config.getPositionSide(),
-                loadIssuedShares(config.getSymbol()),
+                issuedShares,
                 ledger.accountId(),
                 ledger.cashBalance(),
                 ledger.holdingQuantity(),
@@ -186,6 +196,14 @@ public class AutoMarketConfigService {
                 config.getMaxOrderQuantity(),
                 config.getOrderTtlSeconds(),
                 config.getPriceOffsetTicks(),
+                config.getTargetBuyQuantity(),
+                config.getTargetSellQuantity(),
+                config.getTargetHoldingQuantity(),
+                config.getInventoryBandQuantity(),
+                ledger.openBuyQuantity(),
+                ledger.openSellQuantity(),
+                config.getBuyPriceOffsetDirection(),
+                config.getSellPriceOffsetDirection(),
                 config.getCreatedAt(),
                 config.getUpdatedAt()
         );

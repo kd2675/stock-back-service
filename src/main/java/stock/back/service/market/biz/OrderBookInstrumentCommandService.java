@@ -198,9 +198,15 @@ public class OrderBookInstrumentCommandService {
                     request.maxOrderQuantity(),
                     request.orderTtlSeconds(),
                     request.priceOffsetTicks(),
+                    request.targetBuyQuantity(),
+                    request.targetSellQuantity(),
+                    request.targetHoldingQuantity(),
+                    request.inventoryBandQuantity(),
+                    request.buyPriceOffsetDirection(),
+                    request.sellPriceOffsetDirection(),
                     now
             );
-            ListingAutoAccountConfigValidator.validate(config);
+            ListingAutoAccountConfigValidator.validate(config, tradableShares);
         }
         stockListingAutoAccountConfigRepository.save(config);
     }

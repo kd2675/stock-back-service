@@ -30,7 +30,7 @@ public class AutoParticipantProfileOverviewQueryService {
             SimulationClockService simulationClockService
     ) {
         this.jdbcClient = JdbcClient.create(new NamedParameterJdbcTemplate(jdbcTemplate));
-        this.aggregateQuerySupport = new AutoParticipantAggregateQuerySupport(jdbcClient);
+        this.aggregateQuerySupport = new AutoParticipantAggregateQuerySupport(jdbcClient, jdbcTemplate);
         this.simulationClockService = simulationClockService;
     }
 

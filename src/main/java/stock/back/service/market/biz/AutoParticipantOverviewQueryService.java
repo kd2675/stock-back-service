@@ -36,7 +36,10 @@ public class AutoParticipantOverviewQueryService {
             SimulationClockService simulationClockService
     ) {
         this.jdbcClient = JdbcClient.create(namedParameterJdbcTemplate);
-        this.aggregateQuerySupport = new AutoParticipantAggregateQuerySupport(jdbcClient);
+        this.aggregateQuerySupport = new AutoParticipantAggregateQuerySupport(
+                jdbcClient,
+                namedParameterJdbcTemplate.getJdbcTemplate()
+        );
         this.autoMarketStatusDataLoader = autoMarketStatusDataLoader;
         this.autoParticipantHoldingQueryService = autoParticipantHoldingQueryService;
         this.autoParticipantProfileOverviewQueryService = autoParticipantProfileOverviewQueryService;

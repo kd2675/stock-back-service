@@ -96,7 +96,7 @@ public class TradingService {
 
     @Transactional
     public OrderResponse cancelOrder(String userKey, Long orderId) {
-        StockAccount account = accountService.requireAccount(userKey);
+        StockAccount account = accountService.requireAccountForUpdate(userKey);
         StockOrder order = stockOrderRepository.findByIdForUpdate(orderId)
                 .orElseThrow(() -> StockException.notFound("Order not found"));
         if (!order.getAccountId().equals(account.getId())) {
@@ -113,7 +113,7 @@ public class TradingService {
 
     @Transactional
     public OrderResponse amendOrder(String userKey, Long orderId, OrderAmendRequest request) {
-        StockAccount account = accountService.requireAccount(userKey);
+        StockAccount account = accountService.requireAccountForUpdate(userKey);
         StockOrder order = findOwnOpenOrderForUpdate(account.getId(), orderId);
         if (request == null || (request.quantity() == null && request.limitPrice() == null)) {
             throw StockException.badRequest("Order amendment requires quantity or limit price");
@@ -145,7 +145,7 @@ public class TradingService {
 
     @Transactional
     public OrderResponse cancelOrderPartially(String userKey, Long orderId, OrderCancelRequest request) {
-        StockAccount account = accountService.requireAccount(userKey);
+        StockAccount account = accountService.requireAccountForUpdate(userKey);
         StockOrder order = findOwnOpenOrderForUpdate(account.getId(), orderId);
         if (request == null || request.quantity() == null || request.quantity() <= 0) {
             throw StockException.badRequest("Cancel quantity must be positive");

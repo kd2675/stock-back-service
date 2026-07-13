@@ -942,12 +942,14 @@ class MarketServiceTest {
                 .contains("and market_type = 'ORDER_BOOK'")
                 .contains("and status in ('PENDING', 'PARTIALLY_FILLED')")
                 .doesNotContain("sum(case when status in");
-        assertThat(AutoParticipantAggregateQuerySupport.LAST_ORDER_AGGREGATE_SQL)
-                .contains("max(created_at) as last_order_at")
+        assertThat(AutoParticipantAggregateQuerySupport.LAST_ORDER_LOOKUP_SQL)
+                .contains("order by created_at desc")
+                .contains("limit 1")
                 .contains("created_at >= :activityStart")
                 .contains("created_at <= :activityEnd")
+                .doesNotContainIgnoringCase("as bigint")
                 .doesNotContain("status in ('PENDING', 'PARTIALLY_FILLED')");
-        assertThat(AutoParticipantAggregateQuerySupport.LAST_ORDER_AGGREGATE_ALL_SQL)
+        assertThat(AutoParticipantAggregateQuerySupport.LAST_ORDER_LOOKUP_ALL_SQL)
                 .contains("created_at <= :activityEnd")
                 .doesNotContain("created_at >= :activityStart");
     }
@@ -958,12 +960,14 @@ class MarketServiceTest {
                 .contains("and executed_at >= :todayStart")
                 .contains("and executed_at <= :todayEnd")
                 .doesNotContain("sum(case when executed_at >= :todayStart");
-        assertThat(AutoParticipantAggregateQuerySupport.LAST_EXECUTION_AGGREGATE_SQL)
-                .contains("max(executed_at) as last_execution_at")
+        assertThat(AutoParticipantAggregateQuerySupport.LAST_EXECUTION_LOOKUP_SQL)
+                .contains("order by executed_at desc")
+                .contains("limit 1")
                 .contains("executed_at >= :activityStart")
                 .contains("executed_at <= :activityEnd")
+                .doesNotContainIgnoringCase("as bigint")
                 .doesNotContain("todayStart");
-        assertThat(AutoParticipantAggregateQuerySupport.LAST_EXECUTION_AGGREGATE_ALL_SQL)
+        assertThat(AutoParticipantAggregateQuerySupport.LAST_EXECUTION_LOOKUP_ALL_SQL)
                 .contains("executed_at <= :activityEnd")
                 .doesNotContain("executed_at >= :activityStart");
     }

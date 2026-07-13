@@ -34,6 +34,8 @@ class ListingAutoAccountLedgerQueryServiceTest {
             when(resultSet.getLong("reserved_quantity")).thenReturn(1200L);
             when(resultSet.getBigDecimal("average_price")).thenReturn(new BigDecimal("70000.00"));
             when(resultSet.getBigDecimal("current_price")).thenReturn(new BigDecimal("72000.00"));
+            when(resultSet.getLong("open_buy_quantity")).thenReturn(3000L);
+            when(resultSet.getLong("open_sell_quantity")).thenReturn(1200L);
             return List.of(rowMapper.mapRow(resultSet, 0));
         });
 
@@ -44,5 +46,7 @@ class ListingAutoAccountLedgerQueryServiceTest {
         assertThat(ledger.accountId()).isEqualTo(77L);
         assertThat(ledger.availableQuantity()).isEqualTo(98800L);
         assertThat(ledger.marketValue()).isEqualByComparingTo(new BigDecimal("7200000000.00"));
+        assertThat(ledger.openBuyQuantity()).isEqualTo(3000L);
+        assertThat(ledger.openSellQuantity()).isEqualTo(1200L);
     }
 }

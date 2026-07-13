@@ -26,6 +26,7 @@
 - 홈: 현재가 기반 `VIRTUAL_PRICE` 시장
 - `/supply-demand`: 수요/공급 `ORDER_BOOK` 시장
 - `/supply-demand/admin`: 관리자 종목/기업 이벤트/평가 보고서 화면
+- `/reports`: 공개 종목 시장 보고서와 시가총액 비교 화면
 
 ## 핵심 원칙
 
@@ -48,6 +49,7 @@
 - `07-auto-market.md`: 자동 참여자와 자동장
 - `08-corporate-actions.md`: 기업 이벤트
 - `18-instrument-report-events.md`: 종목 평가 보고서 이벤트
+- `19-instrument-market-analytics-report.md`: 공개 종목 시장 분석 보고서의 원장, 산식, 한계, 검증
 - `09-portfolio-settlement-ranking.md`: 정산과 랭킹
 - `10-frontend-workspace.md`: 프론트 화면/API 구조
 - `11-market-session-status.md`: 장 상태와 거래정지
@@ -105,6 +107,7 @@
 - 종목별 장 상태: 정규장, 마감, 거래정지
 - 주문장 종목 생성
 - 주문장 종목 평가 보고서 이벤트와 최신 보고서 조회
+- 주문장 종목 시가총액·당일 거래·호가 수급 시장 보고서 조회
 - 자동 참여자 주문 생성
 - Redis 최신가 캐시와 가격 event 발행
 - 기업 이벤트 일부: 초기 발행, 유상증자, 액면분할, 현금배당, 무상증자, 주식배당, 상장폐지

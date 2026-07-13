@@ -9,6 +9,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
 import stock.back.service.common.exception.StockException;
 import stock.back.service.database.entity.ListingAutoPosition;
+import stock.back.service.database.entity.ListingAutoPriceDirection;
 import stock.back.service.database.entity.StockAutoMarketConfig;
 import stock.back.service.database.entity.StockListingAutoAccountConfig;
 import stock.back.service.database.repository.StockAutoMarketConfigRepository;
@@ -216,7 +217,20 @@ class AutoMarketConfigServiceTest {
 
         var response = service.updateListingAutoAccountConfig(
                 "zq001",
-                new ListingAutoAccountRequest(" 신규 상장주관사 ", true, ListingAutoPosition.SELL_ONLY, 50, 20, 2)
+                new ListingAutoAccountRequest(
+                        " 신규 상장주관사 ",
+                        true,
+                        ListingAutoPosition.TWO_SIDED,
+                        50,
+                        20,
+                        2,
+                        120L,
+                        80L,
+                        50000L,
+                        120L,
+                        ListingAutoPriceDirection.UP,
+                        ListingAutoPriceDirection.DOWN
+                )
         );
 
         assertThat(response.symbol()).isEqualTo("ZQ001");
@@ -225,6 +239,13 @@ class AutoMarketConfigServiceTest {
         assertThat(response.availableQuantity()).isEqualTo(80L);
         assertThat(response.marketValue()).isEqualByComparingTo(new BigDecimal("7200000.00"));
         assertThat(response.maxOrderQuantity()).isEqualTo(50);
+        assertThat(response.positionSide()).isEqualTo(ListingAutoPosition.TWO_SIDED);
+        assertThat(response.targetBuyQuantity()).isEqualTo(120L);
+        assertThat(response.targetSellQuantity()).isEqualTo(80L);
+        assertThat(response.targetHoldingQuantity()).isEqualTo(50000L);
+        assertThat(response.inventoryBandQuantity()).isEqualTo(120L);
+        assertThat(response.buyPriceOffsetDirection()).isEqualTo(ListingAutoPriceDirection.UP);
+        assertThat(response.sellPriceOffsetDirection()).isEqualTo(ListingAutoPriceDirection.DOWN);
     }
 
     @Test
@@ -245,5 +266,97 @@ class AutoMarketConfigServiceTest {
                 .hasMessageContaining("Listing auto account order TTL seconds must be positive");
 
         verify(listingAutoAccountLedgerQueryService, never()).findLedger(any());
+    }
+
+    @Test
+    void updateListingAutoAccountConfig_twoSidedWithoutBuyTarget_throwsBadRequest() {
+        StockListingAutoAccountConfig config = StockListingAutoAccountConfig.defaults(
+                "ZQ001",
+                "stock-listing-zq001",
+                "상장주관사",
+                100000L
+        );
+        when(stockListingAutoAccountConfigRepository.findById("ZQ001")).thenReturn(Optional.of(config));
+
+        assertThatThrownBy(() -> service.updateListingAutoAccountConfig(
+                "zq001",
+                new ListingAutoAccountRequest(
+                        "상장주관사",
+                        true,
+                        ListingAutoPosition.TWO_SIDED,
+                        50,
+                        20,
+                        2,
+                        0L,
+                        80L,
+                        0L,
+                        ListingAutoPriceDirection.DOWN,
+                        ListingAutoPriceDirection.UP
+                )
+        ))
+                .isInstanceOf(StockException.class)
+                .hasMessageContaining("active buy side requires a positive target quantity");
+    }
+
+    @Test
+    void updateListingAutoAccountConfig_twoSidedWithoutInventoryBand_throwsBadRequest() {
+        StockListingAutoAccountConfig config = StockListingAutoAccountConfig.defaults(
+                "ZQ001",
+                "stock-listing-zq001",
+                "상장주관사",
+                100000L
+        );
+        when(stockListingAutoAccountConfigRepository.findById("ZQ001")).thenReturn(Optional.of(config));
+
+        assertThatThrownBy(() -> service.updateListingAutoAccountConfig(
+                "zq001",
+                new ListingAutoAccountRequest(
+                        "상장주관사",
+                        true,
+                        ListingAutoPosition.TWO_SIDED,
+                        50,
+                        20,
+                        2,
+                        80L,
+                        80L,
+                        50000L,
+                        0L,
+                        ListingAutoPriceDirection.DOWN,
+                        ListingAutoPriceDirection.UP
+                )
+        ))
+                .isInstanceOf(StockException.class)
+                .hasMessageContaining("requires a positive inventory band quantity");
+    }
+
+    @Test
+    void updateListingAutoAccountConfig_quoteTargetAboveInventoryBand_throwsBadRequest() {
+        StockListingAutoAccountConfig config = StockListingAutoAccountConfig.defaults(
+                "ZQ001",
+                "stock-listing-zq001",
+                "상장주관사",
+                100000L
+        );
+        when(stockListingAutoAccountConfigRepository.findById("ZQ001")).thenReturn(Optional.of(config));
+
+        assertThatThrownBy(() -> service.updateListingAutoAccountConfig(
+                "zq001",
+                new ListingAutoAccountRequest(
+                        "상장주관사",
+                        true,
+                        ListingAutoPosition.TWO_SIDED,
+                        50,
+                        20,
+                        2,
+                        120L,
+                        80L,
+                        50000L,
+                        100L,
+                        ListingAutoPriceDirection.DOWN,
+                        ListingAutoPriceDirection.UP
+                )
+        ))
+                .isInstanceOf(StockException.class)
+                .hasMessageContaining("buy quote target cannot exceed inventory band quantity");
     }
 }

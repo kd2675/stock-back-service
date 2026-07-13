@@ -200,12 +200,28 @@ class StockMysqlDdlContractTest {
         String ddl = readStockAllSql();
 
         assertThat(ddl).contains("KEY idx_stock_price_tick_symbol_time_id (symbol, price_time, id)");
+        assertThat(ddl).contains("KEY idx_stock_order_account_market_created (account_id, market_type, created_at)");
+        assertThat(ddl).contains("KEY idx_stock_execution_account_source_time (account_id, source, executed_at)");
+        assertThat(ddl).contains("KEY idx_stock_execution_candle (source, symbol, side, executed_at, id, price, quantity, gross_amount)");
         assertThat(ddl).contains("KEY idx_stock_order_order_book_match (market_type, symbol, side, status, order_type, limit_price, created_at, id)");
         assertThat(ddl).contains("KEY idx_stock_order_order_book_expiry (market_type, symbol, created_at, id, status, account_id)");
         assertThat(ddl).contains(ADMIN_QUERY_INDEX_MARKERS.toArray(String[]::new));
         assertThat(ddl).contains(BATCH_OPERATION_TABLE_MARKERS.toArray(String[]::new));
         assertThat(ddl).contains(SIMULATION_CLOCK_TABLE_MARKERS.toArray(String[]::new));
         assertThat(ddl).contains(MARKET_CLOSE_SNAPSHOT_TABLE_MARKERS.toArray(String[]::new));
+        assertThat(ddl).contains(
+                "target_buy_quantity BIGINT NOT NULL",
+                "target_sell_quantity BIGINT NOT NULL",
+                "target_holding_quantity BIGINT NOT NULL",
+                "inventory_band_quantity BIGINT NOT NULL",
+                "buy_price_offset_direction VARCHAR(10) NOT NULL",
+                "sell_price_offset_direction VARCHAR(10) NOT NULL",
+                "WHEN 'TWO_SIDED' THEN 1",
+                "chk_stock_listing_auto_account_target_buy",
+                "chk_stock_listing_auto_account_target_sell",
+                "chk_stock_listing_auto_account_target_holding",
+                "chk_stock_listing_auto_account_inventory_band"
+        );
         assertThat(ddl).doesNotContain(
                 DEFAULT_SEED_MARKERS.toArray(String[]::new)
         );
@@ -351,6 +367,28 @@ class StockMysqlDdlContractTest {
                 "information_schema.statistics",
                 "ADD INDEX idx_stock_price_tick_symbol_time_id (symbol, price_time, id)",
                 "DROP INDEX idx_stock_price_tick_symbol_time"
+        );
+    }
+
+    @Test
+    void activityLatestLookupAlterDdl_isIdempotentAndMatchesBatchCopy() throws IOException {
+        String backDdl = Files.readString(
+                Path.of("src/main/resources/db/ddl/stock_activity_latest_lookup_alter.sql"),
+                StandardCharsets.UTF_8
+        );
+        String batchDdl = Files.readString(
+                Path.of("../stock-batch-service/src/main/resources/db/ddl/stock_activity_latest_lookup_alter.sql"),
+                StandardCharsets.UTF_8
+        );
+
+        assertThat(normalizeSqlBlock(batchDdl)).isEqualTo(normalizeSqlBlock(backDdl));
+        assertThat(backDdl).contains(
+                "USE STOCK_SERVICE",
+                "information_schema.statistics",
+                "ADD INDEX idx_stock_order_account_market_created (account_id, market_type, created_at)",
+                "ADD INDEX idx_stock_execution_account_source_time (account_id, source, executed_at)",
+                "ADD INDEX idx_stock_execution_candle (source, symbol, side, executed_at, id, price, quantity, gross_amount)",
+                "SELECT 1"
         );
     }
 

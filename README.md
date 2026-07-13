@@ -20,6 +20,7 @@
 - `POST /api/stock/v1/markets/order-book-instruments` (`ADMIN`)
 - `POST /api/stock/v1/markets/order-book-instruments/{symbol}/corporate-actions` (`ADMIN`)
 - `GET /api/stock/v1/markets/order-book-instruments/{symbol}/corporate-actions`
+- `GET /api/stock/v1/markets/order-book-instruments/{symbol}/market-report`
 - `GET /api/stock/v1/markets/corporate-actions` (`actionType`, `limit` optional)
 - `GET /api/stock/v1/markets/order-book-instruments/{symbol}/reports`
 - `GET /api/stock/v1/markets/order-book-instruments/{symbol}/reports/latest`
@@ -72,6 +73,8 @@ scripts/stock-smoke.sh
 | `dev` | `20480` |
 | `prod` | `10480` |
 | `test` | `30480` |
+
+파일 로그의 공통 루트는 `STOCK_LOG_ROOT`로 지정할 수 있고 기본값은 실행 디렉터리의 `logs`입니다. 서비스별 경로를 직접 지정하려면 `STOCK_BACK_LOG_DIR`을 사용합니다. 여러 프로세스를 같은 날짜에 실행할 때는 `STOCK_INSTANCE_ID`를 지정하면 모든 파일 로그 행의 PID·포트와 함께 인스턴스가 표시됩니다. 테스트 프로필은 파일 로그를 기록하지 않습니다.
 
 ## Local Direct / Gateway 전환
 
@@ -134,6 +137,7 @@ scripts/stock-smoke.sh
 - 주문장 조회는 미체결/부분체결 LIMIT 주문을 가격대별로 집계하며, 매수는 높은 가격 우선, 매도는 낮은 가격 우선으로 반환합니다.
 - 주문장 종목 생성과 기업 이벤트 적용은 관리자 전용 쓰기 API입니다. 읽기 API는 사용자 화면 조회를 위해 공개로 둡니다.
 - 주문장 종목 평가 보고서는 `PUBLISH`, `UPDATE`, `DELETE` 이벤트로 기록합니다. 최신 이벤트가 삭제가 아니면 그 보고서가 현재 기준이며, 보고서가 없거나 최신 이벤트가 삭제이면 자동장은 참여자 성향만 사용합니다.
+- 공개 종목 시장 보고서는 최신 전체 장마감일을 기준으로 종가·거래실적, 5/20/60일 성과, 기간 체결 빈도, 참가자 유형별 수급, 마감 보유 집중도, 기준일까지의 기업 이벤트, 동일 기준일 전 종목 순위와 데이터 품질을 반환합니다. 현재 호가·호가 깊이·슬리피지·현재 미체결 주문·주관사 운영값과 주문 집행 품질은 보고서에 섞지 않습니다. 전체 계약과 산식은 `docs/market-simulation/19-instrument-market-analytics-report.md`를 따르며 원장이 없는 재무·호가 지표는 추정하지 않습니다.
 - 주문장 종목은 `tick_size`, `price_limit_rate`를 가지며, LIMIT 주문 접수/정정 시 호가 단위와 일일 가격제한폭을 검증합니다.
 - 현재가 시장은 초기 기본값으로 1원 tick과 `stock_price.previous_close` 기준 ±30% 가격제한폭을 사용합니다.
 - 주문 원장은 공유하되 `stock_order.market_type`으로 `VIRTUAL_PRICE`와 `ORDER_BOOK` 주문을 분리합니다.

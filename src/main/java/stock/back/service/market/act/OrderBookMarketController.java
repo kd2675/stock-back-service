@@ -16,6 +16,7 @@ import stock.back.service.market.biz.AutoMarketStatusQueryService;
 import stock.back.service.market.biz.MarketCatalogQueryService;
 import stock.back.service.market.biz.OrderBookCandleQueryService;
 import stock.back.service.market.biz.OrderBookInstrumentCommandService;
+import stock.back.service.market.biz.InstrumentMarketReportQueryService;
 import stock.back.service.market.biz.OrderBookMarketStatusQueryService;
 import stock.back.service.market.biz.OrderBookQueryService;
 import stock.back.service.market.vo.AutoMarketStatusResponse;
@@ -24,6 +25,7 @@ import stock.back.service.market.vo.OrderBookInstrumentRequest;
 import stock.back.service.market.vo.OrderBookInstrumentResponse;
 import stock.back.service.market.vo.OrderBookInstrumentTradingRulesRequest;
 import stock.back.service.market.vo.OrderBookMarketStatusResponse;
+import stock.back.service.market.vo.InstrumentMarketReportResponse;
 import stock.back.service.market.vo.OrderBookRecentExecutionResponse;
 import stock.back.service.market.vo.OrderBookResponse;
 import stock.back.service.market.vo.OrderBookTradeSummaryResponse;
@@ -42,10 +44,16 @@ public class OrderBookMarketController {
     private final OrderBookCandleQueryService orderBookCandleQueryService;
     private final OrderBookMarketStatusQueryService orderBookMarketStatusQueryService;
     private final AutoMarketStatusQueryService autoMarketStatusQueryService;
+    private final InstrumentMarketReportQueryService instrumentMarketReportQueryService;
 
     @GetMapping("/order-book-instruments")
     public ResponseDataDTO<List<OrderBookInstrumentResponse>> getOrderBookInstruments() {
         return ResponseDataDTO.of(marketCatalogQueryService.getOrderBookInstruments());
+    }
+
+    @GetMapping("/order-book-instruments/{symbol}/market-report")
+    public ResponseDataDTO<InstrumentMarketReportResponse> getInstrumentMarketReport(@PathVariable String symbol) {
+        return ResponseDataDTO.of(instrumentMarketReportQueryService.getInstrumentMarketReport(symbol));
     }
 
     @PostMapping("/order-book-instruments")
