@@ -233,7 +233,6 @@ class MarketServiceTest {
                         stockOrderBookInstrumentRepository,
                         new ListingAutoAccountLedgerQueryService(jdbcTemplate),
                         simulationClockService,
-                        simulationMarketSessionService,
                         commandJdbcTemplate
                 ),
                 new MarketStatusService(
@@ -601,7 +600,7 @@ class MarketServiceTest {
     @Test
     void getAutoMarketStatus_withoutSavedParticipantSymbolConfig_returnsEffectiveFallbackStrategies() {
         StockAutoMarketConfig marketConfig = StockAutoMarketConfig.defaults("ZQ001");
-        marketConfig.update(true, 7, 4, 15);
+        marketConfig.update(true, 4, 15);
         LocalDateTime updatedAt = LocalDateTime.of(2026, 6, 30, 9, 30);
         when(stockAutoMarketConfigRepository.findAll()).thenReturn(List.of(marketConfig));
         stubAutoParticipantStatusQuery(new AutoParticipantResponse(
@@ -633,7 +632,7 @@ class MarketServiceTest {
         assertThat(response.participantSymbolConfigs()).hasSize(1);
         assertThat(response.participantSymbolConfigs().get(0).userKey()).isEqualTo("stock-auto-001");
         assertThat(response.participantSymbolConfigs().get(0).symbol()).isEqualTo("ZQ001");
-        assertThat(response.participantSymbolConfigs().get(0).intensity()).isEqualTo(7);
+        assertThat(response.participantSymbolConfigs().get(0).intensity()).isEqualTo(5);
         assertThat(response.enabledParticipantCount()).isEqualTo(1L);
         verify(stockAutoParticipantRepository, never()).findByWithdrawnAtIsNullOrderByUserKeyAsc();
         verify(stockAccountRepository, never()).findAllByUserKeyIn(org.mockito.ArgumentMatchers.anyCollection());
@@ -643,7 +642,7 @@ class MarketServiceTest {
     @Test
     void getAutoMarketStatus_withDailyRegime_includesGeneratedRandomValues() throws Exception {
         StockAutoMarketConfig marketConfig = StockAutoMarketConfig.defaults("ZQ001");
-        marketConfig.update(true, 8, 5, 90);
+        marketConfig.update(true, 5, 90);
         when(stockAutoMarketConfigRepository.findAll()).thenReturn(List.of(marketConfig));
         stubAutoParticipantStatusQuery();
         when(stockOrderRepository.countOpenAutoOrders(any(), any())).thenReturn(0L);
@@ -654,13 +653,12 @@ class MarketServiceTest {
             ResultSet resultSet = mock(ResultSet.class);
             when(resultSet.getString("symbol")).thenReturn("ZQ001");
             when(resultSet.getObject("simulation_trade_date", LocalDate.class)).thenReturn(LocalDate.of(2026, 7, 7));
-            when(resultSet.getString("regime_phase")).thenReturn("OPENING");
-            when(resultSet.getString("price_direction")).thenReturn("UP");
-            when(resultSet.getString("asset_preference")).thenReturn("STOCK");
-            when(resultSet.getInt("direction_intensity")).thenReturn(8);
-            when(resultSet.getInt("volatility_level")).thenReturn(6);
-            when(resultSet.getInt("liquidity_level")).thenReturn(4);
-            when(resultSet.getInt("execution_aggression_level")).thenReturn(7);
+            when(resultSet.getString("regime_phase")).thenReturn("SLOT_0600");
+            when(resultSet.getInt("price_pressure")).thenReturn(80);
+            when(resultSet.getInt("asset_preference_pressure")).thenReturn(70);
+            when(resultSet.getInt("volatility_pressure")).thenReturn(20);
+            when(resultSet.getInt("liquidity_pressure")).thenReturn(-20);
+            when(resultSet.getInt("execution_aggression_pressure")).thenReturn(40);
             when(resultSet.getLong("seed")).thenReturn(1234567890123456789L);
             when(resultSet.getObject("created_at", LocalDateTime.class)).thenReturn(LocalDateTime.of(2026, 7, 7, 5, 30));
             when(resultSet.getObject("updated_at", LocalDateTime.class)).thenReturn(LocalDateTime.of(2026, 7, 7, 5, 30));
@@ -677,10 +675,10 @@ class MarketServiceTest {
 
         assertThat(response.configs()).hasSize(1);
         assertThat(response.configs().get(0).dailyRegime()).isNotNull();
-        assertThat(response.configs().get(0).dailyRegime().regimePhase()).isEqualTo("OPENING");
-        assertThat(response.configs().get(0).dailyRegime().priceDirection()).isEqualTo("UP");
-        assertThat(response.configs().get(0).dailyRegime().assetPreference()).isEqualTo("STOCK");
-        assertThat(response.configs().get(0).dailyRegime().executionAggressionLevel()).isEqualTo(7);
+        assertThat(response.configs().get(0).dailyRegime().regimePhase()).isEqualTo("SLOT_0600");
+        assertThat(response.configs().get(0).dailyRegime().pricePressure()).isEqualTo(80);
+        assertThat(response.configs().get(0).dailyRegime().assetPreferencePressure()).isEqualTo(70);
+        assertThat(response.configs().get(0).dailyRegime().executionAggressionPressure()).isEqualTo(40);
         assertThat(response.configs().get(0).dailyRegime().seed()).isEqualTo("1234567890123456789");
     }
 

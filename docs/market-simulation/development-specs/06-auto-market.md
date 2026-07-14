@@ -21,13 +21,14 @@
 2. `stock_auto_market_config.enabled = true`이고 주문장 market status가 `OPEN`인 종목을 찾는다.
 3. 자동 참여자 계좌가 없으면 `cash_balance = 0`인 계좌만 만든다.
 4. 오래된 자동 주문은 TTL 기준으로 취소하고 예약 현금/예약 수량을 해제한다.
-5. 참여자별-종목별 intensity와 최신 활성 평가 보고서 점수로 유효 강도를 계산한다.
-6. 평가 보고서가 없거나 최신 이벤트가 `DELETE`이면 참여자 intensity만 사용한다.
-7. 자동 참여자 `profile_type`에 맞는 `AutoProfileBehavior` 구현체를 찾고, 그 구현체가 유효 강도, 주문 수, 매수/매도 방향, 수량 상한, TTL을 결정한다.
-8. intensity 10은 해당 참여자의 매수 우위/공격적 매수가로 상승 압력을 만들고, intensity 1은 보유가 있는 참여자의 매도 우위/공격적 매도가로 하락 압력을 만든다.
-9. 현재가, 전일종가, 최우선 매수/매도, 호가 잔량, 평균단가, 종목별 tick size 기준으로 자동 주문 방향과 가격을 만든다.
-10. 자동 주문을 `stock_order`에 넣는다.
-11. 같은 job 안에서 `InternalOrderBookExecutionService.executeEligibleOrders()`를 호출해 바로 매칭을 시도한다.
+5. 시뮬레이션 시각 06·09·12·15시 구간별 주 압력과 30분 구간별 보조 압력을 생성하거나 읽는다.
+6. 각 압력은 가격·자산 선호·변동성·유동성·체결 공격성 -100~100이며, 관리자 편향을 최빈값으로 쓰는 삼각분포에서 추출한다.
+7. 주 압력 60%와 보조 압력 40%를 항목별로 합성한다.
+8. 참여자별-종목별 주문 활동 강도와 최신 활성 평가 보고서 점수, 프로필 정책을 함께 읽는다. 명시 강도가 없으면 5를 쓴다.
+9. 자동 참여자 `profile_type`에 맞는 `AutoProfileBehavior` 구현체가 주문 수, 매수/매도 방향, 수량 상한, TTL을 결정한다.
+10. 현재가, 전일종가, 최우선 매수/매도, 호가 잔량, 평균단가, 종목별 tick size 기준으로 자동 주문 방향과 가격을 만든다.
+11. 자동 주문을 `stock_order`에 넣고 ready-symbol 큐에 종목을 등록한다.
+12. 상시 체결 worker가 큐를 받아 주문장 매칭을 시도한다.
 
 ## 현재 설정
 
@@ -42,14 +43,14 @@
 - 자동 참여자 주기 입금은 주문 생성 job과 분리된 `auto-participant-cash-flow` job에서 처리한다. 어드민은 stock-back 프록시 API를 통해 batch의 `auto-participant-cash-flow/status`를 조회/변경하고, `auto-participant-cash-flow/run`을 수동 실행한다. `runtime_enabled=false`는 스케줄러 자동 실행을 건너뛰게 하는 운영 제어값이며, 수동 run API는 관리자 명시 실행으로 별도 허용한다.
 - stock-batch job 중복 실행 방지는 JVM 메모리 락이 아니라 `stock_batch_job_lock` DB 테이블 기준으로 처리한다. 배치 서버가 여러 대 떠도 같은 job은 하나만 실행되어야 한다.
 - 자동 참여자 심리 프로필: `stock_auto_participant.profile_type`
-- 참여자별-종목별 가동/강도: `stock_auto_participant_symbol_config`
+- 참여자별-종목별 가동/주문 활동 강도: `stock_auto_participant_symbol_config`
 - 종목별 최신 평가 보고서 점수: `stock_instrument_report_event`
-- 종목별 자동장 가동/기본 강도/최대 수량/TTL: `stock_auto_market_config`
+- 종목별 자동장 가동/주·보조 압력 분포 편향/최대 수량/TTL: `stock_auto_market_config`
 - 종목별 tick size: `stock_order_book_instrument`
 
 ## 자동 참여자 프로필
 
-각 프로필은 `stock-batch-service/src/main/java/stock/batch/service/automarket/profile` 아래의 별도 `*Behavior` 클래스로 구현한다. 공통 서비스가 하나의 가중치 공식으로 모든 프로필을 처리하지 않는다. `AbstractAutoProfileBehavior`는 현금/보유 제약, 강한 관리자 override, 기본 강도 압력 같은 공통 불변식만 제공하고, 프로필별 핵심 판단은 각 behavior 클래스가 override한다.
+각 프로필은 `stock-batch-service/src/main/java/stock/batch/service/automarket/profile` 아래의 별도 `*Behavior` 클래스로 구현한다. 공통 서비스가 하나의 가중치 공식으로 모든 프로필을 처리하지 않는다. `AbstractAutoProfileBehavior`는 현금/보유 제약, 강한 관리자 override, 기본 활동도 같은 공통 불변식만 제공하고, 프로필별 핵심 판단은 각 behavior 클래스가 override한다.
 
 | 프로필 | 실제 반영 신호 |
 | --- | --- |

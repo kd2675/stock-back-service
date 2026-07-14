@@ -59,7 +59,7 @@ public class AutoParticipantSymbolConfigService {
                 .orElseGet(() -> StockAutoParticipantSymbolConfig.defaults(
                         normalizedUserKey,
                         normalizedSymbol,
-                        marketConfig.getIntensity() == null ? 5 : marketConfig.getIntensity()
+                        5
                 ));
         config.update(request == null ? null : request.enabled(), intensity);
         return toAutoParticipantSymbolConfigResponse(stockAutoParticipantSymbolConfigRepository.save(config));

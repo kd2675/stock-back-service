@@ -2,8 +2,9 @@ package stock.back.service.market.vo;
 
 public record AutoMarketConfigUpdateRequest(
         Boolean enabled,
-        Integer intensity,
         Integer maxOrderQuantity,
-        Integer orderTtlSeconds
+        Integer orderTtlSeconds,
+        AutoMarketDistributionBiasRequest primaryDistributionBias,
+        AutoMarketDistributionBiasRequest secondaryDistributionBias
 ) {
 }

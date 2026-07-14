@@ -470,9 +470,15 @@ class StockBackAuthorizationBoundaryTest {
                         .content("""
                                 {
                                   "enabled": true,
-                                  "intensity": 10,
                                   "maxOrderQuantity": 3,
-                                  "orderTtlSeconds": 15
+                                  "orderTtlSeconds": 15,
+                                  "primaryDistributionBias": {
+                                    "pricePressure": 75,
+                                    "assetPreferencePressure": 0,
+                                    "volatilityPressure": 0,
+                                    "liquidityPressure": 0,
+                                    "executionAggressionPressure": 0
+                                  }
                                 }
                                 """))
                 .andExpect(status().isForbidden())
@@ -490,14 +496,20 @@ class StockBackAuthorizationBoundaryTest {
                         .content("""
                                 {
                                   "enabled": true,
-                                  "intensity": 10,
                                   "maxOrderQuantity": 3,
-                                  "orderTtlSeconds": 15
+                                  "orderTtlSeconds": 15,
+                                  "primaryDistributionBias": {
+                                    "pricePressure": 75,
+                                    "assetPreferencePressure": 0,
+                                    "volatilityPressure": 0,
+                                    "liquidityPressure": 0,
+                                    "executionAggressionPressure": 0
+                                  }
                                 }
                                 """))
                 .andExpect(status().isOk())
                 .andExpect(content().string(containsString("\"symbol\":\"ZQAUTH05\"")))
-                .andExpect(content().string(containsString("\"intensity\":10")));
+                .andExpect(content().string(containsString("\"pricePressure\":75")));
     }
 
     @Test

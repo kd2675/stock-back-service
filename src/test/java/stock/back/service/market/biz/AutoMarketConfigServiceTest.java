@@ -51,9 +51,6 @@ class AutoMarketConfigServiceTest {
     private SimulationClockService simulationClockService;
 
     @Mock
-    private SimulationMarketSessionService simulationMarketSessionService;
-
-    @Mock
     private JdbcTemplate jdbcTemplate;
 
     private AutoMarketConfigService service;
@@ -66,11 +63,8 @@ class AutoMarketConfigServiceTest {
                 stockOrderBookInstrumentRepository,
                 listingAutoAccountLedgerQueryService,
                 simulationClockService,
-                simulationMarketSessionService,
                 jdbcTemplate
         );
-        lenient().when(simulationMarketSessionService.openTime()).thenReturn(java.time.LocalTime.of(6, 0));
-        lenient().when(simulationMarketSessionService.closeTime()).thenReturn(java.time.LocalTime.of(18, 0));
     }
 
     @Test
@@ -82,40 +76,52 @@ class AutoMarketConfigServiceTest {
 
         var response = service.updateAutoMarketConfig(
                 " zq001 ",
-                new AutoMarketConfigUpdateRequest(false, 9, 1000, 30)
+                new AutoMarketConfigUpdateRequest(
+                        false,
+                        1000,
+                        30,
+                        new stock.back.service.market.vo.AutoMarketDistributionBiasRequest(90, -20, 10, 0, 40),
+                        new stock.back.service.market.vo.AutoMarketDistributionBiasRequest(-30, 20, 0, 10, -10)
+                )
         );
 
         assertThat(response.symbol()).isEqualTo("ZQ001");
         assertThat(response.enabled()).isFalse();
-        assertThat(response.intensity()).isEqualTo(9);
+        assertThat(response.primaryDistributionBias().pricePressure()).isEqualTo(90);
+        assertThat(response.secondaryDistributionBias().pricePressure()).isEqualTo(-30);
         assertThat(response.maxOrderQuantity()).isEqualTo(1000);
         assertThat(response.orderTtlSeconds()).isEqualTo(30);
         verify(stockAutoMarketConfigRepository).save(any(StockAutoMarketConfig.class));
     }
 
     @Test
-    void updateAutoMarketConfig_invalidIntensity_throwsBadRequest() {
+    void updateAutoMarketConfig_invalidDistributionBias_throwsBadRequest() {
         when(stockOrderBookInstrumentRepository.existsById("ZQ001")).thenReturn(true);
         when(stockAutoMarketConfigRepository.findById("ZQ001")).thenReturn(Optional.of(StockAutoMarketConfig.defaults("ZQ001")));
 
         assertThatThrownBy(() -> service.updateAutoMarketConfig(
                 "zq001",
-                new AutoMarketConfigUpdateRequest(true, 11, 100, 30)
+                new AutoMarketConfigUpdateRequest(
+                        true,
+                        100,
+                        30,
+                        new stock.back.service.market.vo.AutoMarketDistributionBiasRequest(101, 0, 0, 0, 0),
+                        null
+                )
         ))
                 .isInstanceOf(StockException.class)
-                .hasMessageContaining("Intensity must be between 1 and 10");
+                .hasMessageContaining("must be between -100 and 100");
 
         verify(stockAutoMarketConfigRepository, never()).save(any());
     }
 
     @Test
-    void regenerateDailyRegime_afterMidSession_updatesMiddayRegime() {
+    void regenerateDailyRegime_atTwelveThirty_updatesTwelveOClockSlot() {
         when(stockOrderBookInstrumentRepository.existsById("ZQ001")).thenReturn(true);
         when(stockAutoMarketConfigRepository.findById("ZQ001")).thenReturn(Optional.of(StockAutoMarketConfig.defaults("ZQ001")));
         when(simulationClockService.currentMarketDateTime()).thenReturn(LocalDateTime.of(2026, 7, 7, 12, 30));
         when(jdbcTemplate.update(
                 org.mockito.ArgumentMatchers.contains("update stock_order_book_daily_regime"),
-                any(),
                 any(),
                 any(),
                 any(),
@@ -140,9 +146,9 @@ class AutoMarketConfigServiceTest {
 
         assertThat(response.symbol()).isEqualTo("ZQ001");
         assertThat(response.dailyRegime()).isNotNull();
-        assertThat(response.dailyRegime().regimePhase()).isEqualTo("MIDDAY");
+        assertThat(response.dailyRegime().regimePhase()).isEqualTo("SLOT_1200");
         assertThat(response.dailyRegime().simulationTradeDate()).isEqualTo(java.time.LocalDate.of(2026, 7, 7));
-        assertThat(response.dailyRegime().executionAggressionLevel()).isBetween(1, 10);
+        assertThat(response.dailyRegime().executionAggressionPressure()).isBetween(-100, 100);
     }
 
     @Test
@@ -159,13 +165,12 @@ class AutoMarketConfigServiceTest {
         )).thenReturn(java.util.List.of(new AutoMarketDailyRegimeResponse(
                 "ZQ001",
                 LocalDate.of(2026, 7, 7),
-                "MIDDAY",
-                "UP",
-                "STOCK",
-                7,
-                6,
-                5,
-                4,
+                "SLOT_1200",
+                70,
+                60,
+                10,
+                0,
+                -20,
                 "daily-seed",
                 null,
                 LocalDateTime.of(2026, 7, 7, 12, 0),
@@ -173,7 +178,6 @@ class AutoMarketConfigServiceTest {
         )));
         when(jdbcTemplate.update(
                 org.mockito.ArgumentMatchers.contains("update stock_order_book_regime_modifier"),
-                any(),
                 any(),
                 any(),
                 any(),

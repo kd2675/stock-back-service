@@ -81,14 +81,14 @@ class AutoParticipantSymbolConfigServiceTest {
     }
 
     @Test
-    void updateAutoParticipantSymbolConfig_nullIntensity_usesMarketConfigIntensityAsDefault() {
+    void updateAutoParticipantSymbolConfig_nullIntensity_usesNeutralDefault() {
         StockAutoParticipant participant = StockAutoParticipant.create(
                 "stock-auto-001",
                 "자동 참여자 1",
                 true
         );
         StockAutoMarketConfig marketConfig = StockAutoMarketConfig.defaults("ZQ001");
-        marketConfig.update(true, 8, null, null);
+        marketConfig.update(true, null, null);
         when(stockAutoParticipantRepository.findById("stock-auto-001")).thenReturn(Optional.of(participant));
         when(stockOrderBookInstrumentRepository.existsById("ZQ001")).thenReturn(true);
         when(stockAutoMarketConfigRepository.findById("ZQ001")).thenReturn(Optional.of(marketConfig));
@@ -102,7 +102,7 @@ class AutoParticipantSymbolConfigServiceTest {
                 new AutoParticipantSymbolConfigRequest(true, null)
         );
 
-        assertThat(response.intensity()).isEqualTo(8);
+        assertThat(response.intensity()).isEqualTo(5);
     }
 
     @Test

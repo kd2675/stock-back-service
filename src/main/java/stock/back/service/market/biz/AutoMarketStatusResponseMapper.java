@@ -6,6 +6,7 @@ import stock.back.service.database.entity.StockAutoParticipantSymbolConfig;
 import stock.back.service.database.entity.StockListingAutoAccountConfig;
 import stock.back.service.market.vo.AutoMarketConfigResponse;
 import stock.back.service.market.vo.AutoMarketDailyRegimeResponse;
+import stock.back.service.market.vo.AutoMarketDistributionBiasResponse;
 import stock.back.service.market.vo.AutoMarketStatusResponse;
 import stock.back.service.market.vo.AutoParticipantProfileConfigResponse;
 import stock.back.service.market.vo.AutoParticipantResponse;
@@ -95,9 +96,10 @@ final class AutoMarketStatusResponseMapper {
         return new AutoMarketConfigResponse(
                 config.getSymbol(),
                 Boolean.TRUE.equals(config.getEnabled()),
-                config.getIntensity() == null ? 0 : config.getIntensity(),
                 config.getMaxOrderQuantity() == null ? 0 : config.getMaxOrderQuantity(),
                 config.getOrderTtlSeconds() == null ? 0 : config.getOrderTtlSeconds(),
+                primaryDistributionBias(config),
+                secondaryDistributionBias(config),
                 dailyRegime
         );
     }
@@ -125,7 +127,7 @@ final class AutoMarketStatusResponseMapper {
                 userKey,
                 marketConfig.getSymbol(),
                 true,
-                marketConfig.getIntensity() == null ? 5 : marketConfig.getIntensity(),
+                5,
                 participantUpdatedAt == null ? marketConfig.getUpdatedAt() : participantUpdatedAt
         );
     }
@@ -168,6 +170,30 @@ final class AutoMarketStatusResponseMapper {
 
     private static String defaultProfileTypeName(String profileType) {
         return profileType == null ? AutoParticipantProfileType.defaultType().name() : profileType;
+    }
+
+    static AutoMarketDistributionBiasResponse primaryDistributionBias(StockAutoMarketConfig config) {
+        return new AutoMarketDistributionBiasResponse(
+                valueOrZero(config.getPrimaryPricePressureBias()),
+                valueOrZero(config.getPrimaryAssetPreferencePressureBias()),
+                valueOrZero(config.getPrimaryVolatilityPressureBias()),
+                valueOrZero(config.getPrimaryLiquidityPressureBias()),
+                valueOrZero(config.getPrimaryExecutionAggressionPressureBias())
+        );
+    }
+
+    static AutoMarketDistributionBiasResponse secondaryDistributionBias(StockAutoMarketConfig config) {
+        return new AutoMarketDistributionBiasResponse(
+                valueOrZero(config.getSecondaryPricePressureBias()),
+                valueOrZero(config.getSecondaryAssetPreferencePressureBias()),
+                valueOrZero(config.getSecondaryVolatilityPressureBias()),
+                valueOrZero(config.getSecondaryLiquidityPressureBias()),
+                valueOrZero(config.getSecondaryExecutionAggressionPressureBias())
+        );
+    }
+
+    private static int valueOrZero(Integer value) {
+        return value == null ? 0 : value;
     }
 
     record AutoMarketStatusCounts(

@@ -4,12 +4,11 @@ import java.time.LocalDateTime;
 
 public record AutoMarketRegimeModifierResponse(
         LocalDateTime modifierWindowStartAt,
-        int priceDirectionModifier,
-        int assetPreferenceModifier,
-        int directionIntensityModifier,
-        int volatilityModifier,
-        int liquidityModifier,
-        int executionAggressionModifier,
+        int pricePressure,
+        int assetPreferencePressure,
+        int volatilityPressure,
+        int liquidityPressure,
+        int executionAggressionPressure,
         String seed,
         LocalDateTime createdAt,
         LocalDateTime updatedAt

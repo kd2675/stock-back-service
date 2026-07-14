@@ -1,8 +1,6 @@
 package stock.back.service.market.biz;
 
-import java.time.Duration;
 import java.time.LocalDateTime;
-import java.time.LocalTime;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
@@ -230,17 +228,7 @@ public class AutoMarketStatusQueryService {
     }
 
     private String resolveRegimePhase(LocalDateTime currentMarketDateTime) {
-        if (currentMarketDateTime == null || currentMarketDateTime.toLocalTime().isBefore(midSessionTime())) {
-            return "OPENING";
-        }
-        return "MIDDAY";
-    }
-
-    private LocalTime midSessionTime() {
-        LocalTime openTime = simulationMarketSessionService.openTime();
-        LocalTime closeTime = simulationMarketSessionService.closeTime();
-        long halfSessionSeconds = Duration.between(openTime, closeTime).toSeconds() / 2;
-        return openTime.plusSeconds(halfSessionSeconds);
+        return AutoMarketRegimePhaseResolver.resolve(currentMarketDateTime);
     }
 
 }
