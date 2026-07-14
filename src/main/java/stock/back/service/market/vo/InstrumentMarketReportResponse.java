@@ -24,6 +24,8 @@ public record InstrumentMarketReportResponse(
         BigDecimal upperLimitPrice,
         LocalDateTime closePriceTime,
         String closePriceProvider,
+        Long closeRunId,
+        LocalDateTime closeRunCompletedAt,
         LocalDate reportDate,
         LocalDateTime simulationDateTime,
         InstrumentDailyMarketSnapshotResponse daily,

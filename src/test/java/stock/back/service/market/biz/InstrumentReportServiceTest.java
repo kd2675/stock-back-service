@@ -104,4 +104,27 @@ class InstrumentReportServiceTest {
 
         assertThat(response).isNull();
     }
+
+    @Test
+    void getLatestInstrumentReportAt_usesEventsAtOrBeforeReportCutoff() {
+        LocalDateTime cutoff = LocalDateTime.of(2026, 7, 2, 0, 0);
+        StockInstrumentReportEvent event = StockInstrumentReportEvent.publish(
+                "ZQ001",
+                "마감 보고서",
+                "마감 시점 평가",
+                7,
+                "상승",
+                "하락",
+                "admin-user",
+                cutoff
+        );
+        when(stockOrderBookInstrumentRepository.existsById("ZQ001")).thenReturn(true);
+        when(stockInstrumentReportEventRepository
+                .findTopBySymbolAndCreatedAtLessThanEqualOrderByCreatedAtDescIdDesc("ZQ001", cutoff))
+                .thenReturn(Optional.of(event));
+
+        var response = service.getLatestInstrumentReportAt("zq001", cutoff);
+
+        assertThat(response.title()).isEqualTo("마감 보고서");
+    }
 }

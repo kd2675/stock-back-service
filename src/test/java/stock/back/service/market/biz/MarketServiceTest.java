@@ -266,8 +266,13 @@ class MarketServiceTest {
                         namedParameterJdbcTemplate,
                         autoMarketStatusDataLoader,
                         new AutoParticipantHoldingQueryService(namedParameterJdbcTemplate),
-                        new AutoParticipantProfileOverviewQueryService(jdbcTemplate, simulationClockService),
-                        simulationClockService
+                        new AutoParticipantProfileOverviewQueryService(
+                                jdbcTemplate,
+                                simulationClockService,
+                                new io.micrometer.core.instrument.simple.SimpleMeterRegistry()
+                        ),
+                        simulationClockService,
+                        new io.micrometer.core.instrument.simple.SimpleMeterRegistry()
                 ),
                 new AutoMarketStatusQueryService(
                         stockAutoMarketConfigRepository,
@@ -793,7 +798,11 @@ class MarketServiceTest {
         SimulationClockService simulationClockService = mock(SimulationClockService.class);
         when(simulationClockService.currentMarketDayStart()).thenReturn(SimulationDayClock.currentDayStart());
         when(simulationClockService.currentMarketDateTime()).thenReturn(SimulationDayClock.currentDayStart().plusDays(1));
-        AutoParticipantProfileOverviewQueryService service = new AutoParticipantProfileOverviewQueryService(realJdbcTemplate, simulationClockService);
+        AutoParticipantProfileOverviewQueryService service = new AutoParticipantProfileOverviewQueryService(
+                realJdbcTemplate,
+                simulationClockService,
+                new io.micrometer.core.instrument.simple.SimpleMeterRegistry()
+        );
         LocalDateTime simulationDayStart = SimulationDayClock.currentDayStart();
         LocalDateTime lastOrderAt = simulationDayStart.plusMinutes(15);
         LocalDateTime lastTerminalOrderAt = lastOrderAt.plusMinutes(5);
@@ -939,6 +948,7 @@ class MarketServiceTest {
     @Test
     void autoParticipantOrderAggregateSql_scopesOpenOrderAggregateByStatusPredicate() {
         assertThat(AutoParticipantAggregateQuerySupport.OPEN_ORDER_AGGREGATE_SQL)
+                .contains("from stock_order %s")
                 .contains("and market_type = 'ORDER_BOOK'")
                 .contains("and status in ('PENDING', 'PARTIALLY_FILLED')")
                 .doesNotContain("sum(case when status in");
@@ -956,20 +966,16 @@ class MarketServiceTest {
 
     @Test
     void autoParticipantExecutionAggregateSql_todayCountUsesIndexedDatePredicate() {
-        assertThat(AutoParticipantAggregateQuerySupport.TODAY_EXECUTION_AGGREGATE_SQL)
-                .contains("and executed_at >= :todayStart")
-                .contains("and executed_at <= :todayEnd")
-                .doesNotContain("sum(case when executed_at >= :todayStart");
-        assertThat(AutoParticipantAggregateQuerySupport.LAST_EXECUTION_LOOKUP_SQL)
-                .contains("order by executed_at desc")
-                .contains("limit 1")
-                .contains("executed_at >= :activityStart")
-                .contains("executed_at <= :activityEnd")
-                .doesNotContainIgnoringCase("as bigint")
-                .doesNotContain("todayStart");
-        assertThat(AutoParticipantAggregateQuerySupport.LAST_EXECUTION_LOOKUP_ALL_SQL)
-                .contains("executed_at <= :activityEnd")
-                .doesNotContain("executed_at >= :activityStart");
+        assertThat(AutoParticipantAggregateQuerySupport.EXECUTION_AGGREGATE_SQL)
+                .contains("from stock_execution_account_day_summary")
+                .contains("simulation_trade_date = :todayDate")
+                .contains("simulation_trade_date >= :activityStartDate")
+                .contains("last_executed_at >= :activityStart")
+                .doesNotContain("from stock_execution\n");
+        assertThat(AutoParticipantAggregateQuerySupport.EXECUTION_AGGREGATE_ALL_SQL)
+                .contains("from stock_execution_account_day_summary")
+                .contains("simulation_trade_date <= :activityEndDate")
+                .doesNotContain("activityStart");
     }
 
     @Test
@@ -1286,6 +1292,19 @@ class MarketServiceTest {
                 )
                 """);
         template.execute("""
+                create table stock_execution_account_day_summary (
+                    simulation_trade_date date not null,
+                    account_id bigint not null,
+                    execution_count bigint not null,
+                    buy_quantity bigint not null,
+                    sell_quantity bigint not null,
+                    gross_amount decimal(19, 2) not null,
+                    last_executed_at timestamp,
+                    updated_at timestamp not null,
+                    primary key (simulation_trade_date, account_id)
+                )
+                """);
+        template.execute("""
                 create table stock_auto_participant_symbol_config (
                     user_key varchar(64) not null,
                     enabled boolean not null
@@ -1349,6 +1368,8 @@ class MarketServiceTest {
         template.update("insert into stock_execution(account_id, side, quantity, gross_amount, source, executed_at) values (?, ?, ?, ?, 'INTERNAL_ORDER_BOOK', ?)", 11L, "BUY", 80L, new BigDecimal("600.00"), lastExecutionAt);
         template.update("insert into stock_execution(account_id, side, quantity, gross_amount, source, executed_at) values (?, ?, ?, ?, 'INTERNAL_ORDER_BOOK', ?)", 12L, "SELL", 20L, new BigDecimal("300.00"), lastExecutionAt.minusMinutes(1));
         template.update("insert into stock_execution(account_id, side, quantity, gross_amount, source, executed_at) values (?, ?, ?, ?, 'INTERNAL_ORDER_BOOK', ?)", 12L, "BUY", 1L, BigDecimal.ONE, lastExecutionAt.minusHours(3));
+        template.update("insert into stock_execution_account_day_summary(simulation_trade_date, account_id, execution_count, buy_quantity, sell_quantity, gross_amount, last_executed_at, updated_at) values (?, ?, 1, 80, 0, 600.00, ?, ?)", lastExecutionAt.toLocalDate(), 11L, lastExecutionAt, lastExecutionAt);
+        template.update("insert into stock_execution_account_day_summary(simulation_trade_date, account_id, execution_count, buy_quantity, sell_quantity, gross_amount, last_executed_at, updated_at) values (?, ?, 1, 0, 20, 300.00, ?, ?)", lastExecutionAt.toLocalDate(), 12L, lastExecutionAt.minusMinutes(1), lastExecutionAt);
         template.update("insert into stock_auto_participant_symbol_config(user_key, enabled) values (?, true)", "stock-auto-001");
         template.update("insert into stock_auto_participant_symbol_config(user_key, enabled) values (?, true)", "stock-auto-002");
         template.update("insert into stock_auto_participant_symbol_config(user_key, enabled) values (?, false)", "stock-auto-002");

@@ -1,7 +1,6 @@
 package stock.back.service.market.biz;
 
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.jdbc.core.ConnectionCallback;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -26,7 +25,6 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.function.Supplier;
 
@@ -43,19 +41,10 @@ public class InstrumentMarketReportAnalyticsQueryService {
     );
     private final JdbcClient jdbcClient;
     private final MeterRegistry meterRegistry;
-    private final String executionFlowIndexHint;
-    private final String executionActivityIndexHint;
 
     public InstrumentMarketReportAnalyticsQueryService(JdbcTemplate jdbcTemplate, MeterRegistry meterRegistry) {
         this.jdbcClient = JdbcClient.create(jdbcTemplate);
         this.meterRegistry = meterRegistry;
-        boolean mysql = isMySql(jdbcTemplate);
-        this.executionFlowIndexHint = mysql && hasIndex(jdbcTemplate, "stock_execution", "idx_stock_execution_market_report_flow")
-                ? " force index (idx_stock_execution_market_report_flow)"
-                : mysql ? " force index (idx_stock_execution_source_symbol_time)" : "";
-        this.executionActivityIndexHint = mysql && hasIndex(jdbcTemplate, "stock_execution", "idx_stock_execution_candle")
-                ? " force index (idx_stock_execution_candle)"
-                : mysql ? " force index (idx_stock_execution_source_symbol_time)" : "";
     }
 
     @Transactional(readOnly = true)
@@ -67,6 +56,7 @@ public class InstrumentMarketReportAnalyticsQueryService {
             BigDecimal closePrice,
             LocalDateTime priceTime,
             String priceProvider,
+            LocalDateTime reportAsOf,
             InstrumentDailyMarketSnapshotResponse daily,
             LocalDate reportDate,
             SimulationClockSnapshot clock
@@ -81,6 +71,7 @@ public class InstrumentMarketReportAnalyticsQueryService {
                     closePrice,
                     priceTime,
                     priceProvider,
+                    reportAsOf,
                     daily,
                     reportDate,
                     clock
@@ -98,6 +89,7 @@ public class InstrumentMarketReportAnalyticsQueryService {
             BigDecimal closePrice,
             LocalDateTime priceTime,
             String priceProvider,
+            LocalDateTime reportAsOf,
             InstrumentDailyMarketSnapshotResponse daily,
             LocalDate reportDate,
             SimulationClockSnapshot clock
@@ -111,24 +103,22 @@ public class InstrumentMarketReportAnalyticsQueryService {
         LocalDateTime reportEndExclusive = effectiveReportDate.plusDays(1).atStartOfDay();
         BigDecimal reportClosePrice = history.isEmpty() ? closePrice : history.getLast().closePrice();
         InstrumentMarketAnalyticsResponse.Performance performance = timed("performance", () -> buildPerformance(
-                symbol,
                 historyData.totalTradingDays(),
                 history,
                 reportClosePrice,
                 daily,
-                reportEndExclusive
+                effectiveReportDate
         ));
         InstrumentMarketAnalyticsResponse.TradingActivity tradingActivity = timed("trading-activity", () -> buildTradingActivity(
-                symbol,
-                reportDate == null ? null : twentyDayStart.atStartOfDay(),
-                reportDate == null ? null : reportEndExclusive
+                history,
+                reportDate == null ? null : twentyDayStart,
+                reportDate
         ));
         InstrumentMarketAnalyticsResponse.InvestorFlow investorFlow = timed("investor-flow", () -> loadInvestorFlow(
                 symbol,
                 reportDate,
                 fiveDayStart,
                 twentyDayStart,
-                reportEndExclusive,
                 history
         ));
         InstrumentMarketAnalyticsResponse.Ownership ownership = timed("ownership", () -> loadOwnership(
@@ -142,7 +132,7 @@ public class InstrumentMarketReportAnalyticsQueryService {
                 symbol,
                 issuedShares,
                 history,
-                reportDate == null ? null : reportEndExclusive
+                reportAsOf
         ));
         InstrumentMarketAnalyticsResponse.Rankings rankings = reportDate == null
                 ? emptyRankings()
@@ -185,8 +175,13 @@ public class InstrumentMarketReportAnalyticsQueryService {
                         """
                         select simulation_trade_date,
                                close_price,
-                               execution_quantity,
+                               buy_quantity,
                                turnover_amount,
+                               high_price,
+                               low_price,
+                               execution_count,
+                               first_executed_at,
+                               last_executed_at,
                                issued_shares,
                                tradable_shares,
                                total_trading_days,
@@ -195,8 +190,13 @@ public class InstrumentMarketReportAnalyticsQueryService {
                           from (
                                 select simulation_trade_date,
                                        close_price,
-                                       execution_quantity,
+                                       buy_quantity,
                                        turnover_amount,
+                                       high_price,
+                                       low_price,
+                                       execution_count,
+                                       first_executed_at,
+                                       last_executed_at,
                                        issued_shares,
                                        tradable_shares,
                                        close_run_id,
@@ -229,8 +229,13 @@ public class InstrumentMarketReportAnalyticsQueryService {
                         new HistoryRow(
                                 rs.getObject("simulation_trade_date", LocalDate.class),
                                 rs.getBigDecimal("close_price"),
-                                rs.getLong("execution_quantity") / 2L,
+                                rs.getLong("buy_quantity"),
                                 rs.getBigDecimal("turnover_amount").divide(BigDecimal.valueOf(2), 2, RoundingMode.HALF_UP),
+                                rs.getBigDecimal("high_price"),
+                                rs.getBigDecimal("low_price"),
+                                rs.getLong("execution_count") / 2L,
+                                MarketQuerySupport.toDateTime(rs.getTimestamp("first_executed_at")),
+                                MarketQuerySupport.toDateTime(rs.getTimestamp("last_executed_at")),
                                 rs.getLong("issued_shares"),
                                 rs.getLong("tradable_shares"),
                                 false
@@ -263,6 +268,11 @@ public class InstrumentMarketReportAnalyticsQueryService {
                     row.closePrice(),
                     row.volume(),
                     row.turnover(),
+                    row.highPrice(),
+                    row.lowPrice(),
+                    row.executionCount(),
+                    row.firstExecutedAt(),
+                    row.lastExecutedAt(),
                     row.issuedShares(),
                     row.tradableShares(),
                     row.tradeDate().equals(reportDate)
@@ -272,18 +282,13 @@ public class InstrumentMarketReportAnalyticsQueryService {
     }
 
     private InstrumentMarketAnalyticsResponse.Performance buildPerformance(
-            String symbol,
             int completedTradingDays,
             List<HistoryRow> history,
             BigDecimal closePrice,
             InstrumentDailyMarketSnapshotResponse daily,
-            LocalDateTime reportEndExclusive
+            LocalDate reportDate
     ) {
-        LocalDate reportDate = reportEndExclusive.toLocalDate().minusDays(1);
-        LocalDate twentyDayStart = tradingWindowStart(history, 20, reportDate);
-        PriceRange priceRange = history.isEmpty()
-                ? new PriceRange(null, null)
-                : loadPriceRange(symbol, twentyDayStart.atStartOfDay(), reportEndExclusive);
+        List<HistoryRow> priceWindow = tail(history, 20);
         List<BigDecimal> closes = history.stream().map(HistoryRow::closePrice).toList();
         List<HistoryRow> completedVolumeRows = history.stream()
                 .filter(row -> !row.reportDate())
@@ -305,12 +310,22 @@ public class InstrumentMarketReportAnalyticsQueryService {
                         .map(row -> rate(BigDecimal.valueOf(row.volume()), BigDecimal.valueOf(row.tradableShares())))
                         .reduce(BigDecimal.ZERO, BigDecimal::add)
                         .divide(BigDecimal.valueOf(averageVolumeRows.size()), 4, RoundingMode.HALF_UP);
-        BigDecimal high = priceRange.highPrice() == null
-                ? tail(history, 20).stream().map(HistoryRow::closePrice).max(BigDecimal::compareTo).orElse(closePrice)
-                : priceRange.highPrice();
-        BigDecimal low = priceRange.lowPrice() == null
-                ? tail(history, 20).stream().map(HistoryRow::closePrice).min(BigDecimal::compareTo).orElse(closePrice)
-                : priceRange.lowPrice();
+        BigDecimal high = priceWindow.stream()
+                .map(HistoryRow::highPrice)
+                .filter(value -> value != null && value.signum() > 0)
+                .max(BigDecimal::compareTo)
+                .orElseGet(() -> priceWindow.stream()
+                        .map(HistoryRow::closePrice)
+                        .max(BigDecimal::compareTo)
+                        .orElse(closePrice));
+        BigDecimal low = priceWindow.stream()
+                .map(HistoryRow::lowPrice)
+                .filter(value -> value != null && value.signum() > 0)
+                .min(BigDecimal::compareTo)
+                .orElseGet(() -> priceWindow.stream()
+                        .map(HistoryRow::closePrice)
+                        .min(BigDecimal::compareTo)
+                        .orElse(closePrice));
         int[] streaks = calculateStreaks(closes);
         return new InstrumentMarketAnalyticsResponse.Performance(
                 completedTradingDays,
@@ -339,35 +354,14 @@ public class InstrumentMarketReportAnalyticsQueryService {
         );
     }
 
-    private PriceRange loadPriceRange(String symbol, LocalDateTime start, LocalDateTime end) {
-        return jdbcClient.sql(
-                        """
-                        select max(price) as high_price,
-                               min(price) as low_price
-                          from stock_execution
-                         where symbol = ?
-                           and source = 'INTERNAL_ORDER_BOOK'
-                           and side = 'BUY'
-                           and executed_at >= ?
-                           and executed_at < ?
-                        """
-                )
-                .params(symbol, start, end)
-                .query((rs, rowNum) -> new PriceRange(
-                        rs.getBigDecimal("high_price"),
-                        rs.getBigDecimal("low_price")
-                ))
-                .single();
-    }
-
     private InstrumentMarketAnalyticsResponse.TradingActivity buildTradingActivity(
-            String symbol,
-            LocalDateTime dayStart,
-            LocalDateTime dayEnd
+            List<HistoryRow> history,
+            LocalDate startDate,
+            LocalDate endDate
     ) {
-        TradingActivityStats stats = dayStart == null || dayEnd == null
+        TradingActivityStats stats = startDate == null || endDate == null
                 ? emptyTradingActivityStats()
-                : loadTradingActivityStats(symbol, dayStart, dayEnd);
+                : loadTradingActivityStats(history, startDate, endDate);
         return new InstrumentMarketAnalyticsResponse.TradingActivity(
                 stats.executionCount(),
                 stats.executionQuantity(),
@@ -386,45 +380,33 @@ public class InstrumentMarketReportAnalyticsQueryService {
     }
 
     private TradingActivityStats loadTradingActivityStats(
-            String symbol,
-            LocalDateTime dayStart,
-            LocalDateTime dayEnd
+            List<HistoryRow> history,
+            LocalDate startDate,
+            LocalDate endDate
     ) {
-        ExecutionStatistics executionStats = jdbcClient.sql(
-                        """
-                        select count(*) as execution_count,
-                               coalesce(sum(quantity), 0) as execution_quantity,
-                               min(executed_at) as first_executed_at,
-                               max(executed_at) as last_executed_at
-                          from stock_execution%s
-                         where source = 'INTERNAL_ORDER_BOOK'
-                           and symbol = ?
-                           and side = 'BUY'
-                           and executed_at >= ?
-                           and executed_at < ?
-                        """.formatted(executionActivityIndexHint)
-                )
-                .params(symbol, dayStart, dayEnd)
-                .query((rs, rowNum) -> new ExecutionStatistics(
-                        rs.getLong("execution_count"),
-                        rs.getLong("execution_quantity"),
-                        MarketQuerySupport.toDateTime(rs.getTimestamp("first_executed_at")),
-                        MarketQuerySupport.toDateTime(rs.getTimestamp("last_executed_at"))
-                ))
-                .single();
-        BigDecimal averageSeconds = executionStats.executionCount() <= 1
-                || executionStats.firstExecutedAt() == null
-                || executionStats.lastExecutedAt() == null
+        List<HistoryRow> rows = history.stream()
+                .filter(row -> !row.tradeDate().isBefore(startDate) && !row.tradeDate().isAfter(endDate))
+                .toList();
+        long executionCount = rows.stream().mapToLong(HistoryRow::executionCount).sum();
+        long executionQuantity = rows.stream().mapToLong(HistoryRow::volume).sum();
+        long intervalCount = rows.stream()
+                .filter(row -> row.executionCount() > 1)
+                .filter(row -> row.firstExecutedAt() != null && row.lastExecutedAt() != null)
+                .mapToLong(row -> row.executionCount() - 1L)
+                .sum();
+        long intervalDurationMillis = rows.stream()
+                .filter(row -> row.executionCount() > 1)
+                .filter(row -> row.firstExecutedAt() != null && row.lastExecutedAt() != null)
+                .mapToLong(row -> Duration.between(row.firstExecutedAt(), row.lastExecutedAt()).toMillis())
+                .sum();
+        BigDecimal averageSeconds = intervalCount == 0L
                 ? null
-                : BigDecimal.valueOf(Duration.between(
-                                executionStats.firstExecutedAt(),
-                                executionStats.lastExecutedAt()
-                        ).toMillis())
-                        .divide(BigDecimal.valueOf(1_000L * (executionStats.executionCount() - 1L)), 4, RoundingMode.HALF_UP);
+                : BigDecimal.valueOf(intervalDurationMillis)
+                        .divide(BigDecimal.valueOf(1_000L * intervalCount), 4, RoundingMode.HALF_UP);
         return new TradingActivityStats(
-                executionStats.executionCount(),
-                executionStats.executionQuantity(),
-                average(executionStats.executionQuantity(), executionStats.executionCount()),
+                executionCount,
+                executionQuantity,
+                average(executionQuantity, executionCount),
                 averageSeconds
         );
     }
@@ -434,7 +416,6 @@ public class InstrumentMarketReportAnalyticsQueryService {
             LocalDate reportDate,
             LocalDate fiveDayStart,
             LocalDate twentyDayStart,
-            LocalDateTime endExclusive,
             List<HistoryRow> history
     ) {
         if (reportDate == null) {
@@ -446,28 +427,34 @@ public class InstrumentMarketReportAnalyticsQueryService {
         }
         List<DailyCategoryFlowRow> dailyRows = jdbcClient.sql(
                         """
-                        with account_daily_flow as (
-                            select date(e.executed_at) as trade_date,
-                                   e.account_id,
-                                   sum(case when e.side = 'BUY' then e.quantity else 0 end) as buy_quantity,
-                                   sum(case when e.side = 'SELL' then e.quantity else 0 end) as sell_quantity,
-                                   sum(case when e.side = 'BUY' then e.gross_amount else 0 end) as buy_amount,
-                                   sum(case when e.side = 'SELL' then e.gross_amount else 0 end) as sell_amount,
-                                   sum(case when e.side = 'BUY' then -e.net_amount else e.net_amount end) as net_cash_flow,
-                                   sum(e.gross_amount) as execution_amount
-                              from stock_execution e%s
-                             where e.symbol = :symbol
-                               and e.source = 'INTERNAL_ORDER_BOOK'
-                               and e.executed_at >= :start
-                               and e.executed_at < :end
-                             group by date(e.executed_at), e.account_id
+                        with latest_account_daily as (
+                            select daily.*,
+                                   row_number() over (
+                                       partition by daily.simulation_trade_date, daily.account_id
+                                       order by daily.close_run_id desc, daily.id desc
+                                   ) as snapshot_rank
+                              from stock_execution_daily_account_snapshot daily
+                              join stock_market_close_run close_run
+                                on close_run.id = daily.close_run_id
+                               and close_run.symbol is null
+                               and close_run.status = 'COMPLETED'
+                             where daily.symbol = :symbol
+                               and daily.simulation_trade_date >= :startDate
+                               and daily.simulation_trade_date <= :endDate
+                        ), account_daily_flow as (
+                            select simulation_trade_date as trade_date,
+                                   participant_category,
+                                   buy_quantity,
+                                   sell_quantity,
+                                   buy_amount,
+                                   sell_amount,
+                                   net_cash_flow,
+                                   execution_amount
+                              from latest_account_daily
+                             where snapshot_rank = 1
                         )
                         select flow.trade_date,
-                               case
-                                   when listing_config.user_key is not null then 'LISTING_UNDERWRITER'
-                                   when participant.user_key is not null then 'AUTO_PARTICIPANT'
-                                   else 'MANUAL_PARTICIPANT'
-                               end as participant_category,
+                               flow.participant_category,
                                sum(flow.buy_quantity) as buy_quantity,
                                sum(flow.sell_quantity) as sell_quantity,
                                sum(flow.buy_amount) as buy_amount,
@@ -475,18 +462,12 @@ public class InstrumentMarketReportAnalyticsQueryService {
                                sum(flow.net_cash_flow) as net_cash_flow,
                                sum(flow.execution_amount) as execution_amount
                           from account_daily_flow flow
-                          join stock_account account on account.id = flow.account_id
-                          left join stock_listing_auto_account_config listing_config
-                            on listing_config.user_key = account.user_key
-                           and listing_config.symbol = :symbol
-                          left join stock_auto_participant participant
-                            on participant.user_key = account.user_key
-                         group by flow.trade_date, participant_category
-                        """.formatted(executionFlowIndexHint)
+                         group by flow.trade_date, flow.participant_category
+                        """
                 )
                 .param("symbol", symbol)
-                .param("start", twentyDayStart.atStartOfDay())
-                .param("end", endExclusive)
+                .param("startDate", twentyDayStart)
+                .param("endDate", reportDate)
                 .query((rs, rowNum) -> new DailyCategoryFlowRow(
                         rs.getObject("trade_date", LocalDate.class),
                         rs.getString("participant_category"),
@@ -505,8 +486,8 @@ public class InstrumentMarketReportAnalyticsQueryService {
         );
         AccountConcentration concentration = loadAccountConcentration(
                 symbol,
-                twentyDayStart.atStartOfDay(),
-                endExclusive
+                twentyDayStart,
+                reportDate
         );
         InstrumentMarketAnalyticsResponse.FlowWindow latestTradingDay = windows.getFirst();
         BigDecimal autoShare = latestTradingDay.categories().stream()
@@ -557,24 +538,36 @@ public class InstrumentMarketReportAnalyticsQueryService {
         );
     }
 
-    private AccountConcentration loadAccountConcentration(String symbol, LocalDateTime start, LocalDateTime end) {
+    private AccountConcentration loadAccountConcentration(String symbol, LocalDate startDate, LocalDate endDate) {
         return jdbcClient.sql(
                         """
+                        with latest_account_daily as (
+                            select daily.*,
+                                   row_number() over (
+                                       partition by daily.simulation_trade_date, daily.account_id
+                                       order by daily.close_run_id desc, daily.id desc
+                                   ) as snapshot_rank
+                              from stock_execution_daily_account_snapshot daily
+                              join stock_market_close_run close_run
+                                on close_run.id = daily.close_run_id
+                               and close_run.symbol is null
+                               and close_run.status = 'COMPLETED'
+                             where daily.symbol = ?
+                               and daily.simulation_trade_date >= ?
+                               and daily.simulation_trade_date <= ?
+                        )
                         select coalesce(max(account_amount), 0) as top_account_amount,
                                coalesce(sum(account_amount), 0) as total_amount
                           from (
                                 select account_id,
-                                       sum(gross_amount) as account_amount
-                                  from stock_execution
-                                 where symbol = ?
-                                   and source = 'INTERNAL_ORDER_BOOK'
-                                   and executed_at >= ?
-                                   and executed_at < ?
+                                       sum(execution_amount) as account_amount
+                                  from latest_account_daily
+                                 where snapshot_rank = 1
                                  group by account_id
                           ) account_flow
                         """
                 )
-                .params(symbol, start, end)
+                .params(symbol, startDate, endDate)
                 .query((rs, rowNum) -> new AccountConcentration(
                         rate(rs.getBigDecimal("top_account_amount"), rs.getBigDecimal("total_amount"))
                 ))
@@ -652,9 +645,9 @@ public class InstrumentMarketReportAnalyticsQueryService {
             String symbol,
             long currentIssuedShares,
             List<HistoryRow> history,
-            LocalDateTime reportEndExclusive
+            LocalDateTime reportAsOf
     ) {
-        if (reportEndExclusive == null) {
+        if (reportAsOf == null) {
             return new InstrumentMarketAnalyticsResponse.CorporateActions(
                     0L, 0L, BigDecimal.ZERO, BigDecimal.ZERO, List.of()
             );
@@ -684,12 +677,12 @@ public class InstrumentMarketReportAnalyticsQueryService {
                                action.created_at
                           from stock_corporate_action action
                          where action.symbol = ?
-                           and action.created_at < ?
+                           and action.created_at <= ?
                          order by action.created_at desc, action.id desc
                         """
                 )
-                .params(symbol, reportEndExclusive)
-                .query((rs, rowNum) -> toCorporateActionRow(rs, reportEndExclusive))
+                .params(symbol, reportAsOf)
+                .query((rs, rowNum) -> toCorporateActionRow(rs, reportAsOf))
                 .list();
         BigDecimal cumulativeDividendCash = jdbcClient.sql(
                         """
@@ -698,10 +691,10 @@ public class InstrumentMarketReportAnalyticsQueryService {
                           join stock_corporate_action action on action.id = entitlement.action_id
                          where action.symbol = ?
                            and action.action_type = 'CASH_DIVIDEND'
-                           and entitlement.paid_at < ?
+                           and entitlement.paid_at <= ?
                         """
                 )
-                .params(symbol, reportEndExclusive)
+                .params(symbol, reportAsOf)
                 .query(BigDecimal.class)
                 .single();
         long completedCount = rows.stream().filter(this::isCorporateActionCompleted).count();
@@ -722,7 +715,7 @@ public class InstrumentMarketReportAnalyticsQueryService {
         );
     }
 
-    private CorporateActionRow toCorporateActionRow(ResultSet rs, LocalDateTime reportEndExclusive) throws SQLException {
+    private CorporateActionRow toCorporateActionRow(ResultSet rs, LocalDateTime reportAsOf) throws SQLException {
         String offeringType = rs.getString("offering_type");
         StockCorporateActionType actionType = StockCorporateActionType.valueOf(rs.getString("action_type"));
         return new CorporateActionRow(
@@ -733,7 +726,7 @@ public class InstrumentMarketReportAnalyticsQueryService {
                         rs.getObject("applied_at", LocalDateTime.class),
                         rs.getObject("paid_at", LocalDateTime.class),
                         rs.getObject("listed_at", LocalDateTime.class),
-                        reportEndExclusive
+                        reportAsOf
                 ),
                 offeringType == null ? null : StockCapitalIncreaseOfferingType.valueOf(offeringType),
                 rs.getObject("share_quantity", Long.class),
@@ -762,23 +755,23 @@ public class InstrumentMarketReportAnalyticsQueryService {
             LocalDateTime reportEndExclusive
     ) {
         if (actionType == StockCorporateActionType.DELISTING
-                && isBefore(appliedAt, reportEndExclusive)) {
+                && isAtOrBefore(appliedAt, reportEndExclusive)) {
             return StockCorporateActionStatus.DELISTED;
         }
-        if (isBefore(listedAt, reportEndExclusive)) {
+        if (isAtOrBefore(listedAt, reportEndExclusive)) {
             return StockCorporateActionStatus.LISTED;
         }
-        if (isBefore(paidAt, reportEndExclusive)) {
+        if (isAtOrBefore(paidAt, reportEndExclusive)) {
             return StockCorporateActionStatus.PAID;
         }
-        if (isBefore(appliedAt, reportEndExclusive)) {
+        if (isAtOrBefore(appliedAt, reportEndExclusive)) {
             return StockCorporateActionStatus.EX_RIGHTS_APPLIED;
         }
         return StockCorporateActionStatus.ANNOUNCED;
     }
 
-    private static boolean isBefore(LocalDateTime value, LocalDateTime endExclusive) {
-        return value != null && value.isBefore(endExclusive);
+    private static boolean isAtOrBefore(LocalDateTime value, LocalDateTime asOf) {
+        return value != null && !value.isAfter(asOf);
     }
 
     private InstrumentMarketAnalyticsResponse.CorporateActionMetric toCorporateActionMetric(
@@ -1131,29 +1124,6 @@ public class InstrumentMarketReportAnalyticsQueryService {
         );
     }
 
-    private boolean isMySql(JdbcTemplate jdbcTemplate) {
-        String productName = jdbcTemplate.execute(
-                (ConnectionCallback<String>) connection -> connection.getMetaData().getDatabaseProductName()
-        );
-        return productName != null && productName.toLowerCase(Locale.ROOT).contains("mysql");
-    }
-
-    private boolean hasIndex(JdbcTemplate jdbcTemplate, String tableName, String indexName) {
-        Integer count = jdbcTemplate.queryForObject(
-                """
-                select count(*)
-                  from information_schema.statistics
-                 where table_schema = database()
-                   and table_name = ?
-                   and index_name = ?
-                """,
-                Integer.class,
-                tableName,
-                indexName
-        );
-        return count != null && count > 0;
-    }
-
     private LocalDate tradingWindowStart(List<HistoryRow> history, int days, LocalDate fallback) {
         List<HistoryRow> window = tail(history, days);
         return window.isEmpty() ? fallback : window.getFirst().tradeDate();
@@ -1274,6 +1244,11 @@ public class InstrumentMarketReportAnalyticsQueryService {
             BigDecimal closePrice,
             long volume,
             BigDecimal turnover,
+            BigDecimal highPrice,
+            BigDecimal lowPrice,
+            long executionCount,
+            LocalDateTime firstExecutedAt,
+            LocalDateTime lastExecutedAt,
             long issuedShares,
             long tradableShares,
             boolean reportDate
@@ -1289,17 +1264,6 @@ public class InstrumentMarketReportAnalyticsQueryService {
                     reportDate
             );
         }
-    }
-
-    private record PriceRange(BigDecimal highPrice, BigDecimal lowPrice) {
-    }
-
-    private record ExecutionStatistics(
-            long executionCount,
-            long executionQuantity,
-            LocalDateTime firstExecutedAt,
-            LocalDateTime lastExecutedAt
-    ) {
     }
 
     private record TradingActivityStats(

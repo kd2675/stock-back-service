@@ -38,6 +38,19 @@ public class InstrumentReportService {
                 .orElse(null);
     }
 
+    @Transactional(readOnly = true)
+    public InstrumentReportResponse getLatestInstrumentReportAt(String symbol, java.time.LocalDateTime cutoff) {
+        String normalizedSymbol = requireOrderBookSymbol(symbol);
+        if (cutoff == null) {
+            return getLatestInstrumentReport(normalizedSymbol);
+        }
+        return stockInstrumentReportEventRepository
+                .findTopBySymbolAndCreatedAtLessThanEqualOrderByCreatedAtDescIdDesc(normalizedSymbol, cutoff)
+                .filter(event -> event.getEventType() != StockInstrumentReportEventType.DELETE)
+                .map(this::toInstrumentReportResponse)
+                .orElse(null);
+    }
+
     @Transactional
     public InstrumentReportResponse publishInstrumentReport(String symbol, InstrumentReportRequest request, String createdBy) {
         String normalizedSymbol = requireOrderBookSymbol(symbol);

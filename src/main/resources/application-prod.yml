@@ -26,7 +26,7 @@ database:
           validation-timeout: ${STOCK_DB_VALIDATION_TIMEOUT:5000}
           idle-timeout: ${STOCK_DB_IDLE_TIMEOUT:240000}
           max-lifetime: ${STOCK_DB_MAX_LIFETIME:300000}
-          keepalive-time: ${STOCK_DB_KEEPALIVE_TIME:120000}
+          keepalive-time: ${STOCK_DB_KEEPALIVE_TIME:30000}
       slave1:
         url: "${STOCK_DB_SLAVE_URL:${STOCK_DB_URL}}?zeroDateTimeBehavior=convertToNull&useLegacyDatetimeCode=false&serverTimezone=Asia/Seoul&noAccessToProcedureBodies=true&useSSL=false&allowPublicKeyRetrieval=true&connectTimeout=5000&socketTimeout=30000&tcpKeepAlive=true"
         username: ${STOCK_DB_SLAVE_USERNAME:${STOCK_DB_USERNAME}}
@@ -40,4 +40,4 @@ database:
           validation-timeout: ${STOCK_DB_SLAVE_VALIDATION_TIMEOUT:${STOCK_DB_VALIDATION_TIMEOUT:5000}}
           idle-timeout: ${STOCK_DB_SLAVE_IDLE_TIMEOUT:${STOCK_DB_IDLE_TIMEOUT:240000}}
           max-lifetime: ${STOCK_DB_SLAVE_MAX_LIFETIME:${STOCK_DB_MAX_LIFETIME:300000}}
-          keepalive-time: ${STOCK_DB_SLAVE_KEEPALIVE_TIME:${STOCK_DB_KEEPALIVE_TIME:120000}}
+          keepalive-time: ${STOCK_DB_SLAVE_KEEPALIVE_TIME:${STOCK_DB_KEEPALIVE_TIME:30000}}

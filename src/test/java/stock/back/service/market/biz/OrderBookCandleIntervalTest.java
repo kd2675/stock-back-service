@@ -11,6 +11,18 @@ import static org.assertj.core.api.Assertions.assertThat;
 class OrderBookCandleIntervalTest {
 
     @Test
+    void dayInterval_floorHistoricalDate_usesProvidedDate() {
+        assertThat(OrderBookCandleInterval.DAY.floorHistoricalDate(LocalDateTime.of(2026, 6, 18, 15, 30)))
+                .isEqualTo(LocalDateTime.of(2026, 6, 18, 0, 0));
+    }
+
+    @Test
+    void weekInterval_floorHistoricalDate_usesMondayOfProvidedWeek() {
+        assertThat(OrderBookCandleInterval.WEEK.floorHistoricalDate(LocalDateTime.of(2026, 6, 18, 15, 30)))
+                .isEqualTo(LocalDateTime.of(2026, 6, 15, 0, 0));
+    }
+
+    @Test
     void dayInterval_usesSimulationDayBucket() {
         OrderBookCandleInterval interval = OrderBookCandleInterval.parse("1D");
         SimulationClockSnapshot clock = new SimulationClockSnapshot(

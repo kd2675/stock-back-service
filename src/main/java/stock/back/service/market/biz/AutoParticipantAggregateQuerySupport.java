@@ -33,7 +33,7 @@ final class AutoParticipantAggregateQuerySupport {
                                    sum(case when side = 'SELL' then 1 else 0 end) as open_sell_order_count,
                                    sum(case when side = 'BUY' then quantity - filled_quantity else 0 end) as open_buy_quantity,
                                    sum(case when side = 'SELL' then quantity - filled_quantity else 0 end) as open_sell_quantity
-                              from stock_order
+                              from stock_order %s
                              where account_id in (:accountIds)
                                and market_type = 'ORDER_BOOK'
                                and status in ('PENDING', 'PARTIALLY_FILLED')
@@ -81,58 +81,47 @@ final class AutoParticipantAggregateQuerySupport {
                            ) as last_order_at
                     """;
 
-    static final String TODAY_EXECUTION_AGGREGATE_SQL = """
+    static final String EXECUTION_AGGREGATE_SQL = """
                     select account_id,
-                           count(*) as today_execution_count,
-                           sum(case when side = 'BUY' then quantity else 0 end) as today_buy_quantity,
-                           sum(case when side = 'SELL' then quantity else 0 end) as today_sell_quantity,
-                           sum(gross_amount) as today_gross_amount
-                     from stock_execution
+                           sum(case when simulation_trade_date = :todayDate then execution_count else 0 end) as today_execution_count,
+                           sum(case when simulation_trade_date = :todayDate then buy_quantity else 0 end) as today_buy_quantity,
+                           sum(case when simulation_trade_date = :todayDate then sell_quantity else 0 end) as today_sell_quantity,
+                           sum(case when simulation_trade_date = :todayDate then gross_amount else 0 end) as today_gross_amount,
+                           max(case
+                                   when last_executed_at >= :activityStart
+                                    and last_executed_at <= :activityEnd then last_executed_at
+                               end) as last_execution_at
+                     from stock_execution_account_day_summary
                      where account_id in (:accountIds)
-                       and source = 'INTERNAL_ORDER_BOOK'
-                       and executed_at >= :todayStart
-                       and executed_at <= :todayEnd
+                       and simulation_trade_date >= :activityStartDate
+                       and simulation_trade_date <= :activityEndDate
                      group by account_id
                     """;
 
-    static final String LAST_EXECUTION_LOOKUP_SQL = """
-                    select cast(:accountId%d as %s) as account_id,
-                           (
-                               select executed_at
-                                 from stock_execution %s
-                                where account_id = :accountId%d
-                                  and source = 'INTERNAL_ORDER_BOOK'
-                                  and executed_at >= :activityStart
-                                  and executed_at <= :activityEnd
-                                order by executed_at desc
-                                limit 1
-                           ) as last_execution_at
-                    """;
-
-    static final String LAST_EXECUTION_LOOKUP_ALL_SQL = """
-                    select cast(:accountId%d as %s) as account_id,
-                           (
-                               select executed_at
-                                 from stock_execution %s
-                                where account_id = :accountId%d
-                                  and source = 'INTERNAL_ORDER_BOOK'
-                                  and executed_at <= :activityEnd
-                                order by executed_at desc
-                                limit 1
-                           ) as last_execution_at
+    static final String EXECUTION_AGGREGATE_ALL_SQL = """
+                    select account_id,
+                           sum(case when simulation_trade_date = :todayDate then execution_count else 0 end) as today_execution_count,
+                           sum(case when simulation_trade_date = :todayDate then buy_quantity else 0 end) as today_buy_quantity,
+                           sum(case when simulation_trade_date = :todayDate then sell_quantity else 0 end) as today_sell_quantity,
+                           sum(case when simulation_trade_date = :todayDate then gross_amount else 0 end) as today_gross_amount,
+                           max(case when last_executed_at <= :activityEnd then last_executed_at end) as last_execution_at
+                      from stock_execution_account_day_summary
+                     where account_id in (:accountIds)
+                       and simulation_trade_date <= :activityEndDate
+                     group by account_id
                     """;
 
     private final JdbcClient jdbcClient;
     private final String accountIdCastType;
+    private final String openOrderIndexHint;
     private final String orderIndexHint;
-    private final String executionIndexHint;
 
     AutoParticipantAggregateQuerySupport(JdbcClient jdbcClient, JdbcTemplate jdbcTemplate) {
         this.jdbcClient = jdbcClient;
         boolean mysql = isMysql(jdbcTemplate);
         this.accountIdCastType = mysql ? "signed" : "bigint";
+        this.openOrderIndexHint = mysql ? "force index (idx_stock_order_market_status_account_time)" : "";
         this.orderIndexHint = mysql ? "force index (idx_stock_order_account_market_created)" : "";
-        this.executionIndexHint = mysql ? "force index (idx_stock_execution_account_source_time)" : "";
     }
 
     <T extends AutoParticipantAggregateTarget> void applyAccountAggregates(
@@ -190,7 +179,7 @@ final class AutoParticipantAggregateQuerySupport {
             List<Long> accountIds,
             Map<Long, T> targetByAccountId
     ) {
-        jdbcClient.sql(OPEN_ORDER_AGGREGATE_SQL)
+        jdbcClient.sql(OPEN_ORDER_AGGREGATE_SQL.formatted(openOrderIndexHint))
                 .param("accountIds", accountIds)
                 .query(rs -> {
                     T target = targetByAccountId.get(rs.getLong("account_id"));
@@ -311,20 +300,19 @@ final class AutoParticipantAggregateQuerySupport {
             ActivityWindow activityWindow,
             Map<Long, T> targetByAccountId
     ) {
-        applyTodayExecutionAggregates(accountIds, todayStart, activityWindow.end(), targetByAccountId);
-        applyLastExecutionAggregates(accountIds, activityWindow, targetByAccountId);
-    }
-
-    private <T extends AutoParticipantAggregateTarget> void applyTodayExecutionAggregates(
-            List<Long> accountIds,
-            LocalDateTime todayStart,
-            LocalDateTime todayEnd,
-            Map<Long, T> targetByAccountId
-    ) {
-        jdbcClient.sql(TODAY_EXECUTION_AGGREGATE_SQL)
+        JdbcClient.StatementSpec statement = jdbcClient.sql(
+                        activityWindow.all() ? EXECUTION_AGGREGATE_ALL_SQL : EXECUTION_AGGREGATE_SQL
+                )
                 .param("accountIds", accountIds)
-                .param("todayStart", todayStart)
-                .param("todayEnd", todayEnd)
+                .param("todayDate", todayStart.toLocalDate())
+                .param("activityEnd", activityWindow.end())
+                .param("activityEndDate", activityWindow.end().toLocalDate());
+        if (!activityWindow.all()) {
+            statement = statement
+                    .param("activityStart", activityWindow.start())
+                    .param("activityStartDate", activityWindow.start().toLocalDate());
+        }
+        statement
                 .query(rs -> {
                     T target = targetByAccountId.get(rs.getLong("account_id"));
                     if (target != null) {
@@ -334,33 +322,10 @@ final class AutoParticipantAggregateQuerySupport {
                                 rs.getLong("today_sell_quantity"),
                                 AutoParticipantQuerySupport.zeroIfNull(rs.getBigDecimal("today_gross_amount"))
                         );
-                    }
-                });
-    }
-
-    private <T extends AutoParticipantAggregateTarget> void applyLastExecutionAggregates(
-            List<Long> accountIds,
-            ActivityWindow activityWindow,
-            Map<Long, T> targetByAccountId
-    ) {
-        var statement = jdbcClient.sql(latestLookupSql(
-                        accountIds.size(),
-                        activityWindow.all() ? LAST_EXECUTION_LOOKUP_ALL_SQL : LAST_EXECUTION_LOOKUP_SQL,
-                        executionIndexHint
-                ))
-                .param("activityEnd", activityWindow.end());
-        for (int index = 0; index < accountIds.size(); index++) {
-            statement = statement.param("accountId" + index, accountIds.get(index));
-        }
-        if (!activityWindow.all()) {
-            statement = statement.param("activityStart", activityWindow.start());
-        }
-        statement
-                .query(rs -> {
-                    T target = targetByAccountId.get(rs.getLong("account_id"));
-                    LocalDateTime lastExecutionAt = rs.getObject("last_execution_at", LocalDateTime.class);
-                    if (target != null && lastExecutionAt != null) {
-                        target.recordLastExecutionAt(lastExecutionAt);
+                        LocalDateTime lastExecutionAt = rs.getObject("last_execution_at", LocalDateTime.class);
+                        if (lastExecutionAt != null) {
+                            target.recordLastExecutionAt(lastExecutionAt);
+                        }
                     }
                 });
     }

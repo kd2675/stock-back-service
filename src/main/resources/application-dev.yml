@@ -26,7 +26,7 @@ database:
           validation-timeout: 5000
           idle-timeout: 240000
           max-lifetime: 300000
-          keepalive-time: 120000
+          keepalive-time: 30000
       slave1:
         url: jdbc:mysql://kimd0.iptime.org:23306/STOCK_SERVICE?zeroDateTimeBehavior=convertToNull&useLegacyDatetimeCode=false&serverTimezone=Asia/Seoul&noAccessToProcedureBodies=true&useSSL=false&allowPublicKeyRetrieval=true&connectTimeout=5000&socketTimeout=30000&tcpKeepAlive=true
         username: root
@@ -40,4 +40,4 @@ database:
           validation-timeout: 5000
           idle-timeout: 240000
           max-lifetime: 300000
-          keepalive-time: 120000
+          keepalive-time: 30000

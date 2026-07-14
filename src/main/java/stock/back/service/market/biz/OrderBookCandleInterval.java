@@ -127,6 +127,21 @@ enum OrderBookCandleInterval {
         return this == DAY || this == WEEK;
     }
 
+    boolean usesDailyCloseSnapshots() {
+        return this == DAY || this == WEEK;
+    }
+
+    LocalDateTime floorHistoricalDate(LocalDateTime value) {
+        if (this == DAY) {
+            return value.toLocalDate().atStartOfDay();
+        }
+        if (this == WEEK) {
+            long daysSinceWeekStart = value.toLocalDate().getDayOfWeek().getValue() - 1L;
+            return value.toLocalDate().minusDays(daysSinceWeekStart).atStartOfDay();
+        }
+        return floor(value);
+    }
+
     long simulationBucketSeconds(SimulationClockSnapshot clock) {
         if (this == DAY) {
             return SIMULATION_DAY_SECONDS;

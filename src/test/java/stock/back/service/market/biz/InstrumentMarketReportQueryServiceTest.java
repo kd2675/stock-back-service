@@ -14,6 +14,7 @@ import java.time.LocalDateTime;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class InstrumentMarketReportQueryServiceTest {
@@ -23,6 +24,7 @@ class InstrumentMarketReportQueryServiceTest {
 
     private JdbcTemplate jdbcTemplate;
     private InstrumentMarketReportQueryService service;
+    private InstrumentReportService instrumentReportService;
 
     @BeforeEach
     void setUp() {
@@ -39,7 +41,7 @@ class InstrumentMarketReportQueryServiceTest {
         jdbcTemplate.update("delete from stock_order_book_market_config");
         jdbcTemplate.update("delete from stock_price");
         jdbcTemplate.update("delete from stock_order_book_instrument");
-        InstrumentReportService instrumentReportService = mock(InstrumentReportService.class);
+        instrumentReportService = mock(InstrumentReportService.class);
         SimulationClockService simulationClockService = mock(SimulationClockService.class);
         InstrumentMarketReportAnalyticsQueryService analyticsQueryService = mock(InstrumentMarketReportAnalyticsQueryService.class);
         when(simulationClockService.currentSnapshot()).thenReturn(new SimulationClockSnapshot(
@@ -67,6 +69,7 @@ class InstrumentMarketReportQueryServiceTest {
     void getInstrumentMarketReport_usesLatestGlobalCloseAndExcludesLiveOrderBookState() {
         insertInstrument();
         insertCompletedDailySnapshot();
+        jdbcTemplate.update("update stock_order_book_instrument set enabled = false where symbol = 'DEMO002'");
         insertExecutionPair(1L, 2L, 3_000L, "6000.00", DAY_START.plusHours(9));
         insertExecutionPair(3L, 4L, 1_000L, "6050.00", DAY_START.plusHours(10));
         insertExecutionPair(5L, 6L, 9_000L, "6100.00", NOW.minusMinutes(10));
@@ -109,6 +112,10 @@ class InstrumentMarketReportQueryServiceTest {
                 new BigDecimal("6050.00"),
                 "internal-order-book"
         );
+        verify(instrumentReportService).getLatestInstrumentReportAt(
+                "DEMO002",
+                DAY_START.plusHours(18)
+        );
     }
 
     @Test
@@ -134,13 +141,24 @@ class InstrumentMarketReportQueryServiceTest {
                     close_run_id bigint not null,
                     symbol varchar(20) not null,
                     simulation_trade_date date not null,
+                    name varchar(120) not null,
+                    market varchar(20) not null,
+                    initial_price decimal(19, 2) not null,
                     close_price decimal(19, 2) not null,
                     previous_close decimal(19, 2) not null,
                     issued_shares bigint not null,
                     tradable_shares bigint not null,
                     price_limit_rate decimal(5, 2) not null,
                     price_time timestamp,
-                    price_provider varchar(40)
+                    price_provider varchar(40),
+                    execution_count bigint not null,
+                    buy_quantity bigint not null,
+                    turnover_amount decimal(19, 2) not null,
+                    open_price decimal(19, 2) not null,
+                    high_price decimal(19, 2) not null,
+                    low_price decimal(19, 2) not null,
+                    last_execution_price decimal(19, 2) not null,
+                    last_executed_at timestamp
                 )
                 """);
         jdbcTemplate.execute("""
@@ -223,20 +241,30 @@ class InstrumentMarketReportQueryServiceTest {
                 """, DAY_START.toLocalDate(), DAY_START.plusHours(18));
         jdbcTemplate.update("""
                 insert into stock_order_book_daily_snapshot(
-                    id, close_run_id, symbol, simulation_trade_date, close_price, previous_close,
-                    issued_shares, tradable_shares, price_limit_rate, price_time, price_provider
-                ) values (1, 1, 'DEMO002', ?, 6050.00, 6000.00, 10000000, 8000000, 30.00, ?, 'internal-order-book')
-                """, DAY_START.toLocalDate(), DAY_START.plusHours(10));
+                    id, close_run_id, symbol, simulation_trade_date, name, market, initial_price,
+                    close_price, previous_close, issued_shares, tradable_shares, price_limit_rate,
+                    price_time, price_provider, execution_count, buy_quantity, turnover_amount,
+                    open_price, high_price, low_price, last_execution_price, last_executed_at
+                ) values (1, 1, 'DEMO002', ?, '주식2', 'KOSPI', 5000.00,
+                    6050.00, 6000.00, 10000000, 8000000, 30.00,
+                    ?, 'internal-order-book', 4, 4000, 48100000.00,
+                    6000.00, 6050.00, 6000.00, 6050.00, ?)
+                """, DAY_START.toLocalDate(), DAY_START.plusHours(10), DAY_START.plusHours(10));
         jdbcTemplate.update("""
                 insert into stock_market_close_run(id, symbol, business_date, status, completed_at)
                 values (2, 'DEMO002', ?, 'COMPLETED', ?)
                 """, NOW.toLocalDate(), NOW.minusMinutes(20));
         jdbcTemplate.update("""
                 insert into stock_order_book_daily_snapshot(
-                    id, close_run_id, symbol, simulation_trade_date, close_price, previous_close,
-                    issued_shares, tradable_shares, price_limit_rate, price_time, price_provider
-                ) values (2, 2, 'DEMO002', ?, 6200.00, 6050.00, 10000000, 8000000, 30.00, ?, 'internal-order-book')
-                """, NOW.toLocalDate(), NOW);
+                    id, close_run_id, symbol, simulation_trade_date, name, market, initial_price,
+                    close_price, previous_close, issued_shares, tradable_shares, price_limit_rate,
+                    price_time, price_provider, execution_count, buy_quantity, turnover_amount,
+                    open_price, high_price, low_price, last_execution_price, last_executed_at
+                ) values (2, 2, 'DEMO002', ?, '주식2', 'KOSPI', 5000.00,
+                    6200.00, 6050.00, 10000000, 8000000, 30.00,
+                    ?, 'internal-order-book', 2, 9000, 109800000.00,
+                    6100.00, 6100.00, 6100.00, 6100.00, ?)
+                """, NOW.toLocalDate(), NOW, NOW);
     }
 
     private void insertExecutionPair(long buyId, long sellId, long quantity, String price, LocalDateTime executedAt) {

@@ -16,7 +16,7 @@ import stock.back.service.market.biz.AutoMarketStatusQueryService;
 import stock.back.service.market.biz.MarketCatalogQueryService;
 import stock.back.service.market.biz.OrderBookCandleQueryService;
 import stock.back.service.market.biz.OrderBookInstrumentCommandService;
-import stock.back.service.market.biz.InstrumentMarketReportQueryService;
+import stock.back.service.market.biz.InstrumentMarketReportService;
 import stock.back.service.market.biz.OrderBookMarketStatusQueryService;
 import stock.back.service.market.biz.OrderBookQueryService;
 import stock.back.service.market.vo.AutoMarketStatusResponse;
@@ -44,7 +44,7 @@ public class OrderBookMarketController {
     private final OrderBookCandleQueryService orderBookCandleQueryService;
     private final OrderBookMarketStatusQueryService orderBookMarketStatusQueryService;
     private final AutoMarketStatusQueryService autoMarketStatusQueryService;
-    private final InstrumentMarketReportQueryService instrumentMarketReportQueryService;
+    private final InstrumentMarketReportService instrumentMarketReportService;
 
     @GetMapping("/order-book-instruments")
     public ResponseDataDTO<List<OrderBookInstrumentResponse>> getOrderBookInstruments() {
@@ -53,7 +53,7 @@ public class OrderBookMarketController {
 
     @GetMapping("/order-book-instruments/{symbol}/market-report")
     public ResponseDataDTO<InstrumentMarketReportResponse> getInstrumentMarketReport(@PathVariable String symbol) {
-        return ResponseDataDTO.of(instrumentMarketReportQueryService.getInstrumentMarketReport(symbol));
+        return ResponseDataDTO.of(instrumentMarketReportService.getInstrumentMarketReport(symbol));
     }
 
     @PostMapping("/order-book-instruments")

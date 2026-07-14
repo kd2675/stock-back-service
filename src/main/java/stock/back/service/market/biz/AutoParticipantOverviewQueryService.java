@@ -1,5 +1,6 @@
 package stock.back.service.market.biz;
 
+import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
@@ -27,13 +28,15 @@ public class AutoParticipantOverviewQueryService {
     private final AutoParticipantHoldingQueryService autoParticipantHoldingQueryService;
     private final AutoParticipantProfileOverviewQueryService autoParticipantProfileOverviewQueryService;
     private final SimulationClockService simulationClockService;
+    private final MeterRegistry meterRegistry;
 
     public AutoParticipantOverviewQueryService(
             NamedParameterJdbcTemplate namedParameterJdbcTemplate,
             AutoMarketStatusDataLoader autoMarketStatusDataLoader,
             AutoParticipantHoldingQueryService autoParticipantHoldingQueryService,
             AutoParticipantProfileOverviewQueryService autoParticipantProfileOverviewQueryService,
-            SimulationClockService simulationClockService
+            SimulationClockService simulationClockService,
+            MeterRegistry meterRegistry
     ) {
         this.jdbcClient = JdbcClient.create(namedParameterJdbcTemplate);
         this.aggregateQuerySupport = new AutoParticipantAggregateQuerySupport(
@@ -44,6 +47,7 @@ public class AutoParticipantOverviewQueryService {
         this.autoParticipantHoldingQueryService = autoParticipantHoldingQueryService;
         this.autoParticipantProfileOverviewQueryService = autoParticipantProfileOverviewQueryService;
         this.simulationClockService = simulationClockService;
+        this.meterRegistry = meterRegistry;
     }
 
     public List<AutoParticipantProfileOverviewResponse> getAutoParticipantProfileOverviews() {
@@ -70,7 +74,20 @@ public class AutoParticipantOverviewQueryService {
         return getAutoParticipantOverviews(includeHoldings, userKeys, AutoParticipantActivityScope.RECENT_SIMULATION_DAY);
     }
 
+    @Transactional(readOnly = true)
     public List<AutoParticipantOverviewResponse> getAutoParticipantOverviews(
+            boolean includeHoldings,
+            List<String> userKeys,
+            AutoParticipantActivityScope activityScope
+    ) {
+        return meterRegistry.timer(
+                "stock.auto.participant.overview.query.duration",
+                "view",
+                "participant"
+        ).record(() -> loadAutoParticipantOverviews(includeHoldings, userKeys, activityScope));
+    }
+
+    private List<AutoParticipantOverviewResponse> loadAutoParticipantOverviews(
             boolean includeHoldings,
             List<String> userKeys,
             AutoParticipantActivityScope activityScope

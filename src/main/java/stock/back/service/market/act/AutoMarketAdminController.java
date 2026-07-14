@@ -14,6 +14,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import stock.back.service.market.biz.AutoMarketConfigService;
+import stock.back.service.market.biz.AutoParticipantOverviewCacheService;
 import stock.back.service.market.biz.AutoParticipantCashAdjustmentService;
 import stock.back.service.market.biz.AutoParticipantManagementService;
 import stock.back.service.market.biz.AutoParticipantOverviewQueryService;
@@ -46,6 +47,7 @@ import java.util.List;
 public class AutoMarketAdminController {
 
     private final AutoParticipantOverviewQueryService autoParticipantOverviewQueryService;
+    private final AutoParticipantOverviewCacheService autoParticipantOverviewCacheService;
     private final AutoParticipantProfileConfigService autoParticipantProfileConfigService;
     private final AutoMarketConfigService autoMarketConfigService;
     private final AutoParticipantManagementService autoParticipantManagementService;
@@ -58,7 +60,7 @@ public class AutoMarketAdminController {
             @RequestParam(defaultValue = "") List<String> userKeys,
             @RequestParam(defaultValue = "RECENT_SIMULATION_DAY") AutoParticipantActivityScope activityScope
     ) {
-        return ResponseDataDTO.of(autoParticipantOverviewQueryService.getAutoParticipantOverviews(includeHoldings, userKeys, activityScope));
+        return ResponseDataDTO.of(autoParticipantOverviewCacheService.getAutoParticipantOverviews(includeHoldings, userKeys, activityScope));
     }
 
     @GetMapping("/auto-market/participants")
@@ -78,7 +80,7 @@ public class AutoMarketAdminController {
             @RequestParam(defaultValue = "RECENT_SIMULATION_DAY") AutoParticipantActivityScope activityScope,
             @RequestParam(defaultValue = "") List<String> profileTypes
     ) {
-        return ResponseDataDTO.of(autoParticipantOverviewQueryService.getAutoParticipantProfileOverviews(activityScope, profileTypes));
+        return ResponseDataDTO.of(autoParticipantOverviewCacheService.getAutoParticipantProfileOverviews(activityScope, profileTypes));
     }
 
     @PatchMapping("/auto-market/profile-configs/{profileType}")

@@ -1,8 +1,11 @@
 package stock.back.service.market.biz;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -58,6 +61,15 @@ public class OrderBookCandleQueryService {
         LocalDateTime lastBucketStart = candleInterval.floor(clock.simulationDateTime(), clock);
         LocalDateTime firstBucketStart = candleInterval.minus(lastBucketStart, candleInterval.limit() - 1, clock);
         LocalDateTime endExclusive = candleInterval.next(lastBucketStart, clock);
+        if (candleInterval.usesDailyCloseSnapshots()) {
+            return getDailySnapshotCandles(
+                    normalizedSymbol,
+                    candleInterval,
+                    clock,
+                    firstBucketStart,
+                    currentSimulationTime
+            );
+        }
         long simulationBucketSeconds = candleInterval.usesSimulationClockAnchor()
                 ? candleInterval.simulationBucketSeconds(clock)
                 : 0;
@@ -137,6 +149,196 @@ public class OrderBookCandleQueryService {
             bucketStart = candleInterval.next(bucketStart, clock);
         }
         return candles;
+    }
+
+    private List<OrderBookCandleResponse> getDailySnapshotCandles(
+            String symbol,
+            OrderBookCandleInterval candleInterval,
+            SimulationClockSnapshot clock,
+            LocalDateTime firstBucketStart,
+            LocalDateTime currentSimulationTime
+    ) {
+        List<DailyCandleSourceRow> dailyRows = new ArrayList<>(loadCompletedDailyRows(
+                symbol,
+                firstBucketStart.toLocalDate(),
+                currentSimulationTime.toLocalDate()
+        ));
+        loadCurrentDayRow(symbol, currentSimulationTime).ifPresent(dailyRows::add);
+
+        Map<LocalDateTime, DailyCandleAccumulator> byBucket = new LinkedHashMap<>();
+        dailyRows.stream()
+                .sorted(java.util.Comparator.comparing(DailyCandleSourceRow::tradeDate))
+                .forEach(row -> byBucket.computeIfAbsent(
+                                candleInterval.floorHistoricalDate(row.tradeDate().atStartOfDay()),
+                                ignored -> new DailyCandleAccumulator()
+                        )
+                        .add(row));
+
+        BigDecimal lastClose = findPreviousDailySnapshotClose(symbol, firstBucketStart.toLocalDate())
+                .or(() -> findPreviousOrderBookExecutionPrice(symbol, firstBucketStart))
+                .or(() -> stockPriceRepository.findById(symbol).map(StockPrice::getCurrentPrice))
+                .orElse(null);
+        List<OrderBookCandleResponse> candles = new ArrayList<>(candleInterval.limit());
+        LocalDateTime bucketStart = firstBucketStart;
+        for (int index = 0; index < candleInterval.limit(); index++) {
+            DailyCandleAccumulator aggregate = byBucket.get(bucketStart);
+            if (aggregate != null) {
+                OrderBookCandleResponse candle = aggregate.toResponse(symbol, candleInterval.value(), bucketStart);
+                candles.add(candle);
+                lastClose = candle.closePrice();
+            } else if (lastClose != null) {
+                candles.add(new OrderBookCandleResponse(
+                        symbol,
+                        candleInterval.value(),
+                        bucketStart,
+                        lastClose,
+                        lastClose,
+                        lastClose,
+                        lastClose,
+                        0L,
+                        BigDecimal.ZERO,
+                        0L,
+                        false
+                ));
+            }
+            bucketStart = candleInterval.next(bucketStart, clock);
+        }
+        return candles;
+    }
+
+    private List<DailyCandleSourceRow> loadCompletedDailyRows(
+            String symbol,
+            LocalDate startDate,
+            LocalDate currentDate
+    ) {
+        return jdbcClient.sql(
+                        """
+                        select simulation_trade_date,
+                               open_price,
+                               high_price,
+                               low_price,
+                               last_execution_price,
+                               buy_quantity,
+                               turnover_amount,
+                               execution_count
+                          from (
+                                select snapshot.*,
+                                       row_number() over (
+                                           partition by snapshot.simulation_trade_date
+                                           order by snapshot.close_run_id desc, snapshot.id desc
+                                       ) as snapshot_rank
+                                  from stock_order_book_daily_snapshot snapshot
+                                  join stock_market_close_run close_run
+                                    on close_run.id = snapshot.close_run_id
+                                   and close_run.symbol is null
+                                   and close_run.status = 'COMPLETED'
+                                 where snapshot.symbol = ?
+                                   and snapshot.simulation_trade_date >= ?
+                                   and snapshot.simulation_trade_date < ?
+                          ) latest_snapshot
+                         where snapshot_rank = 1
+                           and execution_count > 0
+                         order by simulation_trade_date asc
+                        """
+                )
+                .params(symbol, startDate, currentDate)
+                .query((rs, rowNum) -> new DailyCandleSourceRow(
+                        rs.getObject("simulation_trade_date", LocalDate.class),
+                        rs.getBigDecimal("open_price"),
+                        rs.getBigDecimal("high_price"),
+                        rs.getBigDecimal("low_price"),
+                        rs.getBigDecimal("last_execution_price"),
+                        rs.getLong("buy_quantity"),
+                        MarketQuerySupport.zeroIfNull(rs.getBigDecimal("turnover_amount"))
+                                .divide(BigDecimal.valueOf(2), 2, RoundingMode.HALF_UP),
+                        rs.getLong("execution_count") / 2L
+                ))
+                .list();
+    }
+
+    private Optional<DailyCandleSourceRow> loadCurrentDayRow(
+            String symbol,
+            LocalDateTime currentSimulationTime
+    ) {
+        LocalDate tradeDate = currentSimulationTime.toLocalDate();
+        LocalDateTime dayStart = tradeDate.atStartOfDay();
+        return jdbcClient.sql(
+                        """
+                        select (select price
+                                  from stock_execution force index (idx_stock_execution_candle)
+                                 where symbol = ?
+                                   and source = 'INTERNAL_ORDER_BOOK'
+                                   and side = 'BUY'
+                                   and executed_at >= ?
+                                   and executed_at <= ?
+                                 order by executed_at asc, id asc
+                                 limit 1) as open_price,
+                               max(price) as high_price,
+                               min(price) as low_price,
+                               (select price
+                                  from stock_execution force index (idx_stock_execution_candle)
+                                 where symbol = ?
+                                   and source = 'INTERNAL_ORDER_BOOK'
+                                   and side = 'BUY'
+                                   and executed_at >= ?
+                                   and executed_at <= ?
+                                 order by executed_at desc, id desc
+                                 limit 1) as close_price,
+                               coalesce(sum(quantity), 0) as volume,
+                               coalesce(sum(gross_amount), 0) as turnover,
+                               count(*) as execution_count
+                          from stock_execution force index (idx_stock_execution_candle)
+                         where symbol = ?
+                           and source = 'INTERNAL_ORDER_BOOK'
+                           and side = 'BUY'
+                           and executed_at >= ?
+                           and executed_at <= ?
+                        """
+                )
+                .params(
+                        symbol, dayStart, currentSimulationTime,
+                        symbol, dayStart, currentSimulationTime,
+                        symbol, dayStart, currentSimulationTime
+                )
+                .query((rs, rowNum) -> {
+                    long executionCount = rs.getLong("execution_count");
+                    if (executionCount == 0L) {
+                        return null;
+                    }
+                    return new DailyCandleSourceRow(
+                            tradeDate,
+                            rs.getBigDecimal("open_price"),
+                            rs.getBigDecimal("high_price"),
+                            rs.getBigDecimal("low_price"),
+                            rs.getBigDecimal("close_price"),
+                            rs.getLong("volume"),
+                            MarketQuerySupport.zeroIfNull(rs.getBigDecimal("turnover")),
+                            executionCount
+                    );
+                })
+                .optional();
+    }
+
+    private Optional<BigDecimal> findPreviousDailySnapshotClose(String symbol, LocalDate beforeDate) {
+        return jdbcClient.sql(
+                        """
+                        select snapshot.close_price
+                          from stock_order_book_daily_snapshot snapshot
+                          join stock_market_close_run close_run
+                            on close_run.id = snapshot.close_run_id
+                           and close_run.symbol is null
+                           and close_run.status = 'COMPLETED'
+                         where snapshot.symbol = ?
+                           and snapshot.simulation_trade_date < ?
+                         order by snapshot.simulation_trade_date desc,
+                                  snapshot.close_run_id desc,
+                                  snapshot.id desc
+                         limit 1
+                        """
+                )
+                .params(symbol, beforeDate)
+                .query(BigDecimal.class)
+                .optional();
     }
 
     private List<Object> queryParameters(
@@ -333,6 +535,61 @@ public class OrderBookCandleQueryService {
             BigDecimal openPrice,
             BigDecimal closePrice
     ) {
+    }
+
+    private record DailyCandleSourceRow(
+            LocalDate tradeDate,
+            BigDecimal openPrice,
+            BigDecimal highPrice,
+            BigDecimal lowPrice,
+            BigDecimal closePrice,
+            long volume,
+            BigDecimal turnover,
+            long executionCount
+    ) {
+    }
+
+    private static final class DailyCandleAccumulator {
+
+        private BigDecimal openPrice;
+        private BigDecimal highPrice;
+        private BigDecimal lowPrice;
+        private BigDecimal closePrice;
+        private long volume;
+        private BigDecimal turnover = BigDecimal.ZERO;
+        private long executionCount;
+
+        private void add(DailyCandleSourceRow row) {
+            if (openPrice == null) {
+                openPrice = row.openPrice();
+            }
+            highPrice = highPrice == null || row.highPrice().compareTo(highPrice) > 0
+                    ? row.highPrice()
+                    : highPrice;
+            lowPrice = lowPrice == null || row.lowPrice().compareTo(lowPrice) < 0
+                    ? row.lowPrice()
+                    : lowPrice;
+            closePrice = row.closePrice();
+            volume += row.volume();
+            turnover = turnover.add(row.turnover());
+            executionCount += row.executionCount();
+        }
+
+        private OrderBookCandleResponse toResponse(String symbol, String interval, LocalDateTime bucketStart) {
+            return new OrderBookCandleResponse(
+                    symbol,
+                    interval,
+                    bucketStart,
+                    openPrice,
+                    highPrice,
+                    lowPrice,
+                    closePrice,
+                    volume,
+                    turnover,
+                    executionCount,
+                    true
+            );
+        }
     }
 
 }

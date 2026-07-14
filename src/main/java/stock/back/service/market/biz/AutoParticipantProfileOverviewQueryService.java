@@ -1,9 +1,11 @@
 package stock.back.service.market.biz;
 
+import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import stock.back.service.market.vo.AutoParticipantActivityScope;
 import stock.back.service.market.vo.AutoParticipantProfileOverviewResponse;
 import stock.back.service.market.vo.AutoParticipantProfileSymbolHoldingResponse;
@@ -24,14 +26,17 @@ public class AutoParticipantProfileOverviewQueryService {
     private final JdbcClient jdbcClient;
     private final AutoParticipantAggregateQuerySupport aggregateQuerySupport;
     private final SimulationClockService simulationClockService;
+    private final MeterRegistry meterRegistry;
 
     public AutoParticipantProfileOverviewQueryService(
             JdbcTemplate jdbcTemplate,
-            SimulationClockService simulationClockService
+            SimulationClockService simulationClockService,
+            MeterRegistry meterRegistry
     ) {
         this.jdbcClient = JdbcClient.create(new NamedParameterJdbcTemplate(jdbcTemplate));
         this.aggregateQuerySupport = new AutoParticipantAggregateQuerySupport(jdbcClient, jdbcTemplate);
         this.simulationClockService = simulationClockService;
+        this.meterRegistry = meterRegistry;
     }
 
     public List<AutoParticipantProfileOverviewResponse> getAutoParticipantProfileOverviews() {
@@ -42,7 +47,19 @@ public class AutoParticipantProfileOverviewQueryService {
         return getAutoParticipantProfileOverviews(activityScope, List.of());
     }
 
+    @Transactional(readOnly = true)
     public List<AutoParticipantProfileOverviewResponse> getAutoParticipantProfileOverviews(
+            AutoParticipantActivityScope activityScope,
+            List<String> profileTypes
+    ) {
+        return meterRegistry.timer(
+                "stock.auto.participant.overview.query.duration",
+                "view",
+                "profile"
+        ).record(() -> loadAutoParticipantProfileOverviews(activityScope, profileTypes));
+    }
+
+    private List<AutoParticipantProfileOverviewResponse> loadAutoParticipantProfileOverviews(
             AutoParticipantActivityScope activityScope,
             List<String> profileTypes
     ) {

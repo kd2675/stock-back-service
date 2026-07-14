@@ -62,7 +62,7 @@ class StockBackDatasourceConfigurationTest {
         assertThat(properties.getProperty("database.datasource.pub.master.configure.max-lifetime"))
                 .isEqualTo("${STOCK_DB_MAX_LIFETIME:300000}");
         assertThat(properties.getProperty("database.datasource.pub.master.configure.keepalive-time"))
-                .isEqualTo("${STOCK_DB_KEEPALIVE_TIME:120000}");
+                .isEqualTo("${STOCK_DB_KEEPALIVE_TIME:30000}");
 
         assertThat(properties.getProperty("database.datasource.pub.slave1.url").toString())
                 .contains("connectTimeout=5000")
@@ -73,7 +73,7 @@ class StockBackDatasourceConfigurationTest {
         assertThat(properties.getProperty("database.datasource.pub.slave1.configure.max-lifetime"))
                 .isEqualTo("${STOCK_DB_SLAVE_MAX_LIFETIME:${STOCK_DB_MAX_LIFETIME:300000}}");
         assertThat(properties.getProperty("database.datasource.pub.slave1.configure.keepalive-time"))
-                .isEqualTo("${STOCK_DB_SLAVE_KEEPALIVE_TIME:${STOCK_DB_KEEPALIVE_TIME:120000}}");
+                .isEqualTo("${STOCK_DB_SLAVE_KEEPALIVE_TIME:${STOCK_DB_KEEPALIVE_TIME:30000}}");
     }
 
     private void assertProfileDatasource(PropertySource<?> properties, String prefix, String poolName) {
@@ -86,7 +86,7 @@ class StockBackDatasourceConfigurationTest {
         assertThat(properties.getProperty(prefix + ".configure.validation-timeout")).isEqualTo(5000);
         assertThat(properties.getProperty(prefix + ".configure.idle-timeout")).isEqualTo(240000);
         assertThat(properties.getProperty(prefix + ".configure.max-lifetime")).isEqualTo(300000);
-        assertThat(properties.getProperty(prefix + ".configure.keepalive-time")).isEqualTo(120000);
+        assertThat(properties.getProperty(prefix + ".configure.keepalive-time")).isEqualTo(30000);
     }
 
     private PropertySource<?> loadProperties(String resourceName) throws IOException {

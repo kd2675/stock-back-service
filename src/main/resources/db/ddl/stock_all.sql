@@ -533,6 +533,10 @@ CREATE TABLE IF NOT EXISTS stock_order_book_daily_snapshot (
   execution_count BIGINT NOT NULL DEFAULT 0,
   execution_quantity BIGINT NOT NULL DEFAULT 0,
   turnover_amount DECIMAL(19,2) NOT NULL DEFAULT 0.00,
+  open_price DECIMAL(19,2) NOT NULL DEFAULT 0.00,
+  high_price DECIMAL(19,2) NOT NULL DEFAULT 0.00,
+  low_price DECIMAL(19,2) NOT NULL DEFAULT 0.00,
+  last_execution_price DECIMAL(19,2) NOT NULL DEFAULT 0.00,
   buy_quantity BIGINT NOT NULL DEFAULT 0,
   sell_quantity BIGINT NOT NULL DEFAULT 0,
   buy_net_amount DECIMAL(19,2) NOT NULL DEFAULT 0.00,
@@ -544,6 +548,7 @@ CREATE TABLE IF NOT EXISTS stock_order_book_daily_snapshot (
   holder_count BIGINT NOT NULL DEFAULT 0,
   holding_quantity BIGINT NOT NULL DEFAULT 0,
   pending_corporate_action_count BIGINT NOT NULL DEFAULT 0,
+  first_executed_at DATETIME NULL,
   last_executed_at DATETIME NULL,
   created_at DATETIME NOT NULL,
   PRIMARY KEY (id),
@@ -552,12 +557,51 @@ CREATE TABLE IF NOT EXISTS stock_order_book_daily_snapshot (
   KEY idx_stock_order_book_daily_snapshot_symbol_date (symbol, simulation_trade_date, close_run_id),
   CONSTRAINT chk_stock_order_book_daily_snapshot_issued CHECK (issued_shares > 0),
   CONSTRAINT chk_stock_order_book_daily_snapshot_tradable CHECK (tradable_shares >= 0 AND tradable_shares <= issued_shares),
-  CONSTRAINT chk_stock_order_book_daily_snapshot_price CHECK (close_price >= 0 AND previous_close >= 0 AND initial_price > 0),
+  CONSTRAINT chk_stock_order_book_daily_snapshot_price CHECK (close_price >= 0 AND previous_close >= 0 AND initial_price > 0 AND open_price >= 0 AND high_price >= 0 AND low_price >= 0 AND last_execution_price >= 0),
   CONSTRAINT chk_stock_order_book_daily_snapshot_flow CHECK (execution_count >= 0 AND execution_quantity >= 0 AND turnover_amount >= 0 AND buy_quantity >= 0 AND sell_quantity >= 0 AND buy_net_amount >= 0 AND sell_net_amount >= 0),
   CONSTRAINT chk_stock_order_book_daily_snapshot_open_order CHECK (open_order_count >= 0 AND open_buy_order_count >= 0 AND open_sell_order_count >= 0 AND reserved_buy_cash >= 0),
   CONSTRAINT chk_stock_order_book_daily_snapshot_holding CHECK (holder_count >= 0 AND holding_quantity >= 0 AND pending_corporate_action_count >= 0),
   CONSTRAINT chk_stock_order_book_daily_snapshot_tick CHECK (tick_size > 0),
   CONSTRAINT chk_stock_order_book_daily_snapshot_limit CHECK (price_limit_rate > 0 AND price_limit_rate <= 100)
+);
+
+CREATE TABLE IF NOT EXISTS stock_execution_daily_account_snapshot (
+  id BIGINT NOT NULL AUTO_INCREMENT,
+  close_run_id BIGINT NOT NULL,
+  symbol VARCHAR(20) NOT NULL,
+  simulation_trade_date DATE NOT NULL,
+  account_id BIGINT NOT NULL,
+  participant_category VARCHAR(30) NOT NULL,
+  execution_count BIGINT NOT NULL DEFAULT 0,
+  buy_quantity BIGINT NOT NULL DEFAULT 0,
+  sell_quantity BIGINT NOT NULL DEFAULT 0,
+  buy_amount DECIMAL(19,2) NOT NULL DEFAULT 0.00,
+  sell_amount DECIMAL(19,2) NOT NULL DEFAULT 0.00,
+  net_cash_flow DECIMAL(19,2) NOT NULL DEFAULT 0.00,
+  execution_amount DECIMAL(19,2) NOT NULL DEFAULT 0.00,
+  created_at DATETIME NOT NULL,
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_stock_execution_daily_account_run_symbol_account (close_run_id, symbol, account_id),
+  KEY idx_stock_execution_daily_account_symbol_date (symbol, simulation_trade_date, close_run_id, account_id),
+  KEY idx_stock_execution_daily_account_account_date (account_id, simulation_trade_date, close_run_id),
+  CONSTRAINT chk_stock_execution_daily_account_category CHECK (CASE `participant_category` WHEN 'LISTING_UNDERWRITER' THEN 1 WHEN 'AUTO_PARTICIPANT' THEN 1 WHEN 'MANUAL_PARTICIPANT' THEN 1 ELSE 0 END = 1),
+  CONSTRAINT chk_stock_execution_daily_account_quantity CHECK (execution_count >= 0 AND buy_quantity >= 0 AND sell_quantity >= 0),
+  CONSTRAINT chk_stock_execution_daily_account_amount CHECK (buy_amount >= 0 AND sell_amount >= 0 AND execution_amount >= 0)
+);
+
+CREATE TABLE IF NOT EXISTS stock_execution_account_day_summary (
+  simulation_trade_date DATE NOT NULL,
+  account_id BIGINT NOT NULL,
+  execution_count BIGINT NOT NULL DEFAULT 0,
+  buy_quantity BIGINT NOT NULL DEFAULT 0,
+  sell_quantity BIGINT NOT NULL DEFAULT 0,
+  gross_amount DECIMAL(19,2) NOT NULL DEFAULT 0.00,
+  last_executed_at DATETIME NULL,
+  updated_at DATETIME NOT NULL,
+  PRIMARY KEY (simulation_trade_date, account_id),
+  KEY idx_stock_execution_account_day_account_date (account_id, simulation_trade_date),
+  CONSTRAINT chk_stock_execution_account_day_quantity CHECK (execution_count >= 0 AND buy_quantity >= 0 AND sell_quantity >= 0),
+  CONSTRAINT chk_stock_execution_account_day_amount CHECK (gross_amount >= 0)
 );
 
 CREATE TABLE IF NOT EXISTS stock_auto_participant (

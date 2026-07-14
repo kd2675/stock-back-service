@@ -53,8 +53,25 @@ class StockBackAuthorizationBoundaryTest {
         mockMvc = MockMvcBuilders.webAppContextSetup(webApplicationContext)
                 .addFilters(requirePrincipalRoleFilter.getFilter())
                 .build();
+        ensureExecutionAccountDaySummaryTable();
         cleanAdminMarketTestData();
         ensureDefaultVirtualMarketData();
+    }
+
+    private void ensureExecutionAccountDaySummaryTable() {
+        jdbcTemplate.execute("""
+                create table if not exists stock_execution_account_day_summary (
+                    simulation_trade_date date not null,
+                    account_id bigint not null,
+                    execution_count bigint not null default 0,
+                    buy_quantity bigint not null default 0,
+                    sell_quantity bigint not null default 0,
+                    gross_amount decimal(24, 2) not null default 0,
+                    last_executed_at timestamp null,
+                    updated_at timestamp not null,
+                    primary key (simulation_trade_date, account_id)
+                )
+                """);
     }
 
     private void cleanAdminMarketTestData() {

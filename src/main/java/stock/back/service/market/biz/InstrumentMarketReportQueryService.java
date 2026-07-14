@@ -45,20 +45,20 @@ public class InstrumentMarketReportQueryService {
         if (normalizedSymbol.isBlank()) {
             throw StockException.badRequest("Symbol is required");
         }
-        InstrumentRow instrument = findInstrument(normalizedSymbol);
         SimulationClockSnapshot clock = simulationClockService.currentSnapshot();
         LocalDateTime simulationDateTime = clock.simulationDateTime();
         ReportBasis reportBasis = findLatestCompletedReportBasis(normalizedSymbol, clock.simulationDate());
+        InstrumentRow instrument = reportBasis == null
+                ? findInstrument(normalizedSymbol)
+                : reportBasis.toInstrumentRow(normalizedSymbol);
         LocalDate reportDate = reportBasis == null ? null : reportBasis.reportDate();
         InstrumentDailyMarketSnapshotResponse daily = reportBasis == null
                 ? emptyDailySnapshot()
-                : findDailySnapshot(
-                        normalizedSymbol,
-                        reportBasis.tradableShares(),
-                        reportDate.atStartOfDay(),
-                        reportDate.plusDays(1).atStartOfDay()
-                );
-        InstrumentReportResponse latestEvaluation = instrumentReportService.getLatestInstrumentReport(normalizedSymbol);
+                : reportBasis.toDailySnapshot();
+        InstrumentReportResponse latestEvaluation = instrumentReportService.getLatestInstrumentReportAt(
+                normalizedSymbol,
+                reportBasis == null ? null : reportBasis.completedAt()
+        );
 
         BigDecimal closePrice = reportBasis == null ? BigDecimal.ZERO : reportBasis.closePrice();
         BigDecimal previousClose = reportBasis == null ? BigDecimal.ZERO : reportBasis.previousClose();
@@ -94,6 +94,8 @@ public class InstrumentMarketReportQueryService {
                 upperLimitPrice,
                 reportBasis == null ? null : reportBasis.priceTime(),
                 reportBasis == null ? null : reportBasis.priceProvider(),
+                reportBasis == null ? null : reportBasis.closeRunId(),
+                reportBasis == null ? null : reportBasis.completedAt(),
                 reportDate,
                 simulationDateTime,
                 daily,
@@ -106,6 +108,7 @@ public class InstrumentMarketReportQueryService {
                         closePrice,
                         reportBasis == null ? null : reportBasis.priceTime(),
                         reportBasis == null ? null : reportBasis.priceProvider(),
+                        reportBasis == null ? null : reportBasis.completedAt(),
                         daily,
                         reportDate,
                         clock
@@ -118,13 +121,25 @@ public class InstrumentMarketReportQueryService {
                         """
                         select snapshot.close_run_id,
                                snapshot.simulation_trade_date,
+                               snapshot.name,
+                               snapshot.market,
+                               snapshot.initial_price,
                                snapshot.close_price,
                                snapshot.previous_close,
                                snapshot.issued_shares,
                                snapshot.tradable_shares,
                                snapshot.price_limit_rate,
                                snapshot.price_time,
-                               snapshot.price_provider
+                               snapshot.price_provider,
+                               snapshot.execution_count,
+                               snapshot.buy_quantity,
+                               snapshot.turnover_amount,
+                               snapshot.open_price,
+                               snapshot.high_price,
+                               snapshot.low_price,
+                               snapshot.last_execution_price,
+                               snapshot.last_executed_at,
+                               close_run.completed_at
                           from stock_order_book_daily_snapshot snapshot
                           join stock_market_close_run close_run
                             on close_run.id = snapshot.close_run_id
@@ -142,13 +157,25 @@ public class InstrumentMarketReportQueryService {
                 .query((rs, rowNum) -> new ReportBasis(
                         rs.getLong("close_run_id"),
                         rs.getObject("simulation_trade_date", LocalDate.class),
+                        rs.getString("name"),
+                        rs.getString("market"),
+                        rs.getBigDecimal("initial_price"),
                         rs.getBigDecimal("close_price"),
                         rs.getBigDecimal("previous_close"),
                         rs.getLong("issued_shares"),
                         rs.getLong("tradable_shares"),
                         rs.getBigDecimal("price_limit_rate"),
                         MarketQuerySupport.toDateTime(rs.getTimestamp("price_time")),
-                        rs.getString("price_provider")
+                        rs.getString("price_provider"),
+                        rs.getLong("execution_count"),
+                        rs.getLong("buy_quantity"),
+                        rs.getBigDecimal("turnover_amount"),
+                        rs.getBigDecimal("open_price"),
+                        rs.getBigDecimal("high_price"),
+                        rs.getBigDecimal("low_price"),
+                        rs.getBigDecimal("last_execution_price"),
+                        MarketQuerySupport.toDateTime(rs.getTimestamp("last_executed_at")),
+                        MarketQuerySupport.toDateTime(rs.getTimestamp("completed_at"))
                 ))
                 .optional()
                 .orElse(null);
@@ -187,78 +214,6 @@ public class InstrumentMarketReportQueryService {
                 .orElseThrow(() -> StockException.notFound("Unknown stock symbol: " + symbol));
     }
 
-    private InstrumentDailyMarketSnapshotResponse findDailySnapshot(
-            String symbol,
-            long tradableShares,
-            LocalDateTime dayStart,
-            LocalDateTime dayEnd
-    ) {
-        String sql = """
-                select count(*) as trade_count,
-                       coalesce(sum(quantity), 0) as volume,
-                       coalesce(sum(gross_amount), 0) as turnover,
-                       coalesce(max(price), 0) as high_price,
-                       coalesce(min(price), 0) as low_price,
-                       coalesce((select e.price
-                                   from stock_execution e
-                                  where e.symbol = ?
-                                    and e.source = 'INTERNAL_ORDER_BOOK'
-                                    and e.side = 'BUY'
-                                    and e.executed_at >= ?
-                                    and e.executed_at < ?
-                                  order by e.executed_at asc, e.id asc
-                                  limit 1), 0) as open_price,
-                       coalesce((select e.price
-                                   from stock_execution e
-                                  where e.symbol = ?
-                                    and e.source = 'INTERNAL_ORDER_BOOK'
-                                    and e.side = 'BUY'
-                                    and e.executed_at >= ?
-                                    and e.executed_at < ?
-                                  order by e.executed_at desc, e.id desc
-                                  limit 1), 0) as last_price,
-                       (select e.executed_at
-                          from stock_execution e
-                         where e.symbol = ?
-                           and e.source = 'INTERNAL_ORDER_BOOK'
-                           and e.side = 'BUY'
-                           and e.executed_at >= ?
-                           and e.executed_at < ?
-                         order by e.executed_at desc, e.id desc
-                         limit 1) as last_executed_at
-                  from stock_execution
-                 where symbol = ?
-                   and source = 'INTERNAL_ORDER_BOOK'
-                   and side = 'BUY'
-                   and executed_at >= ?
-                   and executed_at < ?
-                """;
-        return jdbcClient.sql(sql)
-                .params(
-                        symbol, dayStart, dayEnd,
-                        symbol, dayStart, dayEnd,
-                        symbol, dayStart, dayEnd,
-                        symbol, dayStart, dayEnd
-                )
-                .query((rs, rowNum) -> {
-                    long volume = rs.getLong("volume");
-                    BigDecimal turnover = MarketQuerySupport.zeroIfNull(rs.getBigDecimal("turnover"));
-                    return new InstrumentDailyMarketSnapshotResponse(
-                            rs.getLong("trade_count"),
-                            volume,
-                            turnover,
-                            rate(BigDecimal.valueOf(volume), BigDecimal.valueOf(tradableShares)),
-                            volume <= 0 ? BigDecimal.ZERO : turnover.divide(BigDecimal.valueOf(volume), 4, RoundingMode.HALF_UP),
-                            MarketQuerySupport.zeroIfNull(rs.getBigDecimal("open_price")),
-                            MarketQuerySupport.zeroIfNull(rs.getBigDecimal("high_price")),
-                            MarketQuerySupport.zeroIfNull(rs.getBigDecimal("low_price")),
-                            MarketQuerySupport.zeroIfNull(rs.getBigDecimal("last_price")),
-                            MarketQuerySupport.toDateTime(rs.getTimestamp("last_executed_at"))
-                    );
-                })
-                .single();
-    }
-
     private InstrumentRow toInstrumentRow(ResultSet rs) throws SQLException {
         return new InstrumentRow(
                 rs.getString("symbol"),
@@ -288,13 +243,53 @@ public class InstrumentMarketReportQueryService {
     private record ReportBasis(
             long closeRunId,
             LocalDate reportDate,
+            String name,
+            String market,
+            BigDecimal initialPrice,
             BigDecimal closePrice,
             BigDecimal previousClose,
             long issuedShares,
             long tradableShares,
             BigDecimal priceLimitRate,
             LocalDateTime priceTime,
-            String priceProvider
+            String priceProvider,
+            long executionCount,
+            long buyQuantity,
+            BigDecimal turnoverAmount,
+            BigDecimal openPrice,
+            BigDecimal highPrice,
+            BigDecimal lowPrice,
+            BigDecimal lastExecutionPrice,
+            LocalDateTime lastExecutedAt,
+            LocalDateTime completedAt
     ) {
+        private InstrumentRow toInstrumentRow(String symbol) {
+            return new InstrumentRow(
+                    symbol,
+                    name,
+                    market,
+                    initialPrice,
+                    priceLimitRate
+            );
+        }
+
+        private InstrumentDailyMarketSnapshotResponse toDailySnapshot() {
+            BigDecimal turnover = MarketQuerySupport.zeroIfNull(turnoverAmount)
+                    .divide(BigDecimal.valueOf(2), 2, RoundingMode.HALF_UP);
+            return new InstrumentDailyMarketSnapshotResponse(
+                    executionCount / 2L,
+                    buyQuantity,
+                    turnover,
+                    rate(BigDecimal.valueOf(buyQuantity), BigDecimal.valueOf(tradableShares)),
+                    buyQuantity <= 0
+                            ? BigDecimal.ZERO
+                            : turnover.divide(BigDecimal.valueOf(buyQuantity), 4, RoundingMode.HALF_UP),
+                    MarketQuerySupport.zeroIfNull(openPrice),
+                    MarketQuerySupport.zeroIfNull(highPrice),
+                    MarketQuerySupport.zeroIfNull(lowPrice),
+                    MarketQuerySupport.zeroIfNull(lastExecutionPrice),
+                    lastExecutedAt
+            );
+        }
     }
 }
