@@ -188,6 +188,43 @@ class AdminFlowQueryServiceTest {
     }
 
     @Test
+    void getAdminTotalAssetHistory_readsSevenSettlementDaysWithChanges() {
+        JdbcTemplate jdbcTemplate = createJdbcTemplate("admin_flow_query_service_total_asset_history_test");
+        AdminFlowQueryService service = createService(jdbcTemplate);
+        for (int dayOffset = 0; dayOffset < 10; dayOffset++) {
+            LocalDate snapshotDate = SIMULATION_DAY_START.toLocalDate().minusDays(dayOffset);
+            insertPortfolioSnapshot(jdbcTemplate, dayOffset * 2L + 1L, 1L, snapshotDate, 1000 - dayOffset * 10L);
+            insertPortfolioSnapshot(jdbcTemplate, dayOffset * 2L + 2L, 2L, snapshotDate, 2000 - dayOffset * 20L);
+        }
+
+        var firstPage = service.getAdminTotalAssetHistory(0);
+
+        assertThat(firstPage.content()).hasSize(7);
+        assertThat(firstPage.totalElements()).isEqualTo(10L);
+        assertThat(firstPage.totalPages()).isEqualTo(2);
+        assertThat(firstPage.hasPrevious()).isFalse();
+        assertThat(firstPage.hasNext()).isTrue();
+        assertThat(firstPage.content().getFirst().snapshotDate()).isEqualTo(LocalDate.of(2026, 7, 3));
+        assertThat(firstPage.content().getFirst().totalAsset()).isEqualByComparingTo("3000.00");
+        assertThat(firstPage.content().getFirst().reservedCash()).isZero();
+        assertThat(firstPage.content().getFirst().changeAmount()).isEqualByComparingTo("30.00");
+        assertThat(firstPage.content().getFirst().changeRate()).isEqualByComparingTo("1.0101");
+        assertThat(firstPage.summary().rangeStart()).isEqualTo(LocalDate.of(2026, 6, 27));
+        assertThat(firstPage.summary().rangeEnd()).isEqualTo(LocalDate.of(2026, 7, 3));
+        assertThat(firstPage.summary().changeAmount()).isEqualByComparingTo("180.00");
+        assertThat(firstPage.summary().changeRate()).isEqualByComparingTo("6.3830");
+        assertThat(firstPage.summary().averageTotalAsset()).isEqualByComparingTo("2910.00");
+
+        var secondPage = service.getAdminTotalAssetHistory(1);
+
+        assertThat(secondPage.content()).hasSize(3);
+        assertThat(secondPage.hasPrevious()).isTrue();
+        assertThat(secondPage.hasNext()).isFalse();
+        assertThat(secondPage.content().getLast().snapshotDate()).isEqualTo(LocalDate.of(2026, 6, 24));
+        assertThat(secondPage.content().getLast().changeAmount()).isNull();
+    }
+
+    @Test
     void getAdminFlowOverview_recentSimulationDay_countsUntilCurrentSimulationTime() {
         JdbcTemplate jdbcTemplate = createJdbcTemplate("admin_flow_query_service_overview_recent_until_now_test");
         AdminFlowQueryService service = createService(jdbcTemplate);
@@ -361,6 +398,19 @@ class AdminFlowQueryServiceTest {
                     executed_at timestamp not null
                 )
                 """);
+        jdbcTemplate.execute("""
+                create table portfolio_snapshot (
+                    id bigint primary key,
+                    account_id bigint not null,
+                    snapshot_date date not null,
+                    total_asset decimal(19, 2) not null,
+                    cash_balance decimal(19, 2) not null,
+                    market_value decimal(19, 2) not null,
+                    return_rate decimal(9, 4) not null,
+                    created_at timestamp not null,
+                    unique (account_id, snapshot_date)
+                )
+                """);
         return jdbcTemplate;
     }
 
@@ -368,10 +418,12 @@ class AdminFlowQueryServiceTest {
         insertAccount(jdbcTemplate, 1L, "active-user-1", "ACTIVE", "880.00");
         insertAccount(jdbcTemplate, 2L, "active-user-2", "ACTIVE", "2000.00");
         insertAccount(jdbcTemplate, 3L, "closed-user", "CLOSED", "9999.00");
+        insertAccount(jdbcTemplate, 4L, "stock-listing-STOCK001", "ACTIVE", "999999.00");
         insertOrder(jdbcTemplate, 1L, 1L, "BUY", "PENDING", "100.00");
         insertOrder(jdbcTemplate, 2L, 2L, "BUY", "PARTIALLY_FILLED", "50.00");
         insertOrder(jdbcTemplate, 3L, 1L, "SELL", "PENDING", "0.00");
         insertOrder(jdbcTemplate, 4L, 1L, "BUY", "FILLED", "999.00");
+        insertOrder(jdbcTemplate, 5L, 4L, "BUY", "PENDING", "999999.00");
         insertPrice(jdbcTemplate, "STOCK001", "80.00");
         insertHolding(jdbcTemplate, 1L, "STOCK001", 2L, "70.00");
         insertHolding(jdbcTemplate, 2L, "STOCK002", 1L, "100.00");
@@ -417,6 +469,32 @@ class AdminFlowQueryServiceTest {
                 userKey,
                 status,
                 new BigDecimal(cashBalance)
+        );
+    }
+
+    private void insertPortfolioSnapshot(
+            JdbcTemplate jdbcTemplate,
+            long id,
+            long accountId,
+            LocalDate snapshotDate,
+            long totalAsset
+    ) {
+        BigDecimal totalAssetAmount = BigDecimal.valueOf(totalAsset).setScale(2);
+        BigDecimal cashBalance = totalAssetAmount.divide(BigDecimal.valueOf(2));
+        jdbcTemplate.update(
+                """
+                insert into portfolio_snapshot(
+                    id, account_id, snapshot_date, total_asset, cash_balance, market_value, return_rate, created_at
+                )
+                values (?, ?, ?, ?, ?, ?, 0, ?)
+                """,
+                id,
+                accountId,
+                snapshotDate,
+                totalAssetAmount,
+                cashBalance,
+                totalAssetAmount.subtract(cashBalance),
+                snapshotDate.atTime(18, 0)
         );
     }
 

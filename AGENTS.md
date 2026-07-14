@@ -17,6 +17,7 @@
 
 - `/api/stock/v1/system/status`
 - `/api/stock/v1/markets/**`
+- `/api/stock/v1/markets/admin/total-asset-history`
 - `/api/stock/v1/markets/prices/{symbol}/ticks`
 - `/api/stock/v1/markets/order-books/{symbol}`
 - `/api/stock/v1/markets/order-book-instruments/{symbol}/market-report`

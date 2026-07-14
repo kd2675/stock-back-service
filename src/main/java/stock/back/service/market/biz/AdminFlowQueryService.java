@@ -12,12 +12,21 @@ import stock.back.service.market.vo.AdminFundFlowSummaryResponse;
 import stock.back.service.market.vo.AdminOrderFlowSummaryResponse;
 import stock.back.service.market.vo.AdminRecentCashFlowResponse;
 import stock.back.service.market.vo.AdminSymbolFlowListResponse;
+import stock.back.service.market.vo.AdminTotalAssetHistoryPageResponse;
+import stock.back.service.market.vo.AdminTotalAssetHistoryPointResponse;
+import stock.back.service.market.vo.AdminTotalAssetPeriodSummaryResponse;
 
+import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 
 @Service
 public class AdminFlowQueryService {
+
+    private static final int TOTAL_ASSET_HISTORY_PAGE_SIZE = 7;
 
     static final String FUND_FLOW_SUMMARY_SQL = fundFlowSummarySql("", "");
 
@@ -38,6 +47,8 @@ public class AdminFlowQueryService {
                 select id, cash_balance
                   from stock_account
                  where status = 'ACTIVE'
+                   and user_key is not null
+                   and user_key not like 'stock-listing-%%'
             )
             select
               coalesce(a.active_account_count, 0) as active_account_count,
@@ -65,10 +76,11 @@ public class AdminFlowQueryService {
                          join active_accounts aa on aa.id = e.account_id
                         where e.status = 'SUBSCRIBED'
                      ), 0) as total_reserved_buy_cash
-                from stock_order
-               where market_type = 'ORDER_BOOK'
-                 and side = 'BUY'
-                 and status in ('PENDING', 'PARTIALLY_FILLED')
+                from stock_order o
+                join active_accounts aa on aa.id = o.account_id
+               where o.market_type = 'ORDER_BOOK'
+                 and o.side = 'BUY'
+                 and o.status in ('PENDING', 'PARTIALLY_FILLED')
             ) o
             cross join (
               select sum(h.quantity * coalesce(p.current_price, h.average_price)) as total_holding_market_value
@@ -331,6 +343,114 @@ public class AdminFlowQueryService {
         );
     }
 
+    @Transactional(readOnly = true)
+    public AdminTotalAssetHistoryPageResponse getAdminTotalAssetHistory(int page) {
+        AdminTotalAssetHistoryPageRequest pageRequest = AdminTotalAssetHistoryPageRequest.of(page);
+        long total = jdbcClient.sql("select count(distinct snapshot_date) from portfolio_snapshot")
+                .query(Long.class)
+                .single();
+        int totalPages = pageRequest.totalPages(total);
+        List<TotalAssetDailyAggregate> aggregates = jdbcClient.sql("""
+                select snapshot_date,
+                       count(*) as account_count,
+                       sum(total_asset) as total_asset,
+                       sum(cash_balance) as cash_balance,
+                       sum(market_value) as market_value
+                  from portfolio_snapshot
+                 group by snapshot_date
+                 order by snapshot_date desc
+                 limit ? offset ?
+                """)
+                .params(pageRequest.querySize(), pageRequest.offset())
+                .query((rs, rowNum) -> new TotalAssetDailyAggregate(
+                        rs.getObject("snapshot_date", LocalDate.class),
+                        rs.getLong("account_count"),
+                        rs.getBigDecimal("total_asset"),
+                        rs.getBigDecimal("cash_balance"),
+                        rs.getBigDecimal("market_value")
+                ))
+                .list();
+        List<AdminTotalAssetHistoryPointResponse> content = toTotalAssetHistoryPoints(aggregates);
+        return new AdminTotalAssetHistoryPageResponse(
+                content,
+                toTotalAssetPeriodSummary(content),
+                pageRequest.page(),
+                TOTAL_ASSET_HISTORY_PAGE_SIZE,
+                total,
+                totalPages,
+                pageRequest.hasPrevious(totalPages),
+                pageRequest.hasNext(totalPages)
+        );
+    }
+
+    private List<AdminTotalAssetHistoryPointResponse> toTotalAssetHistoryPoints(
+            List<TotalAssetDailyAggregate> aggregates
+    ) {
+        int contentSize = Math.min(TOTAL_ASSET_HISTORY_PAGE_SIZE, aggregates.size());
+        List<AdminTotalAssetHistoryPointResponse> content = new ArrayList<>(contentSize);
+        for (int index = 0; index < contentSize; index++) {
+            TotalAssetDailyAggregate current = aggregates.get(index);
+            BigDecimal previousTotalAsset = index + 1 < aggregates.size()
+                    ? aggregates.get(index + 1).totalAsset()
+                    : null;
+            BigDecimal changeAmount = previousTotalAsset == null
+                    ? null
+                    : current.totalAsset().subtract(previousTotalAsset);
+            content.add(new AdminTotalAssetHistoryPointResponse(
+                    current.snapshotDate(),
+                    current.accountCount(),
+                    current.totalAsset(),
+                    current.cashBalance(),
+                    current.marketValue(),
+                    current.totalAsset().subtract(current.cashBalance()).subtract(current.marketValue()),
+                    changeAmount,
+                    percentageChange(changeAmount, previousTotalAsset)
+            ));
+        }
+        return List.copyOf(content);
+    }
+
+    private AdminTotalAssetPeriodSummaryResponse toTotalAssetPeriodSummary(
+            List<AdminTotalAssetHistoryPointResponse> content
+    ) {
+        if (content.isEmpty()) {
+            return null;
+        }
+        AdminTotalAssetHistoryPointResponse newest = content.getFirst();
+        AdminTotalAssetHistoryPointResponse oldest = content.getLast();
+        BigDecimal changeAmount = newest.totalAsset().subtract(oldest.totalAsset());
+        BigDecimal total = content.stream()
+                .map(AdminTotalAssetHistoryPointResponse::totalAsset)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal highest = content.stream()
+                .map(AdminTotalAssetHistoryPointResponse::totalAsset)
+                .max(BigDecimal::compareTo)
+                .orElse(BigDecimal.ZERO);
+        BigDecimal lowest = content.stream()
+                .map(AdminTotalAssetHistoryPointResponse::totalAsset)
+                .min(BigDecimal::compareTo)
+                .orElse(BigDecimal.ZERO);
+        return new AdminTotalAssetPeriodSummaryResponse(
+                oldest.snapshotDate(),
+                newest.snapshotDate(),
+                oldest.totalAsset(),
+                newest.totalAsset(),
+                changeAmount,
+                percentageChange(changeAmount, oldest.totalAsset()),
+                total.divide(BigDecimal.valueOf(content.size()), 2, RoundingMode.HALF_UP),
+                highest,
+                lowest
+        );
+    }
+
+    private BigDecimal percentageChange(BigDecimal changeAmount, BigDecimal baseAmount) {
+        if (changeAmount == null || baseAmount == null || baseAmount.compareTo(BigDecimal.ZERO) == 0) {
+            return null;
+        }
+        return changeAmount.multiply(BigDecimal.valueOf(100))
+                .divide(baseAmount, 4, RoundingMode.HALF_UP);
+    }
+
     private AdminFundFlowSummaryResponse loadAdminFundFlowSummary(AdminFundFlowScope scope) {
         if (scope == AdminFundFlowScope.ALL) {
             return jdbcClient.sql(FUND_FLOW_SUMMARY_SQL)
@@ -379,5 +499,14 @@ public class AdminFlowQueryService {
 
     private AdminFundFlowScope normalizeFlowScope(AdminFundFlowScope scope) {
         return scope == null ? AdminFundFlowScope.RECENT_SIMULATION_DAY : scope;
+    }
+
+    private record TotalAssetDailyAggregate(
+            LocalDate snapshotDate,
+            long accountCount,
+            BigDecimal totalAsset,
+            BigDecimal cashBalance,
+            BigDecimal marketValue
+    ) {
     }
 }

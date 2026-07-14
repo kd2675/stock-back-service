@@ -13,6 +13,7 @@ import stock.back.service.market.vo.AdminFlowOverviewResponse;
 import stock.back.service.market.vo.AdminFundFlowScope;
 import stock.back.service.market.vo.AdminFundFlowSummaryResponse;
 import stock.back.service.market.vo.AdminSymbolFlowListResponse;
+import stock.back.service.market.vo.AdminTotalAssetHistoryPageResponse;
 import web.common.core.response.base.dto.ResponseDataDTO;
 
 @RestController
@@ -45,6 +46,13 @@ public class MarketAdminController {
             @RequestParam(defaultValue = "RECENT_SIMULATION_DAY") AdminFundFlowScope scope
     ) {
         return ResponseDataDTO.of(adminFlowQueryService.getAdminFundFlowSummary(scope));
+    }
+
+    @GetMapping("/admin/total-asset-history")
+    public ResponseDataDTO<AdminTotalAssetHistoryPageResponse> getAdminTotalAssetHistory(
+            @RequestParam(defaultValue = "0") int page
+    ) {
+        return ResponseDataDTO.of(adminFlowQueryService.getAdminTotalAssetHistory(page));
     }
 
     @GetMapping("/admin/symbol-flows")
