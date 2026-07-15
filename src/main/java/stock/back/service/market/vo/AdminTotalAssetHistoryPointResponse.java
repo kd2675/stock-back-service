@@ -10,6 +10,10 @@ public record AdminTotalAssetHistoryPointResponse(
         BigDecimal cashBalance,
         BigDecimal marketValue,
         BigDecimal reservedCash,
+        Long holdingQuantity,
+        Long reservedSellQuantity,
+        Long availableHoldingQuantity,
+        Long holdingPositionCount,
         BigDecimal changeAmount,
         BigDecimal changeRate
 ) {

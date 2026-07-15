@@ -55,6 +55,9 @@ public class AdminFlowQueryService {
               coalesce(a.total_cash_balance, 0) as total_cash_balance,
               coalesce(o.total_reserved_buy_cash, 0) as total_reserved_buy_cash,
               coalesce(h.total_holding_market_value, 0) as total_holding_market_value,
+              coalesce(h.total_holding_quantity, 0) as total_holding_quantity,
+              coalesce(h.total_reserved_sell_quantity, 0) as total_reserved_sell_quantity,
+              coalesce(h.holding_position_count, 0) as holding_position_count,
               coalesce(f.external_deposit_amount, 0) as external_deposit_amount,
               coalesce(f.external_withdraw_amount, 0) as external_withdraw_amount,
               coalesce(f.dividend_income_amount, 0) as dividend_income_amount,
@@ -83,7 +86,10 @@ public class AdminFlowQueryService {
                  and o.status in ('PENDING', 'PARTIALLY_FILLED')
             ) o
             cross join (
-              select sum(h.quantity * coalesce(p.current_price, h.average_price)) as total_holding_market_value
+              select sum(h.quantity * coalesce(p.current_price, h.average_price)) as total_holding_market_value,
+                     sum(h.quantity) as total_holding_quantity,
+                     sum(h.reserved_quantity) as total_reserved_sell_quantity,
+                     sum(case when h.quantity > 0 then 1 else 0 end) as holding_position_count
                 from stock_holding h
                 join active_accounts aa on aa.id = h.account_id
                 left join stock_price p on p.symbol = h.symbol
@@ -346,19 +352,31 @@ public class AdminFlowQueryService {
     @Transactional(readOnly = true)
     public AdminTotalAssetHistoryPageResponse getAdminTotalAssetHistory(int page) {
         AdminTotalAssetHistoryPageRequest pageRequest = AdminTotalAssetHistoryPageRequest.of(page);
-        long total = jdbcClient.sql("select count(distinct snapshot_date) from portfolio_snapshot")
+        long total = jdbcClient.sql("""
+                select count(distinct ps.snapshot_date)
+                  from portfolio_snapshot ps
+                  join stock_account a on a.id = ps.account_id
+                 where a.user_key is not null
+                   and a.user_key not like 'stock-listing-%'
+                """)
                 .query(Long.class)
                 .single();
         int totalPages = pageRequest.totalPages(total);
         List<TotalAssetDailyAggregate> aggregates = jdbcClient.sql("""
-                select snapshot_date,
+                select ps.snapshot_date,
                        count(*) as account_count,
-                       sum(total_asset) as total_asset,
-                       sum(cash_balance) as cash_balance,
-                       sum(market_value) as market_value
-                  from portfolio_snapshot
-                 group by snapshot_date
-                 order by snapshot_date desc
+                       sum(ps.total_asset) as total_asset,
+                       sum(ps.cash_balance) as cash_balance,
+                       sum(ps.market_value) as market_value,
+                       case when count(*) = count(ps.holding_quantity) then sum(ps.holding_quantity) end as holding_quantity,
+                       case when count(*) = count(ps.reserved_sell_quantity) then sum(ps.reserved_sell_quantity) end as reserved_sell_quantity,
+                       case when count(*) = count(ps.holding_position_count) then sum(ps.holding_position_count) end as holding_position_count
+                  from portfolio_snapshot ps
+                  join stock_account a on a.id = ps.account_id
+                 where a.user_key is not null
+                   and a.user_key not like 'stock-listing-%'
+                 group by ps.snapshot_date
+                 order by ps.snapshot_date desc
                  limit ? offset ?
                 """)
                 .params(pageRequest.querySize(), pageRequest.offset())
@@ -367,7 +385,10 @@ public class AdminFlowQueryService {
                         rs.getLong("account_count"),
                         rs.getBigDecimal("total_asset"),
                         rs.getBigDecimal("cash_balance"),
-                        rs.getBigDecimal("market_value")
+                        rs.getBigDecimal("market_value"),
+                        rs.getObject("holding_quantity", Long.class),
+                        rs.getObject("reserved_sell_quantity", Long.class),
+                        rs.getObject("holding_position_count", Long.class)
                 ))
                 .list();
         List<AdminTotalAssetHistoryPointResponse> content = toTotalAssetHistoryPoints(aggregates);
@@ -403,6 +424,10 @@ public class AdminFlowQueryService {
                     current.cashBalance(),
                     current.marketValue(),
                     current.totalAsset().subtract(current.cashBalance()).subtract(current.marketValue()),
+                    current.holdingQuantity(),
+                    current.reservedSellQuantity(),
+                    availableHoldingQuantity(current.holdingQuantity(), current.reservedSellQuantity()),
+                    current.holdingPositionCount(),
                     changeAmount,
                     percentageChange(changeAmount, previousTotalAsset)
             ));
@@ -449,6 +474,13 @@ public class AdminFlowQueryService {
         }
         return changeAmount.multiply(BigDecimal.valueOf(100))
                 .divide(baseAmount, 4, RoundingMode.HALF_UP);
+    }
+
+    private Long availableHoldingQuantity(Long holdingQuantity, Long reservedSellQuantity) {
+        if (holdingQuantity == null || reservedSellQuantity == null) {
+            return null;
+        }
+        return holdingQuantity - reservedSellQuantity;
     }
 
     private AdminFundFlowSummaryResponse loadAdminFundFlowSummary(AdminFundFlowScope scope) {
@@ -506,7 +538,10 @@ public class AdminFlowQueryService {
             long accountCount,
             BigDecimal totalAsset,
             BigDecimal cashBalance,
-            BigDecimal marketValue
+            BigDecimal marketValue,
+            Long holdingQuantity,
+            Long reservedSellQuantity,
+            Long holdingPositionCount
     ) {
     }
 }

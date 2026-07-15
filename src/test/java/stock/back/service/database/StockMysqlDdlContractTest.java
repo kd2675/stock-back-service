@@ -282,6 +282,36 @@ class StockMysqlDdlContractTest {
     }
 
     @Test
+    void portfolioSnapshotHoldingMetricsAlterDdl_isGuardedAndMatchesBatchCopy() throws IOException {
+        String backDdl = Files.readString(
+                Path.of("src/main/resources/db/ddl/stock_portfolio_snapshot_holding_metrics_alter.sql"),
+                StandardCharsets.UTF_8
+        );
+        String batchDdl = Files.readString(
+                Path.of("../stock-batch-service/src/main/resources/db/ddl/stock_portfolio_snapshot_holding_metrics_alter.sql"),
+                StandardCharsets.UTF_8
+        );
+
+        assertThat(backDdl).isEqualTo(batchDdl);
+        assertThat(backDdl).contains(
+                "stock_migration_required_portfolio_snapshot_holding_metrics_schema",
+                "@stock_portfolio_snapshot_holding_metric_column_count = 0",
+                "@stock_portfolio_snapshot_holding_metric_correct_column_count = 3",
+                "holding_quantity BIGINT NULL",
+                "reserved_sell_quantity BIGINT NULL",
+                "holding_position_count BIGINT NULL",
+                "chk_portfolio_snapshot_holding_metrics_complete",
+                "REPLACE(LOWER(cc.check_clause), '`', '') LIKE '%holding_quantity >= 0%'",
+                "REPLACE(LOWER(cc.check_clause), '`', '') LIKE '%reserved_sell_quantity >= 0%'",
+                "reserved_sell_quantity <= holding_quantity",
+                "REPLACE(LOWER(cc.check_clause), '`', '') LIKE '%holding_position_count >= 0%'",
+                "SET SESSION lock_wait_timeout = 15",
+                "ALGORITHM=COPY",
+                "LOCK=SHARED"
+        );
+    }
+
+    @Test
     void capitalIncreaseAlterDdl_guardsLegacyRowsAndMatchesBatchCopy() throws IOException {
         String backDdl = Files.readString(
                 Path.of("src/main/resources/db/ddl/stock_capital_increase_subscription_alter.sql"),

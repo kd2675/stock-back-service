@@ -33,6 +33,10 @@ class AdminFlowQueryServiceTest {
         assertThat(summary.totalCashBalance()).isEqualByComparingTo(new BigDecimal("2880.00"));
         assertThat(summary.totalReservedBuyCash()).isEqualByComparingTo(new BigDecimal("270.00"));
         assertThat(summary.totalHoldingMarketValue()).isEqualByComparingTo(new BigDecimal("260.00"));
+        assertThat(summary.totalHoldingQuantity()).isEqualTo(3L);
+        assertThat(summary.totalReservedSellQuantity()).isEqualTo(1L);
+        assertThat(summary.totalAvailableHoldingQuantity()).isEqualTo(2L);
+        assertThat(summary.holdingPositionCount()).isEqualTo(2L);
         assertThat(summary.totalAsset()).isEqualByComparingTo(new BigDecimal("3410.00"));
         assertThat(summary.externalDepositAmount()).isEqualByComparingTo(new BigDecimal("500.00"));
         assertThat(summary.externalWithdrawAmount()).isEqualByComparingTo(new BigDecimal("120.00"));
@@ -195,11 +199,15 @@ class AdminFlowQueryServiceTest {
     void getAdminTotalAssetHistory_readsSevenSettlementDaysWithChanges() {
         JdbcTemplate jdbcTemplate = createJdbcTemplate("admin_flow_query_service_total_asset_history_test");
         AdminFlowQueryService service = createService(jdbcTemplate);
+        insertAccount(jdbcTemplate, 1L, "history-active-user", "ACTIVE", "0.00");
+        insertAccount(jdbcTemplate, 2L, "history-closed-user", "CLOSED", "0.00");
+        insertAccount(jdbcTemplate, 3L, "stock-listing-HISTORY", "ACTIVE", "0.00");
         for (int dayOffset = 0; dayOffset < 10; dayOffset++) {
             LocalDate snapshotDate = SIMULATION_DAY_START.toLocalDate().minusDays(dayOffset);
             insertPortfolioSnapshot(jdbcTemplate, dayOffset * 2L + 1L, 1L, snapshotDate, 1000 - dayOffset * 10L);
             insertPortfolioSnapshot(jdbcTemplate, dayOffset * 2L + 2L, 2L, snapshotDate, 2000 - dayOffset * 20L);
         }
+        insertPortfolioSnapshot(jdbcTemplate, 100L, 3L, SIMULATION_DAY_START.toLocalDate(), 999999L);
 
         var firstPage = service.getAdminTotalAssetHistory(0);
 
@@ -211,6 +219,10 @@ class AdminFlowQueryServiceTest {
         assertThat(firstPage.content().getFirst().snapshotDate()).isEqualTo(LocalDate.of(2026, 7, 3));
         assertThat(firstPage.content().getFirst().totalAsset()).isEqualByComparingTo("3000.00");
         assertThat(firstPage.content().getFirst().reservedCash()).isZero();
+        assertThat(firstPage.content().getFirst().holdingQuantity()).isEqualTo(30L);
+        assertThat(firstPage.content().getFirst().reservedSellQuantity()).isEqualTo(5L);
+        assertThat(firstPage.content().getFirst().availableHoldingQuantity()).isEqualTo(25L);
+        assertThat(firstPage.content().getFirst().holdingPositionCount()).isEqualTo(3L);
         assertThat(firstPage.content().getFirst().changeAmount()).isEqualByComparingTo("30.00");
         assertThat(firstPage.content().getFirst().changeRate()).isEqualByComparingTo("1.0101");
         assertThat(firstPage.summary().rangeStart()).isEqualTo(LocalDate.of(2026, 6, 27));
@@ -226,6 +238,34 @@ class AdminFlowQueryServiceTest {
         assertThat(secondPage.hasNext()).isFalse();
         assertThat(secondPage.content().getLast().snapshotDate()).isEqualTo(LocalDate.of(2026, 6, 24));
         assertThat(secondPage.content().getLast().changeAmount()).isNull();
+    }
+
+    @Test
+    void getAdminTotalAssetHistory_whenAnyDailyHoldingMetricIsMissing_returnsUnknownHoldingMetrics() {
+        JdbcTemplate jdbcTemplate = createJdbcTemplate("admin_flow_query_service_total_asset_history_partial_metrics_test");
+        AdminFlowQueryService service = createService(jdbcTemplate);
+        LocalDate snapshotDate = SIMULATION_DAY_START.toLocalDate();
+        insertAccount(jdbcTemplate, 1L, "history-user-1", "ACTIVE", "0.00");
+        insertAccount(jdbcTemplate, 2L, "history-user-2", "ACTIVE", "0.00");
+        insertPortfolioSnapshot(jdbcTemplate, 1L, 1L, snapshotDate, 1000L);
+        jdbcTemplate.update(
+                """
+                insert into portfolio_snapshot(
+                    id, account_id, snapshot_date, total_asset, cash_balance, market_value,
+                    holding_quantity, reserved_sell_quantity, holding_position_count, return_rate, created_at
+                )
+                values (2, 2, ?, 2000, 1000, 1000, null, null, null, 0, ?)
+                """,
+                snapshotDate,
+                snapshotDate.atTime(18, 0)
+        );
+
+        var point = service.getAdminTotalAssetHistory(0).content().getFirst();
+
+        assertThat(point.holdingQuantity()).isNull();
+        assertThat(point.reservedSellQuantity()).isNull();
+        assertThat(point.availableHoldingQuantity()).isNull();
+        assertThat(point.holdingPositionCount()).isNull();
     }
 
     @Test
@@ -294,6 +334,7 @@ class AdminFlowQueryServiceTest {
                     account_id bigint not null,
                     symbol varchar(20) not null,
                     quantity bigint not null,
+                    reserved_quantity bigint not null default 0,
                     average_price decimal(19, 2) not null
                 )
                 """);
@@ -410,6 +451,9 @@ class AdminFlowQueryServiceTest {
                     total_asset decimal(19, 2) not null,
                     cash_balance decimal(19, 2) not null,
                     market_value decimal(19, 2) not null,
+                    holding_quantity bigint,
+                    reserved_sell_quantity bigint,
+                    holding_position_count bigint,
                     return_rate decimal(9, 4) not null,
                     created_at timestamp not null,
                     unique (account_id, snapshot_date)
@@ -429,8 +473,10 @@ class AdminFlowQueryServiceTest {
         insertOrder(jdbcTemplate, 4L, 1L, "BUY", "FILLED", "999.00");
         insertOrder(jdbcTemplate, 5L, 4L, "BUY", "PENDING", "999999.00");
         insertPrice(jdbcTemplate, "STOCK001", "80.00");
-        insertHolding(jdbcTemplate, 1L, "STOCK001", 2L, "70.00");
-        insertHolding(jdbcTemplate, 2L, "STOCK002", 1L, "100.00");
+        insertHolding(jdbcTemplate, 1L, "STOCK001", 2L, 1L, "70.00");
+        insertHolding(jdbcTemplate, 2L, "STOCK002", 1L, 0L, "100.00");
+        insertHolding(jdbcTemplate, 3L, "STOCK001", 50L, 10L, "70.00");
+        insertHolding(jdbcTemplate, 4L, "STOCK001", 999L, 999L, "70.00");
         insertCashFlow(jdbcTemplate, 1L, 1L, "DEPOSIT", "500.00", "ADMIN_DEPOSIT", 3);
         insertCashFlow(jdbcTemplate, 2L, 1L, "WITHDRAW", "120.00", "ADMIN_WITHDRAW", 2);
         insertCashFlow(jdbcTemplate, 3L, 2L, "DEPOSIT", "30.00", "DIVIDEND_PAYMENT", 1);
@@ -488,9 +534,10 @@ class AdminFlowQueryServiceTest {
         jdbcTemplate.update(
                 """
                 insert into portfolio_snapshot(
-                    id, account_id, snapshot_date, total_asset, cash_balance, market_value, return_rate, created_at
+                    id, account_id, snapshot_date, total_asset, cash_balance, market_value,
+                    holding_quantity, reserved_sell_quantity, holding_position_count, return_rate, created_at
                 )
-                values (?, ?, ?, ?, ?, ?, 0, ?)
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
                 """,
                 id,
                 accountId,
@@ -498,6 +545,9 @@ class AdminFlowQueryServiceTest {
                 totalAssetAmount,
                 cashBalance,
                 totalAssetAmount.subtract(cashBalance),
+                accountId == 1L ? 10L : 20L,
+                accountId == 1L ? 2L : 3L,
+                accountId == 1L ? 1L : 2L,
                 snapshotDate.atTime(18, 0)
         );
     }
@@ -558,12 +608,20 @@ class AdminFlowQueryServiceTest {
         );
     }
 
-    private void insertHolding(JdbcTemplate jdbcTemplate, long accountId, String symbol, long quantity, String averagePrice) {
+    private void insertHolding(
+            JdbcTemplate jdbcTemplate,
+            long accountId,
+            String symbol,
+            long quantity,
+            long reservedQuantity,
+            String averagePrice
+    ) {
         jdbcTemplate.update(
-                "insert into stock_holding(account_id, symbol, quantity, average_price) values (?, ?, ?, ?)",
+                "insert into stock_holding(account_id, symbol, quantity, reserved_quantity, average_price) values (?, ?, ?, ?, ?)",
                 accountId,
                 symbol,
                 quantity,
+                reservedQuantity,
                 new BigDecimal(averagePrice)
         );
     }

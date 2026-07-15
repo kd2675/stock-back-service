@@ -20,6 +20,8 @@ final class AdminFlowResponseMapper {
         BigDecimal totalCashBalance = rs.getBigDecimal("total_cash_balance");
         BigDecimal totalReservedBuyCash = rs.getBigDecimal("total_reserved_buy_cash");
         BigDecimal totalHoldingMarketValue = rs.getBigDecimal("total_holding_market_value");
+        long totalHoldingQuantity = rs.getLong("total_holding_quantity");
+        long totalReservedSellQuantity = rs.getLong("total_reserved_sell_quantity");
         BigDecimal externalDepositAmount = rs.getBigDecimal("external_deposit_amount");
         BigDecimal externalWithdrawAmount = rs.getBigDecimal("external_withdraw_amount");
         BigDecimal dividendIncomeAmount = rs.getBigDecimal("dividend_income_amount");
@@ -30,6 +32,10 @@ final class AdminFlowResponseMapper {
                 totalCashBalance,
                 totalReservedBuyCash,
                 totalHoldingMarketValue,
+                totalHoldingQuantity,
+                totalReservedSellQuantity,
+                totalHoldingQuantity - totalReservedSellQuantity,
+                rs.getLong("holding_position_count"),
                 totalCashBalance.add(totalReservedBuyCash).add(totalHoldingMarketValue),
                 externalDepositAmount,
                 externalWithdrawAmount,

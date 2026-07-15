@@ -32,6 +32,9 @@ front:
 - `marketValue = sum(holding.quantity * currentPrice)`
 - `reservedBuyCash = sum(open buy order reserved_cash)`
 - `totalAsset = cashBalance + reservedBuyCash + marketValue`
+- `holdingQuantity = sum(holding.quantity)`
+- `reservedSellQuantity = sum(holding.reserved_quantity)`
+- `availableHoldingQuantity = holdingQuantity - reservedSellQuantity`
 - `returnRate = (totalAsset - netCashFlow) / netCashFlow * 100`
 
 `netCashFlow`는 `stock_account_cash_flow`의 입금 합계에서 회수 합계를 뺀 값이다.
@@ -45,7 +48,7 @@ front:
 
 랭킹:
 
-- batch 정산이 `portfolio_snapshot`을 생성/갱신한다.
+- batch 정산이 금액과 보유량 지표를 같은 `portfolio_snapshot` row에 생성/갱신한다.
 - back은 가장 최근 snapshot date의 상위 20명을 return rate 순으로 반환한다.
 
 ## 현재 불변식

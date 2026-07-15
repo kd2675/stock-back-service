@@ -23,6 +23,10 @@
 - 보유 평가금액: `stock_holding.quantity * current_price`
 - 예약 매수 현금: 미체결/부분체결 BUY 주문의 `reserved_cash`
 - 총자산: 현금 + 예약 매수 현금 + 보유 평가금액
+- 총 보유량: `sum(stock_holding.quantity)`
+- 예약 매도 보유량: `sum(stock_holding.reserved_quantity)`
+- 가용 보유량: 총 보유량 - 예약 매도 보유량
+- 보유 포지션 수: 수량이 양수인 계좌별 종목 row 수
 - 수익률: `(총자산 - 순입금액) / 순입금액 * 100`
 - 미체결 주문 수
 - 보유 종목 목록
@@ -81,10 +85,13 @@ batch 설정:
 `PortfolioSettlementService.settleToday()`는 모든 계좌를 순회한다.
 
 1. 각 계좌의 현금과 순입금액을 읽는다.
-2. 보유 평가금액을 계산한다.
-3. 예약 매수 현금을 계산한다.
+2. 계좌별 보유 row를 한 번 집계해 평가금액, 총 보유량, 예약 매도 보유량, 보유 포지션 수를 계산한다.
+3. 예약 매수·유상증자 청약 현금을 계산한다.
 4. 총자산과 수익률을 계산한다.
-5. 오늘 날짜의 `portfolio_snapshot`을 upsert한다.
+5. 오늘 날짜의 `portfolio_snapshot`에 금액과 보유량 지표를 함께 upsert한다.
+
+과거 snapshot의 보유량 컬럼은 NULL일 수 있다. 관리자 일별 합계는 같은 날짜의 모든 계좌 row에 보유량 지표가 있을 때만 합산하며, 일부만 존재하는 날짜는 0이나 부분합으로 표시하지 않는다.
+정산 reader는 `stock-listing-*` 운영 재고 계좌를 생성 단계에서 제외하고, 관리자 이력 조회도 legacy·수동 snapshot에 같은 계좌가 섞인 경우를 방어적으로 제외한다. 반면 참여자 계좌가 나중에 종료됐다는 이유로 과거 snapshot을 소급 제거하지는 않는다.
 
 ## 랭킹
 

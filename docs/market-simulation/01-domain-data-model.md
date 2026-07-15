@@ -122,7 +122,9 @@
 `portfolio_snapshot`
 
 - 일별 정산 결과다.
-- 랭킹과 과거 자산 조회의 기준이다.
+- 랭킹과 과거 자산·보유량 조회의 기준이다.
+- `holding_quantity`는 총 보유수량, `reserved_sell_quantity`는 매도 주문으로 잠긴 수량, `holding_position_count`는 계좌별 양수 보유 종목 row 수다.
+- 세 보유량 컬럼은 기존 이력 호환을 위해 nullable이며, 한 row에서는 모두 NULL이거나 모두 값이 있어야 한다. 신규 정산은 항상 세 값을 함께 기록한다.
 
 ## 엔티티 코드 지도
 

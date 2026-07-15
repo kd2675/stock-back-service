@@ -43,6 +43,15 @@ public class PortfolioSnapshot {
     @Column(name = "market_value", nullable = false, precision = 19, scale = 2)
     private BigDecimal marketValue;
 
+    @Column(name = "holding_quantity")
+    private Long holdingQuantity;
+
+    @Column(name = "reserved_sell_quantity")
+    private Long reservedSellQuantity;
+
+    @Column(name = "holding_position_count")
+    private Long holdingPositionCount;
+
     @Column(name = "return_rate", nullable = false, precision = 9, scale = 4)
     private BigDecimal returnRate;
 
