@@ -35,6 +35,7 @@ stock 원장은 주문, 체결, 계좌, 보유, 가격, 주문장 종목, 시장
 - `stock-back-service/src/main/resources/db/ddl/stock_schema_contract_alignment_alter.sql`
 - `stock-back-service/src/main/resources/db/ddl/stock_price_tick_latest_lookup_alter.sql`
 - `stock-back-service/src/main/resources/db/ddl/stock_activity_latest_lookup_alter.sql`
+- `stock-back-service/src/main/resources/db/ddl/stock_auto_market_pressure_distribution_alter.sql`
 - `stock-back-service/src/main/resources/db/ddl/stock_market_turnover_normalization_alter.sql`
 - `stock-back-service/src/main/resources/db/maintenance/stock_clear_data.sql`
 - `stock-back-service/src/main/resources/db/maintenance/stock_clear_runtime_history_keep_participants.sql`
@@ -77,11 +78,13 @@ stock 원장은 주문, 체결, 계좌, 보유, 가격, 주문장 종목, 시장
 
 ## 실제 DB canonical 정렬
 
-- 기존 `stock_order_book_daily_snapshot_alter.sql`, `stock_order_book_daily_regime_alter.sql`을 적용한 DB는 `stock_schema_contract_alignment_alter.sql`을 추가 적용한다.
+- legacy 자동시장 스키마에 `stock_auto_market_config.intensity`와 방향/강도 기반 레짐 컬럼이 남아 있으면 `stock_order_book_daily_snapshot_alter.sql` -> `stock_order_book_daily_regime_alter.sql` -> `stock_schema_contract_alignment_alter.sql` -> `stock_auto_market_pressure_distribution_alter.sql` 순서로 한 번만 적용한다. schema alignment는 legacy 레짐 컬럼을 검사하므로 압력 분포 alter 뒤에 실행하지 않으며, 압력 컬럼이 이미 존재하는 DB에는 압력 분포 alter를 재적용하지 않는다.
+- 압력 분포 alter는 세 대상 테이블의 legacy 컬럼과 CHECK가 모두 존재하고 새 압력 컬럼은 아직 없는지 첫 변경 전에 검사한다. 조건이 맞지 않으면 `stock_migration_required_auto_market_pressure_distribution_schema` 오류로 중단하므로, 부분 적용 여부와 현재 스키마를 확인한 뒤 수동 정리한다.
+- 기존 `stock_order_book_daily_snapshot_alter.sql`, `stock_order_book_daily_regime_alter.sql`을 적용했고 아직 legacy 레짐 컬럼을 사용하는 DB는 `stock_schema_contract_alignment_alter.sql`을 추가 적용한다.
 - 기존 `stock_price_tick`에 `(symbol, price_time)` 인덱스만 있는 DB는 `stock_price_tick_latest_lookup_alter.sql`을 적용한다.
 - 기존 주문·체결 원장에 계좌별 최신 활동 및 캔들 전용 인덱스가 없으면 `stock_activity_latest_lookup_alter.sql`을 적용한다.
 - 기존 `stock_order_book_daily_snapshot`이 BUY·SELL 양쪽 행을 합산한 체결수·거래량·거래대금을 보유하면 `stock_market_turnover_normalization_alter.sql`을 적용한다. 이미 정규화된 스냅샷에는 재적용되지 않는다.
-- 이 alter는 migration용 임시 기본값을 제거하고, 기존 테이블 생성 시 빠질 수 있던 스냅샷·레짐 CHECK와 기업 이벤트 발행 필수 CHECK를 canonical 정의로 재생성한다.
+- `stock_schema_contract_alignment_alter.sql`은 migration용 임시 기본값을 제거하고, 기존 테이블 생성 시 빠질 수 있던 스냅샷·레짐 CHECK와 기업 이벤트 발행 필수 CHECK를 canonical 정의로 재생성한다.
 
 ## 바꿀 때 순서
 
