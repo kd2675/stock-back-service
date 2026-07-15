@@ -1,7 +1,6 @@
 package stock.back.service.market.biz;
 
 import java.math.BigDecimal;
-import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -249,9 +248,8 @@ public class OrderBookCandleQueryService {
                         rs.getBigDecimal("low_price"),
                         rs.getBigDecimal("last_execution_price"),
                         rs.getLong("buy_quantity"),
-                        MarketQuerySupport.zeroIfNull(rs.getBigDecimal("turnover_amount"))
-                                .divide(BigDecimal.valueOf(2), 2, RoundingMode.HALF_UP),
-                        rs.getLong("execution_count") / 2L
+                        MarketQuerySupport.zeroIfNull(rs.getBigDecimal("turnover_amount")),
+                        rs.getLong("execution_count")
                 ))
                 .list();
     }

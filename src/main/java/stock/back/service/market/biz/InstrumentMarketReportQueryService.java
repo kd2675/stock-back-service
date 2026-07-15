@@ -274,10 +274,9 @@ public class InstrumentMarketReportQueryService {
         }
 
         private InstrumentDailyMarketSnapshotResponse toDailySnapshot() {
-            BigDecimal turnover = MarketQuerySupport.zeroIfNull(turnoverAmount)
-                    .divide(BigDecimal.valueOf(2), 2, RoundingMode.HALF_UP);
+            BigDecimal turnover = MarketQuerySupport.zeroIfNull(turnoverAmount);
             return new InstrumentDailyMarketSnapshotResponse(
-                    executionCount / 2L,
+                    executionCount,
                     buyQuantity,
                     turnover,
                     rate(BigDecimal.valueOf(buyQuantity), BigDecimal.valueOf(tradableShares)),

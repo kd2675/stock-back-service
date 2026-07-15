@@ -72,7 +72,9 @@ class AdminFlowQueryServiceTest {
         AdminFlowQueryService service = createService(jdbcTemplate);
         seedSymbolFlow(jdbcTemplate);
         insertSymbolExecutionAt(jdbcTemplate, 1L, "STOCK001", "BUY", 3L, "300.00", "290.00", SIMULATION_DAY_START.minusMinutes(1));
-        insertSymbolExecutionAt(jdbcTemplate, 2L, "STOCK001", "SELL", 2L, "200.00", "195.00", SIMULATION_NOW.minusMinutes(10));
+        insertSymbolExecutionAt(jdbcTemplate, 2L, "STOCK001", "SELL", 3L, "300.00", "295.00", SIMULATION_DAY_START.minusMinutes(1));
+        insertSymbolExecutionAt(jdbcTemplate, 3L, "STOCK001", "BUY", 2L, "200.00", "190.00", SIMULATION_NOW.minusMinutes(10));
+        insertSymbolExecutionAt(jdbcTemplate, 4L, "STOCK001", "SELL", 2L, "200.00", "195.00", SIMULATION_NOW.minusMinutes(10));
 
         var response = service.getAdminSymbolFlows(0);
 
@@ -84,7 +86,7 @@ class AdminFlowQueryServiceTest {
         assertThat(symbolFlow.executionQuantity()).isEqualTo(2L);
         assertThat(symbolFlow.turnoverAmount()).isEqualByComparingTo(new BigDecimal("200.00"));
         assertThat(symbolFlow.sellQuantity()).isEqualTo(2L);
-        assertThat(symbolFlow.buyQuantity()).isZero();
+        assertThat(symbolFlow.buyQuantity()).isEqualTo(2L);
         assertThat(symbolFlow.lastExecutedAt()).isEqualTo(SIMULATION_NOW.minusMinutes(10));
     }
 
@@ -94,7 +96,9 @@ class AdminFlowQueryServiceTest {
         AdminFlowQueryService service = createService(jdbcTemplate);
         seedSymbolFlow(jdbcTemplate);
         insertSymbolExecutionAt(jdbcTemplate, 1L, "STOCK001", "BUY", 3L, "300.00", "290.00", SIMULATION_DAY_START.minusMinutes(1));
-        insertSymbolExecutionAt(jdbcTemplate, 2L, "STOCK001", "SELL", 2L, "200.00", "195.00", SIMULATION_NOW.minusMinutes(10));
+        insertSymbolExecutionAt(jdbcTemplate, 2L, "STOCK001", "SELL", 3L, "300.00", "295.00", SIMULATION_DAY_START.minusMinutes(1));
+        insertSymbolExecutionAt(jdbcTemplate, 3L, "STOCK001", "BUY", 2L, "200.00", "190.00", SIMULATION_NOW.minusMinutes(10));
+        insertSymbolExecutionAt(jdbcTemplate, 4L, "STOCK001", "SELL", 2L, "200.00", "195.00", SIMULATION_NOW.minusMinutes(10));
 
         var response = service.getAdminSymbolFlows(0, AdminFundFlowScope.ALL);
 
@@ -104,8 +108,8 @@ class AdminFlowQueryServiceTest {
         assertThat(symbolFlow.executionCount()).isEqualTo(2L);
         assertThat(symbolFlow.executionQuantity()).isEqualTo(5L);
         assertThat(symbolFlow.turnoverAmount()).isEqualByComparingTo(new BigDecimal("500.00"));
-        assertThat(symbolFlow.buyQuantity()).isEqualTo(3L);
-        assertThat(symbolFlow.sellQuantity()).isEqualTo(2L);
+        assertThat(symbolFlow.buyQuantity()).isEqualTo(5L);
+        assertThat(symbolFlow.sellQuantity()).isEqualTo(5L);
     }
 
     @Test

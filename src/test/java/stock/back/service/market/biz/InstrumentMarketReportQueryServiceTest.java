@@ -247,7 +247,7 @@ class InstrumentMarketReportQueryServiceTest {
                     open_price, high_price, low_price, last_execution_price, last_executed_at
                 ) values (1, 1, 'DEMO002', ?, '주식2', 'KOSPI', 5000.00,
                     6050.00, 6000.00, 10000000, 8000000, 30.00,
-                    ?, 'internal-order-book', 4, 4000, 48100000.00,
+                    ?, 'internal-order-book', 2, 4000, 24050000.00,
                     6000.00, 6050.00, 6000.00, 6050.00, ?)
                 """, DAY_START.toLocalDate(), DAY_START.plusHours(10), DAY_START.plusHours(10));
         jdbcTemplate.update("""
@@ -262,7 +262,7 @@ class InstrumentMarketReportQueryServiceTest {
                     open_price, high_price, low_price, last_execution_price, last_executed_at
                 ) values (2, 2, 'DEMO002', ?, '주식2', 'KOSPI', 5000.00,
                     6200.00, 6050.00, 10000000, 8000000, 30.00,
-                    ?, 'internal-order-book', 2, 9000, 109800000.00,
+                    ?, 'internal-order-book', 1, 9000, 54900000.00,
                     6100.00, 6100.00, 6100.00, 6100.00, ?)
                 """, NOW.toLocalDate(), NOW, NOW);
     }

@@ -11,6 +11,7 @@ import stock.back.service.database.entity.ExecutionSource;
 import stock.back.service.database.entity.MarketSessionStatus;
 import stock.back.service.database.entity.MarketType;
 import stock.back.service.database.entity.OrderStatus;
+import stock.back.service.database.entity.OrderSide;
 import stock.back.service.database.entity.StockOrderBookMarketConfig;
 import stock.back.service.database.repository.StockExecutionMarketViewRepository;
 import stock.back.service.database.repository.StockOrderBookInstrumentRepository;
@@ -90,14 +91,14 @@ class OrderBookMarketStatusQueryServiceTest {
         assertThat(response.openConfigCount()).isEqualTo(1L);
         assertThat(response.instrumentCount()).isEqualTo(3L);
         assertThat(response.openOrderCount()).isEqualTo(3L);
-        assertThat(response.todayExecutionCount()).isEqualTo(2L);
+        assertThat(response.todayExecutionCount()).isEqualTo(1L);
         assertThat(response.configs()).isEmpty();
         verify(stockOrderBookMarketConfigRepository, never()).findAll();
         verify(stockOrderBookMarketConfigRepository, never()).count();
         verify(stockOrderBookInstrumentRepository, never()).countByEnabledTrue();
         verify(stockOrderBookMarketConfigRepository, never()).existsByEnabledTrueAndMarketStatus(any());
         verify(stockOrderRepository, never()).countByMarketTypeAndStatusIn(any(), any());
-        verify(stockExecutionMarketViewRepository, never()).countExecutionsBetweenBySource(any(), any(), any());
+        verify(stockExecutionMarketViewRepository, never()).countExecutionsBetweenBySourceAndSide(any(), any(), any(), any());
     }
 
     @Test
@@ -122,7 +123,7 @@ class OrderBookMarketStatusQueryServiceTest {
         assertThat(response.openOrderCount()).isEqualTo(3L);
         assertThat(response.todayExecutionCount()).isZero();
         assertThat(response.configs()).isEmpty();
-        verify(stockExecutionMarketViewRepository, never()).countExecutionsBetweenBySource(any(), any(), any());
+        verify(stockExecutionMarketViewRepository, never()).countExecutionsBetweenBySourceAndSide(any(), any(), any(), any());
         verify(stockOrderRepository, never()).countByMarketTypeAndStatusIn(any(), any());
     }
 
@@ -136,12 +137,13 @@ class OrderBookMarketStatusQueryServiceTest {
                 eq(MarketType.ORDER_BOOK),
                 eq(List.of(OrderStatus.PENDING, OrderStatus.PARTIALLY_FILLED))
         )).thenReturn(4L);
-        when(stockExecutionMarketViewRepository.countExecutionsBetweenBySource(
+        when(stockExecutionMarketViewRepository.countExecutionsBetweenBySourceAndSide(
                 any(LocalDateTime.class),
                 any(LocalDateTime.class),
-                eq(ExecutionSource.INTERNAL_ORDER_BOOK)
+                eq(ExecutionSource.INTERNAL_ORDER_BOOK),
+                eq(OrderSide.BUY)
         ))
-                .thenReturn(6L);
+                .thenReturn(3L);
         when(stockOrderBookInstrumentRepository.countByEnabledTrue()).thenReturn(2L);
 
         var response = service.getOrderBookMarketStatus(true, true);
@@ -151,7 +153,7 @@ class OrderBookMarketStatusQueryServiceTest {
         assertThat(response.openConfigCount()).isEqualTo(1L);
         assertThat(response.instrumentCount()).isEqualTo(2L);
         assertThat(response.openOrderCount()).isEqualTo(4L);
-        assertThat(response.todayExecutionCount()).isEqualTo(6L);
+        assertThat(response.todayExecutionCount()).isEqualTo(3L);
         assertThat(response.configs()).extracting("symbol").containsExactly("ZQ001", "ZQ002");
         assertThat(response.configs()).extracting("enabled").containsExactly(true, false);
         assertThat(response.configs()).extracting("marketStatus").containsExactly(
@@ -168,12 +170,13 @@ class OrderBookMarketStatusQueryServiceTest {
                 eq(MarketType.ORDER_BOOK),
                 eq(List.of(OrderStatus.PENDING, OrderStatus.PARTIALLY_FILLED))
         )).thenReturn(4L);
-        when(stockExecutionMarketViewRepository.countExecutionsBetweenBySource(
+        when(stockExecutionMarketViewRepository.countExecutionsBetweenBySourceAndSide(
                 any(LocalDateTime.class),
                 any(LocalDateTime.class),
-                eq(ExecutionSource.INTERNAL_ORDER_BOOK)
+                eq(ExecutionSource.INTERNAL_ORDER_BOOK),
+                eq(OrderSide.BUY)
         ))
-                .thenReturn(6L);
+                .thenReturn(3L);
         when(stockOrderBookInstrumentRepository.countByEnabledTrue()).thenReturn(1L);
         when(simulationMarketSessionService.isRegularSession()).thenReturn(false);
 
@@ -214,6 +217,7 @@ class OrderBookMarketStatusQueryServiceTest {
                 create table stock_execution (
                     id bigint primary key,
                     source varchar(50) not null,
+                    side varchar(10) not null,
                     executed_at timestamp not null
                 )
                 """);
@@ -256,19 +260,19 @@ class OrderBookMarketStatusQueryServiceTest {
         }
         LocalDateTime simulationDayStart = SimulationDayClock.currentDayStart();
         jdbcTemplate.update(
-                "insert into stock_execution(id, source, executed_at) values (1, 'INTERNAL_ORDER_BOOK', ?)",
+                "insert into stock_execution(id, source, side, executed_at) values (1, 'INTERNAL_ORDER_BOOK', 'BUY', ?)",
                 simulationDayStart.plusMinutes(10)
         );
         jdbcTemplate.update(
-                "insert into stock_execution(id, source, executed_at) values (2, 'INTERNAL_ORDER_BOOK', ?)",
+                "insert into stock_execution(id, source, side, executed_at) values (2, 'INTERNAL_ORDER_BOOK', 'SELL', ?)",
                 simulationDayStart.plusMinutes(20)
         );
         jdbcTemplate.update(
-                "insert into stock_execution(id, source, executed_at) values (3, 'VIRTUAL_PRICE', ?)",
+                "insert into stock_execution(id, source, side, executed_at) values (3, 'VIRTUAL_PRICE', 'BUY', ?)",
                 simulationDayStart.plusMinutes(30)
         );
         jdbcTemplate.update(
-                "insert into stock_execution(id, source, executed_at) values (4, 'INTERNAL_ORDER_BOOK', ?)",
+                "insert into stock_execution(id, source, side, executed_at) values (4, 'INTERNAL_ORDER_BOOK', 'BUY', ?)",
                 simulationDayStart.minusMinutes(1)
         );
     }

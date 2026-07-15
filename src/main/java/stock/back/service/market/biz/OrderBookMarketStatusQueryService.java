@@ -8,6 +8,7 @@ import org.springframework.transaction.annotation.Transactional;
 import stock.back.service.database.entity.ExecutionSource;
 import stock.back.service.database.entity.MarketType;
 import stock.back.service.database.entity.OrderStatus;
+import stock.back.service.database.entity.OrderSide;
 import stock.back.service.database.repository.StockExecutionMarketViewRepository;
 import stock.back.service.database.repository.StockOrderBookInstrumentRepository;
 import stock.back.service.database.repository.StockOrderBookMarketConfigRepository;
@@ -69,10 +70,11 @@ public class OrderBookMarketStatusQueryService {
         List<OrderStatus> openStatuses = List.of(OrderStatus.PENDING, OrderStatus.PARTIALLY_FILLED);
         long openOrderCount = stockOrderRepository.countByMarketTypeAndStatusIn(MarketType.ORDER_BOOK, openStatuses);
         long todayExecutionCount = includeTodayExecution
-                ? stockExecutionMarketViewRepository.countExecutionsBetweenBySource(
+                ? stockExecutionMarketViewRepository.countExecutionsBetweenBySourceAndSide(
                         simulationClockService.currentMarketDayStart(),
                         simulationClockService.currentMarketDateTime(),
-                        ExecutionSource.INTERNAL_ORDER_BOOK
+                        ExecutionSource.INTERNAL_ORDER_BOOK,
+                        OrderSide.BUY
                 )
                 : 0L;
         long configCount = configs.size();
@@ -97,7 +99,8 @@ public class OrderBookMarketStatusQueryService {
                             from stock_execution e
                            where e.executed_at >= :todayStart
                              and e.executed_at <= :todayEnd
-                             and e.source = 'INTERNAL_ORDER_BOOK') as today_execution_count
+                             and e.source = 'INTERNAL_ORDER_BOOK'
+                             and e.side = 'BUY') as today_execution_count
                         """
                 : "0 as today_execution_count";
         String sql = """

@@ -428,6 +428,24 @@ class StockMysqlDdlContractTest {
     }
 
     @Test
+    void marketTurnoverNormalizationAlterDdl_onlyUpdatesLegacyDoubleCountedSnapshots() throws IOException {
+        String ddl = Files.readString(
+                Path.of("src/main/resources/db/ddl/stock_market_turnover_normalization_alter.sql"),
+                StandardCharsets.UTF_8
+        );
+
+        assertThat(ddl).contains(
+                "USE STOCK_SERVICE",
+                "UPDATE stock_order_book_daily_snapshot",
+                "execution_count = execution_count / 2",
+                "execution_quantity = buy_quantity",
+                "turnover_amount = ROUND(turnover_amount / 2, 2)",
+                "buy_quantity = sell_quantity",
+                "execution_quantity = buy_quantity + sell_quantity"
+        );
+    }
+
+    @Test
     void eventProfileDdlResources_allowOnlyKnownAutoParticipantProfiles() throws IOException {
         List<String> ddlResources = List.of(
                 readDdlResource("db/ddl/stock_all.sql"),

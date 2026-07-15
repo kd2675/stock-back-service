@@ -35,6 +35,7 @@ stock 원장은 주문, 체결, 계좌, 보유, 가격, 주문장 종목, 시장
 - `stock-back-service/src/main/resources/db/ddl/stock_schema_contract_alignment_alter.sql`
 - `stock-back-service/src/main/resources/db/ddl/stock_price_tick_latest_lookup_alter.sql`
 - `stock-back-service/src/main/resources/db/ddl/stock_activity_latest_lookup_alter.sql`
+- `stock-back-service/src/main/resources/db/ddl/stock_market_turnover_normalization_alter.sql`
 - `stock-back-service/src/main/resources/db/maintenance/stock_clear_data.sql`
 - `stock-back-service/src/main/resources/db/maintenance/stock_clear_runtime_history_keep_participants.sql`
 - `stock-batch-service/src/main/resources/db/ddl/stock_h2.sql`
@@ -79,6 +80,7 @@ stock 원장은 주문, 체결, 계좌, 보유, 가격, 주문장 종목, 시장
 - 기존 `stock_order_book_daily_snapshot_alter.sql`, `stock_order_book_daily_regime_alter.sql`을 적용한 DB는 `stock_schema_contract_alignment_alter.sql`을 추가 적용한다.
 - 기존 `stock_price_tick`에 `(symbol, price_time)` 인덱스만 있는 DB는 `stock_price_tick_latest_lookup_alter.sql`을 적용한다.
 - 기존 주문·체결 원장에 계좌별 최신 활동 및 캔들 전용 인덱스가 없으면 `stock_activity_latest_lookup_alter.sql`을 적용한다.
+- 기존 `stock_order_book_daily_snapshot`이 BUY·SELL 양쪽 행을 합산한 체결수·거래량·거래대금을 보유하면 `stock_market_turnover_normalization_alter.sql`을 적용한다. 이미 정규화된 스냅샷에는 재적용되지 않는다.
 - 이 alter는 migration용 임시 기본값을 제거하고, 기존 테이블 생성 시 빠질 수 있던 스냅샷·레짐 CHECK와 기업 이벤트 발행 필수 CHECK를 canonical 정의로 재생성한다.
 
 ## 바꿀 때 순서

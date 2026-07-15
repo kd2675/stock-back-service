@@ -87,22 +87,22 @@ class OrderBookQueryServiceTest {
         );
         when(stockOrderBookInstrumentRepository.existsBySymbolAndEnabledTrue("ZQ001")).thenReturn(true);
         insertExecution(realJdbcTemplate, 1L, "ZQ001", "BUY", 2L, "70000.00", "140000.00", 2);
-        insertExecution(realJdbcTemplate, 2L, "ZQ001", "SELL", 1L, "71000.00", "71000.00", 1);
+        insertExecution(realJdbcTemplate, 2L, "ZQ001", "SELL", 2L, "70000.00", "140000.00", 2);
         insertExecution(realJdbcTemplate, 3L, "OTHER", "BUY", 10L, "1.00", "10.00", 0);
         insertExecution(realJdbcTemplate, 4L, "ZQ001", "BUY", 100L, "99999.00", "9999900.00", 40);
 
         var summary = realService.getOrderBookTradeSummary("zq001");
 
         assertThat(summary.symbol()).isEqualTo("ZQ001");
-        assertThat(summary.todayExecutionCount()).isEqualTo(2L);
-        assertThat(summary.todayVolume()).isEqualTo(3L);
-        assertThat(summary.todayTurnover()).isEqualByComparingTo(new BigDecimal("211000.00"));
-        assertThat(summary.vwap()).isEqualByComparingTo(new BigDecimal("70333.3333"));
-        assertThat(summary.highPrice()).isEqualByComparingTo(new BigDecimal("71000.00"));
+        assertThat(summary.todayExecutionCount()).isEqualTo(1L);
+        assertThat(summary.todayVolume()).isEqualTo(2L);
+        assertThat(summary.todayTurnover()).isEqualByComparingTo(new BigDecimal("140000.00"));
+        assertThat(summary.vwap()).isEqualByComparingTo(new BigDecimal("70000.0000"));
+        assertThat(summary.highPrice()).isEqualByComparingTo(new BigDecimal("70000.00"));
         assertThat(summary.lowPrice()).isEqualByComparingTo(new BigDecimal("70000.00"));
         assertThat(summary.buyVolume()).isEqualTo(2L);
-        assertThat(summary.sellVolume()).isEqualTo(1L);
-        assertThat(summary.executionStrength()).isEqualByComparingTo(new BigDecimal("200.00"));
+        assertThat(summary.sellVolume()).isEqualTo(2L);
+        assertThat(summary.executionStrength()).isEqualByComparingTo(new BigDecimal("100.00"));
         assertThat(summary.lastPrice()).isEqualByComparingTo(new BigDecimal("70000.00"));
         assertThat(summary.lastExecutedAt()).isEqualTo(SimulationDayClock.currentDayStart().plusMinutes(12));
     }

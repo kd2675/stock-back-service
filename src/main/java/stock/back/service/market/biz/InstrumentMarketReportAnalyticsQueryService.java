@@ -230,10 +230,10 @@ public class InstrumentMarketReportAnalyticsQueryService {
                                 rs.getObject("simulation_trade_date", LocalDate.class),
                                 rs.getBigDecimal("close_price"),
                                 rs.getLong("buy_quantity"),
-                                rs.getBigDecimal("turnover_amount").divide(BigDecimal.valueOf(2), 2, RoundingMode.HALF_UP),
+                                rs.getBigDecimal("turnover_amount"),
                                 rs.getBigDecimal("high_price"),
                                 rs.getBigDecimal("low_price"),
-                                rs.getLong("execution_count") / 2L,
+                                rs.getLong("execution_count"),
                                 MarketQuerySupport.toDateTime(rs.getTimestamp("first_executed_at")),
                                 MarketQuerySupport.toDateTime(rs.getTimestamp("last_executed_at")),
                                 rs.getLong("issued_shares"),
@@ -895,8 +895,8 @@ public class InstrumentMarketReportAnalyticsQueryService {
                                tradable_shares,
                                close_price,
                                previous_close,
-                               execution_quantity / 2 as volume,
-                               turnover_amount / 2 as turnover
+                               execution_quantity as volume,
+                               turnover_amount as turnover
                           from latest_daily
                          where enabled = true
                         """

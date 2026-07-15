@@ -65,19 +65,20 @@ public class OrderBookQueryService {
         LocalDateTime todayEnd = simulationClockService.currentMarketDateTime();
         String sql = """
                 select
-                  coalesce(count(*), 0) as today_execution_count,
-                  coalesce(sum(quantity), 0) as today_volume,
-                  coalesce(sum(gross_amount), 0) as today_turnover,
+                  coalesce(sum(case when side = 'BUY' then 1 else 0 end), 0) as today_execution_count,
+                  coalesce(sum(case when side = 'BUY' then quantity else 0 end), 0) as today_volume,
+                  coalesce(sum(case when side = 'BUY' then gross_amount else 0 end), 0) as today_turnover,
                   coalesce(sum(case when side = 'BUY' then quantity else 0 end), 0) as buy_volume,
                   coalesce(sum(case when side = 'SELL' then quantity else 0 end), 0) as sell_volume,
                   coalesce(sum(case when side = 'BUY' then gross_amount else 0 end), 0) as buy_turnover,
                   coalesce(sum(case when side = 'SELL' then gross_amount else 0 end), 0) as sell_turnover,
-                  min(price) as low_price,
-                  max(price) as high_price,
+                  min(case when side = 'BUY' then price end) as low_price,
+                  max(case when side = 'BUY' then price end) as high_price,
                   (select e.price
                      from stock_execution e
                     where e.symbol = ?
                       and e.source = 'INTERNAL_ORDER_BOOK'
+                      and e.side = 'BUY'
                       and e.executed_at <= ?
                     order by e.executed_at desc, e.id desc
                     limit 1) as last_price,
@@ -85,6 +86,7 @@ public class OrderBookQueryService {
                      from stock_execution e
                     where e.symbol = ?
                       and e.source = 'INTERNAL_ORDER_BOOK'
+                      and e.side = 'BUY'
                       and e.executed_at <= ?
                     order by e.executed_at desc, e.id desc
                     limit 1) as last_executed_at
