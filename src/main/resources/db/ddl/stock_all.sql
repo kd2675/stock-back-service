@@ -37,6 +37,16 @@ CREATE TABLE IF NOT EXISTS stock_batch_job_signal (
   status VARCHAR(20) NOT NULL DEFAULT 'PENDING',
   requested_by VARCHAR(64) NULL,
   requested_at DATETIME NOT NULL,
+  requested_business_date DATE NULL,
+  requested_session_epoch BIGINT NULL,
+  expected_cycle_id BIGINT NULL,
+  eligible_at DATETIME NULL,
+  next_attempt_at DATETIME NOT NULL,
+  attempt_count INT NOT NULL DEFAULT 0,
+  max_attempts INT NOT NULL DEFAULT 8,
+  claim_token VARCHAR(64) NULL,
+  lease_until DATETIME NULL,
+  failure_class VARCHAR(40) NULL,
   picked_at DATETIME NULL,
   completed_at DATETIME NULL,
   processed_count INT NULL,
@@ -47,18 +57,27 @@ CREATE TABLE IF NOT EXISTS stock_batch_job_signal (
   PRIMARY KEY (id),
   KEY idx_stock_batch_job_signal_status_time (status, requested_at, id),
   KEY idx_stock_batch_job_signal_job_status (job_name, status, requested_at),
+  KEY idx_stock_batch_job_signal_claim (status, next_attempt_at, eligible_at, id),
+  KEY idx_stock_batch_job_signal_lease (status, lease_until, id),
+  KEY idx_stock_batch_job_signal_cycle (expected_cycle_id, status, id),
+  KEY idx_stock_batch_job_signal_cycle_id (expected_cycle_id, id),
   CONSTRAINT chk_stock_batch_job_signal_type CHECK (signal_type <> ''),
   CONSTRAINT chk_stock_batch_job_signal_job CHECK (job_name <> ''),
   CONSTRAINT chk_stock_batch_job_signal_mode CHECK (execution_mode <> ''),
   CONSTRAINT chk_stock_batch_job_signal_status CHECK (
     CASE `status`
       WHEN 'PENDING' THEN 1
+      WHEN 'DEFERRED' THEN 1
       WHEN 'PROCESSING' THEN 1
       WHEN 'COMPLETED' THEN 1
       WHEN 'FAILED' THEN 1
+      WHEN 'DEAD_LETTER' THEN 1
       ELSE 0
     END = 1
-  )
+  ),
+  CONSTRAINT chk_stock_batch_job_signal_attempt_count CHECK (attempt_count >= 0),
+  CONSTRAINT chk_stock_batch_job_signal_max_attempts CHECK (max_attempts > 0),
+  CONSTRAINT chk_stock_batch_job_signal_epoch CHECK (requested_session_epoch IS NULL OR requested_session_epoch > 0)
 );
 
 CREATE TABLE IF NOT EXISTS stock_simulation_clock (
@@ -117,6 +136,7 @@ CREATE TABLE IF NOT EXISTS stock_account_cash_flow (
   created_by VARCHAR(64) NULL,
   created_at DATETIME NOT NULL,
   PRIMARY KEY (id),
+  KEY idx_stock_account_cash_flow_account_id (account_id, id),
   KEY idx_stock_account_cash_flow_account_time (account_id, created_at, id),
   KEY idx_stock_account_cash_flow_account_reason_creator_time (account_id, reason, created_by, created_at, id),
   KEY idx_stock_account_cash_flow_account_type_reason_time (account_id, flow_type, reason, created_at, id),
@@ -135,6 +155,23 @@ CREATE TABLE IF NOT EXISTS stock_account_cash_flow (
       ELSE 0
     END = 1
   )
+);
+
+CREATE TABLE IF NOT EXISTS stock_auto_participant_cash_flow_run (
+  run_key VARCHAR(160) NOT NULL,
+  operation VARCHAR(20) NOT NULL,
+  last_account_id BIGINT NOT NULL DEFAULT 0,
+  processed_count BIGINT NOT NULL DEFAULT 0,
+  completed_at DATETIME NULL,
+  created_at DATETIME NOT NULL,
+  updated_at DATETIME NOT NULL,
+  PRIMARY KEY (run_key),
+  KEY idx_stock_auto_participant_cash_flow_run_completed (completed_at, run_key),
+  CONSTRAINT chk_stock_auto_participant_cash_flow_run_operation CHECK (
+    CASE `operation` WHEN 'SCHEDULED' THEN 1 WHEN 'MANUAL' THEN 1 ELSE 0 END = 1
+  ),
+  CONSTRAINT chk_stock_auto_participant_cash_flow_run_cursor CHECK (last_account_id >= 0),
+  CONSTRAINT chk_stock_auto_participant_cash_flow_run_count CHECK (processed_count >= 0)
 );
 
 CREATE TABLE IF NOT EXISTS stock_instrument (
@@ -328,8 +365,10 @@ CREATE TABLE IF NOT EXISTS stock_corporate_action_entitlement (
   paid_at DATETIME NULL,
   PRIMARY KEY (id),
   UNIQUE KEY uk_stock_corporate_action_entitlement_action_account (action_id, account_id),
+  KEY idx_stock_corporate_action_entitlement_account_status (account_id, status),
   KEY idx_stock_corporate_action_entitlement_account_created (account_id, created_at),
   KEY idx_stock_corporate_action_entitlement_status (status, action_id),
+  KEY idx_stock_corporate_action_entitlement_action_status_id (action_id, status, id),
   KEY idx_stock_corporate_action_entitlement_snapshot_run (holding_snapshot_run_id),
   CONSTRAINT chk_stock_corporate_action_entitlement_quantity CHECK (quantity > 0),
   CONSTRAINT chk_stock_corporate_action_entitlement_share CHECK (share_quantity IS NULL OR share_quantity > 0),
@@ -347,6 +386,39 @@ CREATE TABLE IF NOT EXISTS stock_corporate_action_entitlement (
   ),
   CONSTRAINT chk_stock_corporate_action_entitlement_value CHECK (cash_amount IS NOT NULL OR share_quantity IS NOT NULL),
   CONSTRAINT chk_stock_corporate_action_entitlement_status CHECK (CASE `status` WHEN 'ANNOUNCED' THEN 1 WHEN 'SUBSCRIBED' THEN 1 WHEN 'EXPIRED' THEN 1 WHEN 'PAID' THEN 1 ELSE 0 END = 1)
+);
+
+CREATE TABLE IF NOT EXISTS stock_corporate_action_processing (
+  id BIGINT NOT NULL AUTO_INCREMENT,
+  action_id BIGINT NOT NULL,
+  account_scope_key VARCHAR(40) NOT NULL DEFAULT 'ALL',
+  action_phase VARCHAR(80) NOT NULL,
+  effective_business_date DATE NOT NULL,
+  status VARCHAR(20) NOT NULL,
+  attempt_count INT NOT NULL DEFAULT 1,
+  processed_count INT NOT NULL DEFAULT 0,
+  amount DECIMAL(19,2) NULL,
+  quantity BIGINT NULL,
+  ledger_reference_id VARCHAR(100) NULL,
+  processed_at DATETIME NULL,
+  last_error VARCHAR(1000) NULL,
+  created_at DATETIME NOT NULL,
+  updated_at DATETIME NOT NULL,
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_stock_corporate_action_processing_unit (
+    action_id, account_scope_key, action_phase, effective_business_date
+  ),
+  KEY idx_stock_corporate_action_processing_status_date (
+    status, effective_business_date, action_phase, action_id
+  ),
+  CONSTRAINT chk_stock_corporate_action_processing_scope CHECK (account_scope_key <> ''),
+  CONSTRAINT chk_stock_corporate_action_processing_status CHECK (
+    CASE `status` WHEN 'PENDING' THEN 1 WHEN 'COMPLETED' THEN 1 WHEN 'FAILED' THEN 1 ELSE 0 END = 1
+  ),
+  CONSTRAINT chk_stock_corporate_action_processing_attempt CHECK (attempt_count > 0),
+  CONSTRAINT chk_stock_corporate_action_processing_count CHECK (processed_count >= 0),
+  CONSTRAINT chk_stock_corporate_action_processing_amount CHECK (amount IS NULL OR amount >= 0),
+  CONSTRAINT chk_stock_corporate_action_processing_quantity CHECK (quantity IS NULL OR quantity >= 0)
 );
 
 CREATE TABLE IF NOT EXISTS stock_price (
@@ -471,6 +543,147 @@ CREATE TABLE IF NOT EXISTS stock_holding (
   CONSTRAINT chk_stock_holding_average_price_positive CHECK (average_price > 0)
 );
 
+CREATE TABLE IF NOT EXISTS stock_post_close_cycle (
+  id BIGINT NOT NULL AUTO_INCREMENT,
+  business_date DATE NOT NULL,
+  scope_type VARCHAR(20) NOT NULL,
+  scope_key VARCHAR(40) NOT NULL,
+  cycle_kind VARCHAR(20) NOT NULL DEFAULT 'TRADING',
+  skip_reason VARCHAR(500) NULL,
+  phase VARCHAR(60) NOT NULL DEFAULT 'OPEN',
+  status VARCHAR(20) NOT NULL DEFAULT 'PENDING',
+  phase_revision INT NOT NULL DEFAULT 1,
+  version BIGINT NOT NULL DEFAULT 0,
+  owner_id VARCHAR(128) NULL,
+  lease_until DATETIME NULL,
+  next_retry_at DATETIME NULL,
+  close_run_id BIGINT NULL,
+  settlement_eligible_at DATETIME NULL,
+  attempt_count INT NOT NULL DEFAULT 0,
+  started_at DATETIME NULL,
+  completed_at DATETIME NULL,
+  last_error_code VARCHAR(80) NULL,
+  last_error_message VARCHAR(1000) NULL,
+  build_version VARCHAR(100) NULL,
+  schema_version VARCHAR(100) NULL,
+  created_at DATETIME NOT NULL,
+  updated_at DATETIME NOT NULL,
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_stock_post_close_cycle_scope (business_date, scope_type, scope_key),
+  KEY idx_stock_post_close_cycle_scope_date_status (scope_type, scope_key, business_date, status, id),
+  KEY idx_stock_post_close_cycle_scope_status_date (scope_type, scope_key, status, business_date, id),
+  KEY idx_stock_post_close_cycle_phase_status (phase, status, business_date, id),
+  KEY idx_stock_post_close_cycle_lease (status, lease_until, business_date, id),
+  KEY idx_stock_post_close_cycle_close_run (close_run_id),
+  CONSTRAINT chk_stock_post_close_cycle_scope_type CHECK (
+    CASE `scope_type` WHEN 'FULL_MARKET' THEN 1 WHEN 'SYMBOL' THEN 1 ELSE 0 END = 1
+  ),
+  CONSTRAINT chk_stock_post_close_cycle_scope_key CHECK (scope_key <> ''),
+  CONSTRAINT chk_stock_post_close_cycle_kind CHECK (
+    CASE `cycle_kind` WHEN 'TRADING' THEN 1 WHEN 'SKIPPED' THEN 1 ELSE 0 END = 1
+  ),
+  CONSTRAINT chk_stock_post_close_cycle_skip_reason CHECK (
+    cycle_kind <> 'SKIPPED' OR skip_reason IS NOT NULL
+  ),
+  CONSTRAINT chk_stock_post_close_cycle_phase CHECK (
+    CASE `phase`
+      WHEN 'OPEN' THEN 1 WHEN 'CLOSE_REQUESTED' THEN 1 WHEN 'ORDER_ENTRY_CLOSED' THEN 1
+      WHEN 'EXECUTION_DRAINED' THEN 1 WHEN 'LEDGER_FROZEN' THEN 1 WHEN 'PORTFOLIO_SETTLED' THEN 1
+      WHEN 'OVERNIGHT_CASH_APPLIED' THEN 1 WHEN 'CORPORATE_CASH_APPLIED' THEN 1
+      WHEN 'REPORTS_AGGREGATED' THEN 1 WHEN 'PREOPEN_SECURITY_TRANSFORMS_APPLIED' THEN 1
+      WHEN 'MARKET_DATA_PREPARED' THEN 1 WHEN 'AUTO_MARKET_PREPARED' THEN 1
+      WHEN 'READY_TO_OPEN' THEN 1 WHEN 'COMPLETED' THEN 1 ELSE 0
+    END = 1
+  ),
+  CONSTRAINT chk_stock_post_close_cycle_status CHECK (
+    CASE `status` WHEN 'PENDING' THEN 1 WHEN 'RUNNING' THEN 1 WHEN 'DEFERRED' THEN 1 WHEN 'FAILED' THEN 1 WHEN 'COMPLETED' THEN 1 ELSE 0 END = 1
+  ),
+  CONSTRAINT chk_stock_post_close_cycle_revision CHECK (phase_revision > 0),
+  CONSTRAINT chk_stock_post_close_cycle_version CHECK (version >= 0),
+  CONSTRAINT chk_stock_post_close_cycle_attempt_count CHECK (attempt_count >= 0)
+);
+
+CREATE TABLE IF NOT EXISTS stock_post_close_phase_attempt (
+  id BIGINT NOT NULL AUTO_INCREMENT,
+  cycle_id BIGINT NOT NULL,
+  phase VARCHAR(60) NOT NULL,
+  attempt_no INT NOT NULL,
+  batch_job_execution_id BIGINT NULL,
+  owner_id VARCHAR(128) NOT NULL,
+  status VARCHAR(20) NOT NULL DEFAULT 'RUNNING',
+  started_at DATETIME NOT NULL,
+  completed_at DATETIME NULL,
+  error_code VARCHAR(80) NULL,
+  error_message VARCHAR(1000) NULL,
+  build_version VARCHAR(100) NULL,
+  schema_version VARCHAR(100) NULL,
+  created_at DATETIME NOT NULL,
+  updated_at DATETIME NOT NULL,
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_stock_post_close_phase_attempt (cycle_id, phase, attempt_no),
+  KEY idx_stock_post_close_phase_attempt_cycle_id (cycle_id, id),
+  KEY idx_stock_post_close_phase_attempt_status (status, started_at, id),
+  KEY idx_stock_post_close_phase_attempt_job (batch_job_execution_id),
+  CONSTRAINT chk_stock_post_close_phase_attempt_no CHECK (attempt_no > 0),
+  CONSTRAINT chk_stock_post_close_phase_attempt_owner CHECK (owner_id <> ''),
+  CONSTRAINT chk_stock_post_close_phase_attempt_status CHECK (
+    CASE `status` WHEN 'RUNNING' THEN 1 WHEN 'COMPLETED' THEN 1 WHEN 'FAILED' THEN 1 WHEN 'ABANDONED' THEN 1 ELSE 0 END = 1
+  )
+);
+
+CREATE TABLE IF NOT EXISTS stock_post_close_readiness_check (
+  close_cycle_id BIGINT NOT NULL,
+  check_code VARCHAR(60) NOT NULL,
+  display_order INT NOT NULL,
+  check_status VARCHAR(20) NOT NULL,
+  failure_count BIGINT NOT NULL DEFAULT 0,
+  message VARCHAR(500) NULL,
+  checked_at DATETIME NOT NULL,
+  PRIMARY KEY (close_cycle_id, check_code),
+  UNIQUE KEY uk_stock_post_close_readiness_order (close_cycle_id, display_order),
+  CONSTRAINT chk_stock_post_close_readiness_order CHECK (display_order > 0),
+  CONSTRAINT chk_stock_post_close_readiness_status CHECK (
+    CASE `check_status` WHEN 'PASSED' THEN 1 WHEN 'FAILED' THEN 1 ELSE 0 END = 1
+  ),
+  CONSTRAINT chk_stock_post_close_readiness_failure_count CHECK (failure_count >= 0)
+);
+
+CREATE TABLE IF NOT EXISTS stock_post_close_cycle_metric (
+  close_cycle_id BIGINT NOT NULL,
+  close_run_id BIGINT NULL,
+  captured_open_order_count BIGINT NOT NULL DEFAULT 0,
+  cancelled_order_count BIGINT NOT NULL DEFAULT 0,
+  released_buy_cash DECIMAL(19,2) NOT NULL DEFAULT 0.00,
+  released_sell_quantity BIGINT NOT NULL DEFAULT 0,
+  settlement_target_account_count BIGINT NOT NULL DEFAULT 0,
+  account_snapshot_count BIGINT NOT NULL DEFAULT 0,
+  holding_snapshot_count BIGINT NOT NULL DEFAULT 0,
+  price_snapshot_count BIGINT NOT NULL DEFAULT 0,
+  open_order_summary_count BIGINT NOT NULL DEFAULT 0,
+  reconciliation_mismatch_count BIGINT NOT NULL DEFAULT 0,
+  settled_account_count BIGINT NOT NULL DEFAULT 0,
+  settlement_missing_account_count BIGINT NOT NULL DEFAULT 0,
+  updated_at DATETIME NOT NULL,
+  PRIMARY KEY (close_cycle_id),
+  KEY idx_stock_post_close_cycle_metric_run (close_run_id),
+  CONSTRAINT chk_stock_post_close_cycle_metric_counts CHECK (
+    captured_open_order_count >= 0
+    AND cancelled_order_count >= 0
+    AND settlement_target_account_count >= 0
+    AND account_snapshot_count >= 0
+    AND holding_snapshot_count >= 0
+    AND price_snapshot_count >= 0
+    AND open_order_summary_count >= 0
+    AND reconciliation_mismatch_count >= 0
+    AND settled_account_count >= 0
+    AND settlement_missing_account_count >= 0
+  ),
+  CONSTRAINT chk_stock_post_close_cycle_metric_releases CHECK (
+    released_buy_cash >= 0
+    AND released_sell_quantity >= 0
+  )
+);
+
 CREATE TABLE IF NOT EXISTS stock_market_close_run (
   id BIGINT NOT NULL AUTO_INCREMENT,
   symbol VARCHAR(20) NULL,
@@ -493,20 +706,161 @@ CREATE TABLE IF NOT EXISTS stock_market_close_run (
 
 CREATE TABLE IF NOT EXISTS stock_holding_snapshot (
   id BIGINT NOT NULL AUTO_INCREMENT,
+  close_cycle_id BIGINT NULL,
   close_run_id BIGINT NOT NULL,
   account_id BIGINT NOT NULL,
   symbol VARCHAR(20) NOT NULL,
   quantity BIGINT NOT NULL,
   reserved_quantity BIGINT NOT NULL DEFAULT 0,
   average_price DECIMAL(19,2) NOT NULL,
+  evaluation_price DECIMAL(19,2) NULL,
   snapshot_at DATETIME NOT NULL,
   PRIMARY KEY (id),
   UNIQUE KEY uk_stock_holding_snapshot_run_account_symbol (close_run_id, account_id, symbol),
+  KEY idx_stock_holding_snapshot_cycle_account (close_cycle_id, account_id, symbol),
   KEY idx_stock_holding_snapshot_symbol_run (symbol, close_run_id, account_id),
   KEY idx_stock_holding_snapshot_account_time (account_id, snapshot_at, id),
   CONSTRAINT chk_stock_holding_snapshot_quantity_non_negative CHECK (quantity >= 0),
   CONSTRAINT chk_stock_holding_snapshot_reserved_valid CHECK (reserved_quantity >= 0 AND reserved_quantity <= quantity),
-  CONSTRAINT chk_stock_holding_snapshot_average_price_positive CHECK (average_price > 0)
+  CONSTRAINT chk_stock_holding_snapshot_average_price_positive CHECK (average_price > 0),
+  CONSTRAINT chk_stock_holding_snapshot_evaluation_price CHECK (evaluation_price IS NULL OR evaluation_price >= 0)
+);
+
+CREATE TABLE IF NOT EXISTS stock_close_account_snapshot (
+  id BIGINT NOT NULL AUTO_INCREMENT,
+  close_cycle_id BIGINT NOT NULL,
+  close_run_id BIGINT NOT NULL,
+  account_id BIGINT NOT NULL,
+  user_key VARCHAR(64) NULL,
+  account_status VARCHAR(20) NOT NULL,
+  participant_category VARCHAR(30) NOT NULL DEFAULT 'MANUAL_PARTICIPANT',
+  settlement_target BOOLEAN NOT NULL,
+  pre_cancel_cash DECIMAL(19,2) NOT NULL,
+  pre_cancel_order_reserved_cash DECIMAL(19,2) NOT NULL DEFAULT 0.00,
+  subscription_reserved_cash DECIMAL(19,2) NOT NULL DEFAULT 0.00,
+  post_cancel_cash DECIMAL(19,2) NULL,
+  external_net_cash_flow DECIMAL(19,2) NOT NULL DEFAULT 0.00,
+  cash_flow_watermark_id BIGINT NOT NULL DEFAULT 0,
+  holding_market_value DECIMAL(19,2) NOT NULL DEFAULT 0.00,
+  holding_quantity BIGINT NOT NULL DEFAULT 0,
+  reserved_sell_quantity BIGINT NOT NULL DEFAULT 0,
+  holding_position_count BIGINT NOT NULL DEFAULT 0,
+  reconciliation_status VARCHAR(20) NOT NULL DEFAULT 'PENDING',
+  snapshot_at DATETIME NOT NULL,
+  created_at DATETIME NOT NULL,
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_stock_close_account_snapshot_cycle_account (close_cycle_id, account_id),
+  KEY idx_stock_close_account_snapshot_cycle_target (close_cycle_id, settlement_target, account_id),
+  KEY idx_stock_close_account_snapshot_cycle_reconciliation (close_cycle_id, reconciliation_status, account_id),
+  KEY idx_stock_close_account_snapshot_run_target (close_run_id, settlement_target, account_id),
+  KEY idx_stock_close_account_snapshot_account_cycle (account_id, close_cycle_id),
+  CONSTRAINT chk_stock_close_account_snapshot_cash CHECK (
+    pre_cancel_cash >= 0
+    AND pre_cancel_order_reserved_cash >= 0
+    AND subscription_reserved_cash >= 0
+    AND (post_cancel_cash IS NULL OR post_cancel_cash >= 0)
+  ),
+  CONSTRAINT chk_stock_close_account_snapshot_watermark CHECK (cash_flow_watermark_id >= 0),
+  CONSTRAINT chk_stock_close_account_snapshot_holding_summary CHECK (
+    holding_market_value >= 0
+    AND holding_quantity >= 0
+    AND reserved_sell_quantity >= 0
+    AND reserved_sell_quantity <= holding_quantity
+    AND holding_position_count >= 0
+  ),
+  CONSTRAINT chk_stock_close_account_snapshot_reconciliation CHECK (
+    CASE `reconciliation_status` WHEN 'PENDING' THEN 1 WHEN 'MATCHED' THEN 1 WHEN 'MISMATCHED' THEN 1 ELSE 0 END = 1
+  ),
+  CONSTRAINT chk_stock_close_account_snapshot_participant_category CHECK (
+    CASE `participant_category`
+      WHEN 'MANUAL_PARTICIPANT' THEN 1
+      WHEN 'AUTO_PARTICIPANT' THEN 1
+      WHEN 'LISTING_UNDERWRITER' THEN 1
+      ELSE 0
+    END = 1
+  )
+);
+
+CREATE TABLE IF NOT EXISTS stock_close_price_snapshot (
+  id BIGINT NOT NULL AUTO_INCREMENT,
+  close_cycle_id BIGINT NOT NULL,
+  close_run_id BIGINT NOT NULL,
+  symbol VARCHAR(20) NOT NULL,
+  close_price DECIMAL(19,2) NOT NULL,
+  previous_close DECIMAL(19,2) NOT NULL,
+  price_time DATETIME NULL,
+  price_provider VARCHAR(40) NULL,
+  last_execution_id BIGINT NULL,
+  order_book_symbol BOOLEAN NOT NULL,
+  snapshot_at DATETIME NOT NULL,
+  created_at DATETIME NOT NULL,
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_stock_close_price_snapshot_cycle_symbol (close_cycle_id, symbol),
+  KEY idx_stock_close_price_snapshot_run_symbol (close_run_id, symbol),
+  CONSTRAINT chk_stock_close_price_snapshot_price CHECK (close_price >= 0 AND previous_close >= 0),
+  CONSTRAINT chk_stock_close_price_snapshot_execution CHECK (last_execution_id IS NULL OR last_execution_id > 0)
+);
+
+CREATE TABLE IF NOT EXISTS stock_close_open_order_summary (
+  id BIGINT NOT NULL AUTO_INCREMENT,
+  close_cycle_id BIGINT NOT NULL,
+  close_run_id BIGINT NOT NULL,
+  symbol VARCHAR(20) NOT NULL,
+  pre_cancel_open_order_count BIGINT NOT NULL DEFAULT 0,
+  pre_cancel_buy_order_count BIGINT NOT NULL DEFAULT 0,
+  pre_cancel_sell_order_count BIGINT NOT NULL DEFAULT 0,
+  pre_cancel_remaining_buy_quantity BIGINT NOT NULL DEFAULT 0,
+  pre_cancel_remaining_sell_quantity BIGINT NOT NULL DEFAULT 0,
+  pre_cancel_reserved_buy_cash DECIMAL(19,2) NOT NULL DEFAULT 0.00,
+  pre_cancel_reserved_sell_quantity BIGINT NOT NULL DEFAULT 0,
+  post_cancel_open_order_count BIGINT NOT NULL DEFAULT 0,
+  reconciliation_status VARCHAR(20) NOT NULL DEFAULT 'PENDING',
+  snapshot_at DATETIME NOT NULL,
+  created_at DATETIME NOT NULL,
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_stock_close_open_order_summary_cycle_symbol (close_cycle_id, symbol),
+  KEY idx_stock_close_open_order_summary_run (close_run_id, symbol),
+  CONSTRAINT chk_stock_close_open_order_summary_counts CHECK (
+    pre_cancel_open_order_count >= 0
+    AND pre_cancel_buy_order_count >= 0
+    AND pre_cancel_sell_order_count >= 0
+    AND pre_cancel_remaining_buy_quantity >= 0
+    AND pre_cancel_remaining_sell_quantity >= 0
+    AND pre_cancel_reserved_buy_cash >= 0
+    AND pre_cancel_reserved_sell_quantity >= 0
+    AND post_cancel_open_order_count >= 0
+  ),
+  CONSTRAINT chk_stock_close_open_order_summary_reconciliation CHECK (
+    CASE `reconciliation_status` WHEN 'PENDING' THEN 1 WHEN 'MATCHED' THEN 1 WHEN 'MISMATCHED' THEN 1 ELSE 0 END = 1
+  )
+);
+
+CREATE TABLE IF NOT EXISTS stock_close_open_order_snapshot (
+  id BIGINT NOT NULL AUTO_INCREMENT,
+  close_cycle_id BIGINT NOT NULL,
+  close_run_id BIGINT NOT NULL,
+  order_id BIGINT NOT NULL,
+  account_id BIGINT NOT NULL,
+  symbol VARCHAR(20) NOT NULL,
+  side VARCHAR(10) NOT NULL,
+  source_order_status VARCHAR(20) NOT NULL,
+  remaining_quantity BIGINT NOT NULL,
+  reserved_cash DECIMAL(19,2) NOT NULL DEFAULT 0.00,
+  captured_at DATETIME NOT NULL,
+  released_at DATETIME NULL,
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_stock_close_open_order_snapshot_cycle_order (close_cycle_id, order_id),
+  KEY idx_stock_close_open_order_snapshot_run_order (close_run_id, order_id),
+  KEY idx_stock_close_open_order_snapshot_cycle_release_order (close_cycle_id, released_at, order_id),
+  KEY idx_stock_close_open_order_snapshot_cycle_account (close_cycle_id, account_id, side),
+  KEY idx_stock_close_open_order_snapshot_cycle_holding (close_cycle_id, symbol, account_id, side),
+  KEY idx_stock_close_open_order_snapshot_cycle_stream (close_cycle_id, symbol, source_order_status, order_id),
+  CONSTRAINT chk_stock_close_open_order_snapshot_side CHECK (CASE `side` WHEN 'BUY' THEN 1 WHEN 'SELL' THEN 1 ELSE 0 END = 1),
+  CONSTRAINT chk_stock_close_open_order_snapshot_status CHECK (
+    CASE `source_order_status` WHEN 'PENDING' THEN 1 WHEN 'PARTIALLY_FILLED' THEN 1 ELSE 0 END = 1
+  ),
+  CONSTRAINT chk_stock_close_open_order_snapshot_quantity CHECK (remaining_quantity > 0),
+  CONSTRAINT chk_stock_close_open_order_snapshot_cash CHECK (reserved_cash >= 0)
 );
 
 CREATE TABLE IF NOT EXISTS stock_order_book_daily_snapshot (
@@ -579,6 +933,7 @@ CREATE TABLE IF NOT EXISTS stock_execution_daily_account_snapshot (
   sell_amount DECIMAL(19,2) NOT NULL DEFAULT 0.00,
   net_cash_flow DECIMAL(19,2) NOT NULL DEFAULT 0.00,
   execution_amount DECIMAL(19,2) NOT NULL DEFAULT 0.00,
+  last_executed_at DATETIME NULL,
   created_at DATETIME NOT NULL,
   PRIMARY KEY (id),
   UNIQUE KEY uk_stock_execution_daily_account_run_symbol_account (close_run_id, symbol, account_id),
@@ -596,12 +951,27 @@ CREATE TABLE IF NOT EXISTS stock_execution_account_day_summary (
   buy_quantity BIGINT NOT NULL DEFAULT 0,
   sell_quantity BIGINT NOT NULL DEFAULT 0,
   gross_amount DECIMAL(19,2) NOT NULL DEFAULT 0.00,
+  buy_gross_amount DECIMAL(19,2) NOT NULL DEFAULT 0.00,
+  sell_gross_amount DECIMAL(19,2) NOT NULL DEFAULT 0.00,
+  buy_net_amount DECIMAL(19,2) NOT NULL DEFAULT 0.00,
+  sell_net_amount DECIMAL(19,2) NOT NULL DEFAULT 0.00,
+  fee_amount DECIMAL(19,2) NOT NULL DEFAULT 0.00,
+  tax_amount DECIMAL(19,2) NOT NULL DEFAULT 0.00,
+  realized_profit DECIMAL(19,2) NOT NULL DEFAULT 0.00,
   last_executed_at DATETIME NULL,
   updated_at DATETIME NOT NULL,
   PRIMARY KEY (simulation_trade_date, account_id),
   KEY idx_stock_execution_account_day_account_date (account_id, simulation_trade_date),
   CONSTRAINT chk_stock_execution_account_day_quantity CHECK (execution_count >= 0 AND buy_quantity >= 0 AND sell_quantity >= 0),
-  CONSTRAINT chk_stock_execution_account_day_amount CHECK (gross_amount >= 0)
+  CONSTRAINT chk_stock_execution_account_day_amount CHECK (
+    gross_amount >= 0
+    AND buy_gross_amount >= 0
+    AND sell_gross_amount >= 0
+    AND buy_net_amount >= 0
+    AND sell_net_amount >= 0
+    AND fee_amount >= 0
+    AND tax_amount >= 0
+  )
 );
 
 CREATE TABLE IF NOT EXISTS stock_auto_participant (
@@ -829,6 +1199,40 @@ CREATE TABLE IF NOT EXISTS stock_order_book_market_config (
   CONSTRAINT chk_stock_order_book_market_status CHECK (CASE `market_status` WHEN 'OPEN' THEN 1 WHEN 'CLOSED' THEN 1 WHEN 'HALTED' THEN 1 WHEN 'CIRCUIT_BREAKER' THEN 1 ELSE 0 END = 1)
 );
 
+CREATE TABLE IF NOT EXISTS stock_market_business_state (
+  state_id VARCHAR(20) NOT NULL,
+  active_business_date DATE NOT NULL,
+  preparing_business_date DATE NULL,
+  raw_simulation_date DATE NOT NULL,
+  version BIGINT NOT NULL DEFAULT 0,
+  created_at DATETIME NOT NULL,
+  updated_at DATETIME NOT NULL,
+  PRIMARY KEY (state_id),
+  CONSTRAINT chk_stock_market_business_state_version CHECK (version >= 0)
+);
+
+CREATE TABLE IF NOT EXISTS stock_market_session_fence (
+  market_type VARCHAR(20) NOT NULL,
+  symbol VARCHAR(20) NOT NULL,
+  business_date DATE NOT NULL,
+  session_epoch BIGINT NOT NULL,
+  session_state VARCHAR(20) NOT NULL,
+  state_changed_at DATETIME NOT NULL,
+  version BIGINT NOT NULL DEFAULT 0,
+  created_at DATETIME NOT NULL,
+  updated_at DATETIME NOT NULL,
+  PRIMARY KEY (market_type, symbol),
+  KEY idx_stock_market_session_fence_state (business_date, session_state, market_type, symbol),
+  CONSTRAINT chk_stock_market_session_fence_market_type CHECK (
+    CASE `market_type` WHEN 'VIRTUAL_PRICE' THEN 1 WHEN 'ORDER_BOOK' THEN 1 ELSE 0 END = 1
+  ),
+  CONSTRAINT chk_stock_market_session_fence_state CHECK (
+    CASE `session_state` WHEN 'OPEN' THEN 1 WHEN 'CLOSING' THEN 1 WHEN 'CLOSED' THEN 1 WHEN 'PREPARING' THEN 1 ELSE 0 END = 1
+  ),
+  CONSTRAINT chk_stock_market_session_fence_epoch CHECK (session_epoch > 0),
+  CONSTRAINT chk_stock_market_session_fence_version CHECK (version >= 0)
+);
+
 CREATE TABLE IF NOT EXISTS stock_auto_market_config (
   symbol VARCHAR(20) NOT NULL,
   enabled BIT NOT NULL,
@@ -990,6 +1394,8 @@ CREATE TABLE IF NOT EXISTS stock_instrument_report_event (
 
 CREATE TABLE IF NOT EXISTS portfolio_snapshot (
   id BIGINT NOT NULL AUTO_INCREMENT,
+  close_cycle_id BIGINT NULL,
+  close_run_id BIGINT NULL,
   account_id BIGINT NOT NULL,
   snapshot_date DATE NOT NULL,
   total_asset DECIMAL(19,2) NOT NULL,
@@ -999,10 +1405,16 @@ CREATE TABLE IF NOT EXISTS portfolio_snapshot (
   reserved_sell_quantity BIGINT NULL,
   holding_position_count BIGINT NULL,
   return_rate DECIMAL(9,4) NOT NULL,
+  input_hash VARCHAR(64) NULL,
+  calculation_version VARCHAR(40) NULL,
+  data_quality_status VARCHAR(20) NULL,
+  source_build_version VARCHAR(100) NULL,
   created_at DATETIME NOT NULL,
   PRIMARY KEY (id),
   UNIQUE KEY uk_portfolio_snapshot_account_date (account_id, snapshot_date),
+  UNIQUE KEY uk_portfolio_snapshot_cycle_account (close_cycle_id, account_id),
   KEY idx_portfolio_snapshot_date_return (snapshot_date, return_rate),
+  KEY idx_portfolio_snapshot_close_run (close_run_id, account_id),
   CONSTRAINT chk_portfolio_snapshot_total_asset_non_negative CHECK (total_asset >= 0),
   CONSTRAINT chk_portfolio_snapshot_cash_balance_non_negative CHECK (cash_balance >= 0),
   CONSTRAINT chk_portfolio_snapshot_market_value_non_negative CHECK (market_value >= 0),
@@ -1017,5 +1429,10 @@ CREATE TABLE IF NOT EXISTS portfolio_snapshot (
       AND reserved_sell_quantity <= holding_quantity
       AND holding_position_count >= 0
     )
+  ),
+  CONSTRAINT chk_portfolio_snapshot_input_hash CHECK (input_hash IS NULL OR char_length(input_hash) = 64),
+  CONSTRAINT chk_portfolio_snapshot_data_quality CHECK (
+    data_quality_status IS NULL
+    OR CASE `data_quality_status` WHEN 'VERIFIED' THEN 1 WHEN 'WARNING' THEN 1 WHEN 'INVALID' THEN 1 ELSE 0 END = 1
   )
 );

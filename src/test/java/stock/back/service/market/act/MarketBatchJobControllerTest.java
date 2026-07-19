@@ -5,12 +5,16 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import stock.back.service.market.biz.BatchJobRuntimeControlService;
 import stock.back.service.market.biz.BatchJobSignalService;
+import stock.back.service.market.biz.EodOperationsCommandService;
+import stock.back.service.market.biz.EodOperationsOverviewService;
 import stock.back.service.market.vo.AutoParticipantCashFlowControlRequest;
 import stock.back.service.market.vo.AutoParticipantCashFlowStatusResponse;
 import stock.back.service.market.vo.BatchJobRuntimeControlRequest;
 import stock.back.service.market.vo.BatchJobRuntimeStatusResponse;
+import stock.back.service.market.vo.EodPhaseRetryResponse;
 import stock.back.service.market.vo.StockBatchJobRunResponse;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.Optional;
 
@@ -23,9 +27,13 @@ class MarketBatchJobControllerTest {
 
     private final BatchJobRuntimeControlService batchJobRuntimeControlService = mock(BatchJobRuntimeControlService.class);
     private final BatchJobSignalService batchJobSignalService = mock(BatchJobSignalService.class);
+    private final EodOperationsCommandService eodOperationsCommandService = mock(EodOperationsCommandService.class);
+    private final EodOperationsOverviewService eodOperationsOverviewService = mock(EodOperationsOverviewService.class);
     private final MarketBatchJobController marketBatchJobController = new MarketBatchJobController(
             batchJobRuntimeControlService,
-            batchJobSignalService
+            batchJobSignalService,
+            eodOperationsCommandService,
+            eodOperationsOverviewService
     );
 
     @Test
@@ -123,5 +131,32 @@ class MarketBatchJobControllerTest {
 
         verify(batchJobSignalService).latestAutoParticipantCashFlow();
         assertThat(response.getData()).isEqualTo(batchResponse);
+    }
+
+    @Test
+    void retryFailedEodPhase_usesAuthenticatedAdminIdentity() {
+        EodPhaseRetryResponse retryResponse = new EodPhaseRetryResponse(
+                77L,
+                LocalDate.of(2026, 7, 15),
+                "LEDGER_FROZEN",
+                "FAILED",
+                "PENDING",
+                2,
+                "admin-user-key",
+                LocalDateTime.now()
+        );
+        when(eodOperationsCommandService.retryFailedPhase(77L, "admin-user-key"))
+                .thenReturn(retryResponse);
+
+        var response = marketBatchJobController.retryFailedEodPhase(
+                77L,
+                UserContext.builder()
+                        .userKey("admin-user-key")
+                        .role("ROLE_ADMIN")
+                        .build()
+        );
+
+        verify(eodOperationsCommandService).retryFailedPhase(77L, "admin-user-key");
+        assertThat(response.getData()).isEqualTo(retryResponse);
     }
 }

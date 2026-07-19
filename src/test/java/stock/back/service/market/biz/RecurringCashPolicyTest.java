@@ -26,6 +26,26 @@ class RecurringCashPolicyTest {
     }
 
     @Test
+    void normalizeIntervalUnit_positiveAmountWithSubDayUnit_throwsBadRequest() {
+        assertThatThrownBy(() -> RecurringCashPolicy.normalizeIntervalUnit("HOUR", BigDecimal.ONE))
+                .isInstanceOf(StockException.class)
+                .hasMessageContaining("DAY, MONTH, or YEAR");
+    }
+
+    @Test
+    void normalizeIntervalUnit_disabledAmountWithExplicitSubDayUnit_throwsBadRequest() {
+        assertThatThrownBy(() -> RecurringCashPolicy.normalizeIntervalUnit("HOUR", BigDecimal.ZERO))
+                .isInstanceOf(StockException.class)
+                .hasMessageContaining("DAY, MONTH, or YEAR");
+    }
+
+    @Test
+    void normalizeIntervalUnit_positiveAmountWithDayOrLongerUnit_returnsUnit() {
+        assertThat(RecurringCashPolicy.normalizeIntervalUnit("MONTH", BigDecimal.ONE))
+                .isEqualTo(RecurringCashIntervalUnit.MONTH);
+    }
+
+    @Test
     void normalizeInterval_zeroAmountWithoutInterval_usesStoppedScheduleDefaults() {
         assertThat(RecurringCashPolicy.normalizeIntervalValue(null, BigDecimal.ZERO))
                 .isEqualByComparingTo(BigDecimal.ZERO);

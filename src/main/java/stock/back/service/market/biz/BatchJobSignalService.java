@@ -3,11 +3,14 @@ package stock.back.service.market.biz;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.support.GeneratedKeyHolder;
 import org.springframework.jdbc.support.KeyHolder;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
+import stock.back.service.common.exception.StockException;
 import stock.back.service.market.vo.StockBatchJobRunResponse;
+import web.common.core.simulation.SimulationMarketSession;
 
 import java.sql.PreparedStatement;
 import java.sql.Statement;
@@ -30,13 +33,25 @@ public class BatchJobSignalService {
 
     private final JdbcTemplate jdbcTemplate;
     private final BatchJobRuntimeControlService batchJobRuntimeControlService;
+    private final SimulationMarketSessionService simulationMarketSessionService;
+    private final BatchJobSignalContextService batchJobSignalContextService;
+    private final int defaultMaxAttempts;
 
     public BatchJobSignalService(
             JdbcTemplate jdbcTemplate,
-            BatchJobRuntimeControlService batchJobRuntimeControlService
+            BatchJobRuntimeControlService batchJobRuntimeControlService,
+            SimulationMarketSessionService simulationMarketSessionService,
+            BatchJobSignalContextService batchJobSignalContextService,
+            @Value("${stock.batch-signal.default-max-attempts:12}") int defaultMaxAttempts
     ) {
+        if (defaultMaxAttempts <= 0) {
+            throw new IllegalArgumentException("stock.batch-signal.default-max-attempts must be positive");
+        }
         this.jdbcTemplate = jdbcTemplate;
         this.batchJobRuntimeControlService = batchJobRuntimeControlService;
+        this.simulationMarketSessionService = simulationMarketSessionService;
+        this.batchJobSignalContextService = batchJobSignalContextService;
+        this.defaultMaxAttempts = defaultMaxAttempts;
     }
 
     @Transactional(isolation = Isolation.SERIALIZABLE)
@@ -54,7 +69,9 @@ public class BatchJobSignalService {
                 BatchJobNames.AUTO_PARTICIPANT_CASH_FLOW,
                 "manual-recurring-cash",
                 null,
-                requestedBy
+                requestedBy,
+                batchJobSignalContextService.resolveFullMarket(),
+                true
         );
     }
 
@@ -63,11 +80,12 @@ public class BatchJobSignalService {
         return jdbcTemplate.query(
                         """
                         select job_name,
-                               case when status = 'PENDING' then 'QUEUED' else status end as response_status,
+                               case when status in ('PENDING', 'DEFERRED') then 'QUEUED' else status end as response_status,
                                execution_mode,
                                coalesce(processed_count, 0) as processed_count,
                                coalesce(message, case
                                    when status = 'PENDING' then 'Batch job signal queued'
+                                   when status = 'DEFERRED' then 'Batch job signal deferred until its eligible time'
                                    when status = 'PROCESSING' then 'Batch job signal processing'
                                    else 'Batch job signal completed'
                                end) as response_message,
@@ -98,12 +116,17 @@ public class BatchJobSignalService {
 
     @Transactional
     public StockBatchJobRunResponse enqueueMarketCloseRollover(String requestedBy) {
+        if (simulationMarketSessionService.currentSession() != SimulationMarketSession.AFTER_CLOSE) {
+            throw StockException.conflict("Full market close can only be requested after the regular session");
+        }
         return enqueue(
                 SIGNAL_MARKET_CLOSE_ROLLOVER_RUN,
                 BatchJobNames.MARKET_CLOSE_ROLLOVER,
                 "manual-rollover",
                 null,
-                requestedBy
+                requestedBy,
+                batchJobSignalContextService.resolveFullMarket(),
+                false
         );
     }
 
@@ -115,7 +138,9 @@ public class BatchJobSignalService {
                 BatchJobNames.MARKET_CLOSE_ROLLOVER,
                 "price-limit-base:" + normalizedSymbol,
                 normalizedSymbol,
-                requestedBy
+                requestedBy,
+                batchJobSignalContextService.resolveSymbol(normalizedSymbol),
+                false
         );
     }
 
@@ -127,7 +152,9 @@ public class BatchJobSignalService {
                 BatchJobNames.MARKET_CLOSE_ROLLOVER,
                 "halt-open-order-cancel:" + normalizedSymbol,
                 normalizedSymbol,
-                requestedBy
+                requestedBy,
+                batchJobSignalContextService.resolveSymbol(normalizedSymbol),
+                false
         );
     }
 
@@ -136,10 +163,21 @@ public class BatchJobSignalService {
             String jobName,
             String executionMode,
             String symbol,
-            String requestedBy
+            String requestedBy,
+            BatchJobSignalContextService.BatchJobSignalContext context,
+            boolean overnightEligible
     ) {
         LocalDateTime now = LocalDateTime.now();
-        return insertSignal(signalType, jobName, executionMode, symbol, requestedBy, now);
+        return insertSignal(
+                signalType,
+                jobName,
+                executionMode,
+                symbol,
+                requestedBy,
+                context,
+                overnightEligible,
+                now
+        );
     }
 
     private StockBatchJobRunResponse enqueueDeduplicated(
@@ -147,7 +185,9 @@ public class BatchJobSignalService {
             String jobName,
             String executionMode,
             String symbol,
-            String requestedBy
+            String requestedBy,
+            BatchJobSignalContextService.BatchJobSignalContext context,
+            boolean overnightEligible
     ) {
         LocalDateTime now = LocalDateTime.now();
         Optional<Long> existingSignalId = findOpenSignalId(signalType, jobName, executionMode, symbol);
@@ -159,7 +199,16 @@ public class BatchJobSignalService {
                     now
             );
         }
-        return insertSignal(signalType, jobName, executionMode, symbol, requestedBy, now);
+        return insertSignal(
+                signalType,
+                jobName,
+                executionMode,
+                symbol,
+                requestedBy,
+                context,
+                overnightEligible,
+                now
+        );
     }
 
     private Optional<Long> findOpenSignalId(
@@ -176,7 +225,7 @@ public class BatchJobSignalService {
                    and job_name = ?
                    and execution_mode = ?
                    and ((? is null and symbol is null) or symbol = ?)
-                   and status in ('PENDING', 'PROCESSING')
+                   and status in ('PENDING', 'DEFERRED', 'PROCESSING')
                  order by id asc
                  limit 1
                 """,
@@ -196,6 +245,8 @@ public class BatchJobSignalService {
             String executionMode,
             String symbol,
             String requestedBy,
+            BatchJobSignalContextService.BatchJobSignalContext context,
+            boolean overnightEligible,
             LocalDateTime now
     ) {
         KeyHolder keyHolder = new GeneratedKeyHolder();
@@ -211,10 +262,17 @@ public class BatchJobSignalService {
                         status,
                         requested_by,
                         requested_at,
+                        requested_business_date,
+                        requested_session_epoch,
+                        expected_cycle_id,
+                        eligible_at,
+                        next_attempt_at,
+                        attempt_count,
+                        max_attempts,
                         created_at,
                         updated_at
                     )
-                    values (?, ?, ?, ?, null, 'PENDING', ?, ?, ?, ?)
+                    values (?, ?, ?, ?, null, 'PENDING', ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
                     """,
                     Statement.RETURN_GENERATED_KEYS
             );
@@ -224,8 +282,14 @@ public class BatchJobSignalService {
             statement.setString(4, symbol);
             statement.setString(5, normalizeRequestedBy(requestedBy));
             statement.setObject(6, now);
-            statement.setObject(7, now);
-            statement.setObject(8, now);
+            statement.setObject(7, context.requestedBusinessDate());
+            statement.setObject(8, context.requestedSessionEpoch());
+            statement.setObject(9, context.expectedCycleId());
+            statement.setObject(10, eligibleAt(context, overnightEligible));
+            statement.setObject(11, now);
+            statement.setInt(12, defaultMaxAttempts);
+            statement.setObject(13, now);
+            statement.setObject(14, now);
             return statement;
         }, keyHolder);
         Number generatedId = keyHolder.getKey();
@@ -236,6 +300,17 @@ public class BatchJobSignalService {
                 "Batch job signal queued: id=" + signalId,
                 now
         );
+    }
+
+    private LocalDateTime eligibleAt(
+            BatchJobSignalContextService.BatchJobSignalContext context,
+            boolean overnightEligible
+    ) {
+        if (!overnightEligible) {
+            return context.simulationNow();
+        }
+        LocalDateTime overnightStart = context.requestedBusinessDate().plusDays(1).atStartOfDay();
+        return context.simulationNow().isAfter(overnightStart) ? context.simulationNow() : overnightStart;
     }
 
     private StockBatchJobRunResponse queuedResponse(

@@ -42,6 +42,7 @@ public class OrderBookInstrumentCommandService {
     private final JdbcTemplate jdbcTemplate;
     private final JdbcClient jdbcClient;
     private final SimulationClockService simulationClockService;
+    private final MarketLedgerFreezeGuard marketLedgerFreezeGuard;
 
     public OrderBookInstrumentCommandService(
             StockInstrumentRepository stockInstrumentRepository,
@@ -52,7 +53,8 @@ public class OrderBookInstrumentCommandService {
             StockCorporateActionRepository stockCorporateActionRepository,
             StockListingAutoAccountConfigRepository stockListingAutoAccountConfigRepository,
             JdbcTemplate jdbcTemplate,
-            SimulationClockService simulationClockService
+            SimulationClockService simulationClockService,
+            MarketLedgerFreezeGuard marketLedgerFreezeGuard
     ) {
         this.stockInstrumentRepository = stockInstrumentRepository;
         this.stockPriceRepository = stockPriceRepository;
@@ -64,6 +66,7 @@ public class OrderBookInstrumentCommandService {
         this.jdbcTemplate = jdbcTemplate;
         this.jdbcClient = JdbcClient.create(jdbcTemplate);
         this.simulationClockService = simulationClockService;
+        this.marketLedgerFreezeGuard = marketLedgerFreezeGuard;
     }
 
     @Transactional
@@ -80,6 +83,7 @@ public class OrderBookInstrumentCommandService {
         if (market.isBlank()) {
             market = "ORDERBOOK";
         }
+        marketLedgerFreezeGuard.acquireMutationPermit("order-book instrument listing");
         validateInstrumentRequest(symbol, name, market, request);
         if (stockInstrumentRepository.existsById(symbol)) {
             throw StockException.conflict("Symbol already exists in virtual price market: " + symbol);

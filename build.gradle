@@ -53,6 +53,25 @@ ext {
     set('springCloudVersion', "2025.1.0")
 }
 
+def stockBackGitHead = providers.exec {
+    workingDir projectDir
+    commandLine 'git', 'rev-parse', '--short=12', 'HEAD'
+    ignoreExitValue = true
+}.standardOutput.asText.map { it.trim() ?: 'unknown' }
+def stockBackGitStatus = providers.exec {
+    workingDir projectDir
+    commandLine 'git', 'status', '--porcelain', '--untracked-files=normal'
+    ignoreExitValue = true
+}.standardOutput.asText.map { it.trim() }
+def stockBackInjectedBuildSha = providers.environmentVariable('BUILD_SHA')
+        .map { it.trim() }
+        .filter { !it.isEmpty() }
+def stockBackBuildSha = stockBackInjectedBuildSha.orElse(
+        stockBackGitHead.zip(stockBackGitStatus) { head, status ->
+            status ? "${head}-dirty" : head
+        }
+)
+
 dependencyManagement {
     imports {
         mavenBom "org.springframework.cloud:spring-cloud-dependencies:${springCloudVersion}"
@@ -65,4 +84,10 @@ tasks.named('test') {
 
 springBoot {
     mainClass = 'stock.back.service.StockBackServiceApplication'
+    buildInfo {
+        properties {
+            time = null
+            additional = ['sha': stockBackBuildSha.get()]
+        }
+    }
 }

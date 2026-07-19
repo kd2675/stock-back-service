@@ -19,7 +19,16 @@ import java.time.LocalDateTime;
 @Entity
 @Table(
         name = "portfolio_snapshot",
-        uniqueConstraints = @UniqueConstraint(name = "uk_portfolio_snapshot_account_date", columnNames = {"account_id", "snapshot_date"})
+        uniqueConstraints = {
+                @UniqueConstraint(
+                        name = "uk_portfolio_snapshot_account_date",
+                        columnNames = {"account_id", "snapshot_date"}
+                ),
+                @UniqueConstraint(
+                        name = "uk_portfolio_snapshot_cycle_account",
+                        columnNames = {"close_cycle_id", "account_id"}
+                )
+        }
 )
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class PortfolioSnapshot {
@@ -27,6 +36,12 @@ public class PortfolioSnapshot {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
+
+    @Column(name = "close_cycle_id")
+    private Long closeCycleId;
+
+    @Column(name = "close_run_id")
+    private Long closeRunId;
 
     @Column(name = "account_id", nullable = false)
     private Long accountId;
@@ -54,6 +69,18 @@ public class PortfolioSnapshot {
 
     @Column(name = "return_rate", nullable = false, precision = 9, scale = 4)
     private BigDecimal returnRate;
+
+    @Column(name = "input_hash", length = 64)
+    private String inputHash;
+
+    @Column(name = "calculation_version", length = 40)
+    private String calculationVersion;
+
+    @Column(name = "data_quality_status", length = 20)
+    private String dataQualityStatus;
+
+    @Column(name = "source_build_version", length = 100)
+    private String sourceBuildVersion;
 
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;

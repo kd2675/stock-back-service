@@ -3,20 +3,14 @@ package stock.back.service.trading.biz;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import stock.back.service.common.exception.StockException;
-import stock.back.service.database.entity.MarketSessionStatus;
 import stock.back.service.database.entity.MarketType;
 import stock.back.service.database.entity.OrderSide;
 import stock.back.service.database.entity.OrderType;
 import stock.back.service.database.entity.StockOrderBookInstrument;
-import stock.back.service.database.entity.StockOrderBookMarketConfig;
 import stock.back.service.database.entity.StockPrice;
-import stock.back.service.database.entity.StockVirtualMarketConfig;
 import stock.back.service.database.repository.StockInstrumentRepository;
 import stock.back.service.database.repository.StockOrderBookInstrumentRepository;
-import stock.back.service.database.repository.StockOrderBookMarketConfigRepository;
 import stock.back.service.database.repository.StockPriceRepository;
-import stock.back.service.database.repository.StockVirtualMarketConfigRepository;
-import stock.back.service.market.biz.SimulationMarketSessionService;
 import stock.back.service.market.biz.KoreanStockTickSizePolicy;
 import stock.back.service.market.cache.CachedStockPrice;
 import stock.back.service.market.cache.StockPriceCacheService;
@@ -35,11 +29,8 @@ public class TradingMarketRuleService {
 
     private final StockInstrumentRepository stockInstrumentRepository;
     private final StockOrderBookInstrumentRepository stockOrderBookInstrumentRepository;
-    private final StockVirtualMarketConfigRepository stockVirtualMarketConfigRepository;
-    private final StockOrderBookMarketConfigRepository stockOrderBookMarketConfigRepository;
     private final StockPriceRepository stockPriceRepository;
     private final StockPriceCacheService stockPriceCacheService;
-    private final SimulationMarketSessionService simulationMarketSessionService;
 
     void validateSymbolExists(String symbol, MarketType marketType) {
         boolean exists = marketType == MarketType.ORDER_BOOK
@@ -47,26 +38,6 @@ public class TradingMarketRuleService {
                 : stockInstrumentRepository.existsById(symbol);
         if (!exists) {
             throw StockException.notFound("Unknown stock symbol: " + symbol);
-        }
-    }
-
-    void validateMarketOpen(String symbol, MarketType marketType) {
-        if (!simulationMarketSessionService.isRegularSession()) {
-            throw StockException.conflict("Market is not in regular trading session: " + symbol);
-        }
-        if (marketType == MarketType.ORDER_BOOK) {
-            StockOrderBookMarketConfig config = stockOrderBookMarketConfigRepository.findById(symbol)
-                    .orElseThrow(() -> StockException.conflict("Market is not open: " + symbol));
-            if (!Boolean.TRUE.equals(config.getEnabled()) || normalizeMarketSessionStatus(config.getMarketStatus()) != MarketSessionStatus.OPEN) {
-                throw StockException.conflict("Market is not open: " + symbol);
-            }
-            return;
-        }
-
-        StockVirtualMarketConfig config = stockVirtualMarketConfigRepository.findById(symbol)
-                .orElseThrow(() -> StockException.conflict("Market is not open: " + symbol));
-        if (!Boolean.TRUE.equals(config.getEnabled()) || normalizeMarketSessionStatus(config.getMarketStatus()) != MarketSessionStatus.OPEN) {
-            throw StockException.conflict("Market is not open: " + symbol);
         }
     }
 
@@ -99,10 +70,6 @@ public class TradingMarketRuleService {
         }
         BigDecimal price = request.orderType() == OrderType.MARKET ? resolveReferencePrice(symbol) : request.limitPrice();
         return price.multiply(BigDecimal.valueOf(request.quantity()));
-    }
-
-    private MarketSessionStatus normalizeMarketSessionStatus(MarketSessionStatus marketStatus) {
-        return marketStatus == null ? MarketSessionStatus.OPEN : marketStatus;
     }
 
     private MarketPriceRule resolveMarketPriceRule(String symbol, MarketType marketType) {

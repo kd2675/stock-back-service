@@ -42,6 +42,9 @@ class AutoParticipantCashAdjustmentServiceTest {
     @Mock
     private SimulationClockService simulationClockService;
 
+    @Mock
+    private MarketLedgerFreezeGuard marketLedgerFreezeGuard;
+
     private AutoParticipantCashAdjustmentService service;
 
     @BeforeEach
@@ -51,7 +54,8 @@ class AutoParticipantCashAdjustmentServiceTest {
                 stockAutoParticipantRepository,
                 stockAccountRepository,
                 stockAccountCashFlowRepository,
-                simulationClockService
+                simulationClockService,
+                marketLedgerFreezeGuard
         );
     }
 

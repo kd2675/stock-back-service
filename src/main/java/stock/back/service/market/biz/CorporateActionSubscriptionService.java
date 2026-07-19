@@ -40,12 +40,14 @@ public class CorporateActionSubscriptionService {
     private final SimulationClockService simulationClockService;
     private final SimulationMarketSessionService simulationMarketSessionService;
     private final JdbcClient jdbcClient;
+    private final MarketLedgerFreezeGuard marketLedgerFreezeGuard;
 
     @Transactional
     public CorporateActionEntitlementResponse subscribe(long actionId, CorporateActionSubscriptionRequest request, String userKey) {
         validateUserKey(userKey);
         long requestedShares = requirePositiveShares(request == null ? null : request.shareQuantity());
         validateAfterCloseSubscriptionSession();
+        marketLedgerFreezeGuard.acquireMutationPermit("capital-increase subscription");
         StockCorporateAction action = stockCorporateActionRepository.findByIdForUpdate(actionId)
                 .orElseThrow(() -> StockException.notFound("Corporate action not found: " + actionId));
         validateSubscribableAction(action);

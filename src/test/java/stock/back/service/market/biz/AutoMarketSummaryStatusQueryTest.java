@@ -6,7 +6,6 @@ import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import stock.back.service.database.entity.AutoParticipantProfileType;
 
 import java.math.BigDecimal;
-import java.time.LocalDateTime;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
@@ -123,10 +122,11 @@ class AutoMarketSummaryStatusQueryTest {
                 )
                 """);
         jdbcTemplate.execute("""
-                create table stock_execution (
-                    id bigint primary key,
+                create table stock_execution_account_day_summary (
+                    simulation_trade_date date not null,
                     account_id bigint not null,
-                    executed_at timestamp not null
+                    execution_count bigint not null,
+                    primary key (simulation_trade_date, account_id)
                 )
                 """);
         if (!includeSalaryTables) {
@@ -166,11 +166,18 @@ class AutoMarketSummaryStatusQueryTest {
         jdbcTemplate.update("insert into stock_order(id, account_id, market_type, status) values (2, 2, 'ORDER_BOOK', 'PARTIALLY_FILLED')");
         jdbcTemplate.update("insert into stock_order(id, account_id, market_type, status) values (3, 1, 'ORDER_BOOK', 'FILLED')");
         jdbcTemplate.update("insert into stock_order(id, account_id, market_type, status) values (4, 3, 'ORDER_BOOK', 'PENDING')");
-        LocalDateTime simulationDayStart = SimulationDayClock.currentDayStart();
-        jdbcTemplate.update("insert into stock_execution(id, account_id, executed_at) values (1, 1, ?)", simulationDayStart.plusMinutes(10));
-        jdbcTemplate.update("insert into stock_execution(id, account_id, executed_at) values (2, 2, ?)", simulationDayStart.plusMinutes(20));
-        jdbcTemplate.update("insert into stock_execution(id, account_id, executed_at) values (3, 3, ?)", simulationDayStart.plusMinutes(30));
-        jdbcTemplate.update("insert into stock_execution(id, account_id, executed_at) values (4, 1, ?)", simulationDayStart.minusMinutes(1));
+        jdbcTemplate.update(
+                "insert into stock_execution_account_day_summary(simulation_trade_date, account_id, execution_count) values (?, 1, 1)",
+                SimulationDayClock.currentDayStart().toLocalDate()
+        );
+        jdbcTemplate.update(
+                "insert into stock_execution_account_day_summary(simulation_trade_date, account_id, execution_count) values (?, 2, 1)",
+                SimulationDayClock.currentDayStart().toLocalDate()
+        );
+        jdbcTemplate.update(
+                "insert into stock_execution_account_day_summary(simulation_trade_date, account_id, execution_count) values (?, 3, 1)",
+                SimulationDayClock.currentDayStart().toLocalDate()
+        );
     }
 
     private void seedSalaryRows(JdbcTemplate jdbcTemplate) {

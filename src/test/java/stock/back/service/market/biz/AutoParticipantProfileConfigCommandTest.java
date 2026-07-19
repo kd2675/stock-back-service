@@ -77,7 +77,7 @@ class AutoParticipantProfileConfigCommandTest {
                 new BigDecimal("0.20"),
                 new BigDecimal("50000.00"),
                 new BigDecimal("30"),
-                "MINUTE",
+                "DAY",
                 null
         );
     }

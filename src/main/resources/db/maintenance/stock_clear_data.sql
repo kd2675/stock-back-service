@@ -10,10 +10,23 @@ TRUNCATE TABLE stock_batch_job_lock;
 TRUNCATE TABLE stock_batch_job_signal;
 TRUNCATE TABLE stock_batch_job_control;
 
+TRUNCATE TABLE stock_market_session_fence;
+TRUNCATE TABLE stock_market_business_state;
+TRUNCATE TABLE stock_close_open_order_snapshot;
+TRUNCATE TABLE stock_close_open_order_summary;
+TRUNCATE TABLE stock_close_price_snapshot;
+TRUNCATE TABLE stock_close_account_snapshot;
+TRUNCATE TABLE stock_post_close_cycle_metric;
+TRUNCATE TABLE stock_post_close_readiness_check;
+TRUNCATE TABLE stock_post_close_phase_attempt;
+TRUNCATE TABLE stock_post_close_cycle;
+
+TRUNCATE TABLE stock_corporate_action_processing;
 TRUNCATE TABLE stock_corporate_action_entitlement;
 TRUNCATE TABLE stock_execution;
 TRUNCATE TABLE stock_execution_account_day_summary;
 TRUNCATE TABLE stock_account_cash_flow;
+TRUNCATE TABLE stock_auto_participant_cash_flow_run;
 TRUNCATE TABLE stock_holding_snapshot;
 TRUNCATE TABLE stock_execution_daily_account_snapshot;
 TRUNCATE TABLE stock_order_book_daily_snapshot;

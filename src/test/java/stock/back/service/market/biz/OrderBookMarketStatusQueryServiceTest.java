@@ -7,18 +7,14 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
-import stock.back.service.database.entity.ExecutionSource;
 import stock.back.service.database.entity.MarketSessionStatus;
 import stock.back.service.database.entity.MarketType;
 import stock.back.service.database.entity.OrderStatus;
-import stock.back.service.database.entity.OrderSide;
 import stock.back.service.database.entity.StockOrderBookMarketConfig;
-import stock.back.service.database.repository.StockExecutionMarketViewRepository;
 import stock.back.service.database.repository.StockOrderBookInstrumentRepository;
 import stock.back.service.database.repository.StockOrderBookMarketConfigRepository;
 import stock.back.service.database.repository.StockOrderRepository;
 
-import java.time.LocalDateTime;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -45,9 +41,6 @@ class OrderBookMarketStatusQueryServiceTest {
     private StockOrderRepository stockOrderRepository;
 
     @Mock
-    private StockExecutionMarketViewRepository stockExecutionMarketViewRepository;
-
-    @Mock
     private SimulationClockService simulationClockService;
 
     @Mock
@@ -65,7 +58,6 @@ class OrderBookMarketStatusQueryServiceTest {
                 stockOrderBookMarketConfigRepository,
                 stockOrderBookInstrumentRepository,
                 stockOrderRepository,
-                stockExecutionMarketViewRepository,
                 simulationClockService,
                 simulationMarketSessionService
         );
@@ -78,7 +70,6 @@ class OrderBookMarketStatusQueryServiceTest {
                 stockOrderBookMarketConfigRepository,
                 stockOrderBookInstrumentRepository,
                 stockOrderRepository,
-                stockExecutionMarketViewRepository,
                 simulationClockService,
                 simulationMarketSessionService
         );
@@ -98,7 +89,6 @@ class OrderBookMarketStatusQueryServiceTest {
         verify(stockOrderBookInstrumentRepository, never()).countByEnabledTrue();
         verify(stockOrderBookMarketConfigRepository, never()).existsByEnabledTrueAndMarketStatus(any());
         verify(stockOrderRepository, never()).countByMarketTypeAndStatusIn(any(), any());
-        verify(stockExecutionMarketViewRepository, never()).countExecutionsBetweenBySourceAndSide(any(), any(), any(), any());
     }
 
     @Test
@@ -108,7 +98,6 @@ class OrderBookMarketStatusQueryServiceTest {
                 stockOrderBookMarketConfigRepository,
                 stockOrderBookInstrumentRepository,
                 stockOrderRepository,
-                stockExecutionMarketViewRepository,
                 simulationClockService,
                 simulationMarketSessionService
         );
@@ -123,7 +112,6 @@ class OrderBookMarketStatusQueryServiceTest {
         assertThat(response.openOrderCount()).isEqualTo(3L);
         assertThat(response.todayExecutionCount()).isZero();
         assertThat(response.configs()).isEmpty();
-        verify(stockExecutionMarketViewRepository, never()).countExecutionsBetweenBySourceAndSide(any(), any(), any(), any());
         verify(stockOrderRepository, never()).countByMarketTypeAndStatusIn(any(), any());
     }
 
@@ -137,14 +125,17 @@ class OrderBookMarketStatusQueryServiceTest {
                 eq(MarketType.ORDER_BOOK),
                 eq(List.of(OrderStatus.PENDING, OrderStatus.PARTIALLY_FILLED))
         )).thenReturn(4L);
-        when(stockExecutionMarketViewRepository.countExecutionsBetweenBySourceAndSide(
-                any(LocalDateTime.class),
-                any(LocalDateTime.class),
-                eq(ExecutionSource.INTERNAL_ORDER_BOOK),
-                eq(OrderSide.BUY)
-        ))
-                .thenReturn(3L);
         when(stockOrderBookInstrumentRepository.countByEnabledTrue()).thenReturn(2L);
+
+        service = new OrderBookMarketStatusQueryService(
+                createSummaryJdbcTemplate("order_book_market_status_with_configs_test"),
+                stockOrderBookMarketConfigRepository,
+                stockOrderBookInstrumentRepository,
+                stockOrderRepository,
+                simulationClockService,
+                simulationMarketSessionService
+        );
+        seedExecutionSummary(6L);
 
         var response = service.getOrderBookMarketStatus(true, true);
 
@@ -170,15 +161,18 @@ class OrderBookMarketStatusQueryServiceTest {
                 eq(MarketType.ORDER_BOOK),
                 eq(List.of(OrderStatus.PENDING, OrderStatus.PARTIALLY_FILLED))
         )).thenReturn(4L);
-        when(stockExecutionMarketViewRepository.countExecutionsBetweenBySourceAndSide(
-                any(LocalDateTime.class),
-                any(LocalDateTime.class),
-                eq(ExecutionSource.INTERNAL_ORDER_BOOK),
-                eq(OrderSide.BUY)
-        ))
-                .thenReturn(3L);
         when(stockOrderBookInstrumentRepository.countByEnabledTrue()).thenReturn(1L);
         when(simulationMarketSessionService.isRegularSession()).thenReturn(false);
+
+        service = new OrderBookMarketStatusQueryService(
+                createSummaryJdbcTemplate("order_book_market_status_closed_session_test"),
+                stockOrderBookMarketConfigRepository,
+                stockOrderBookInstrumentRepository,
+                stockOrderRepository,
+                simulationClockService,
+                simulationMarketSessionService
+        );
+        seedExecutionSummary(6L);
 
         var response = service.getOrderBookMarketStatus(true, true);
 
@@ -214,11 +208,11 @@ class OrderBookMarketStatusQueryServiceTest {
                 )
                 """);
         jdbcTemplate.execute("""
-                create table stock_execution (
-                    id bigint primary key,
-                    source varchar(50) not null,
-                    side varchar(10) not null,
-                    executed_at timestamp not null
+                create table stock_execution_account_day_summary (
+                    simulation_trade_date date not null,
+                    account_id bigint not null,
+                    execution_count bigint not null,
+                    primary key (simulation_trade_date, account_id)
                 )
                 """);
         return jdbcTemplate;
@@ -258,22 +252,15 @@ class OrderBookMarketStatusQueryServiceTest {
         if (!includeTodayExecutionRows) {
             return;
         }
-        LocalDateTime simulationDayStart = SimulationDayClock.currentDayStart();
+        seedExecutionSummary(2L);
+    }
+
+    private void seedExecutionSummary(long executionCount) {
         jdbcTemplate.update(
-                "insert into stock_execution(id, source, side, executed_at) values (1, 'INTERNAL_ORDER_BOOK', 'BUY', ?)",
-                simulationDayStart.plusMinutes(10)
-        );
-        jdbcTemplate.update(
-                "insert into stock_execution(id, source, side, executed_at) values (2, 'INTERNAL_ORDER_BOOK', 'SELL', ?)",
-                simulationDayStart.plusMinutes(20)
-        );
-        jdbcTemplate.update(
-                "insert into stock_execution(id, source, side, executed_at) values (3, 'VIRTUAL_PRICE', 'BUY', ?)",
-                simulationDayStart.plusMinutes(30)
-        );
-        jdbcTemplate.update(
-                "insert into stock_execution(id, source, side, executed_at) values (4, 'INTERNAL_ORDER_BOOK', 'BUY', ?)",
-                simulationDayStart.minusMinutes(1)
+                "insert into stock_execution_account_day_summary(simulation_trade_date, account_id, execution_count) values (?, ?, ?)",
+                SimulationDayClock.currentDayStart().toLocalDate(),
+                100L + executionCount,
+                executionCount
         );
     }
 }

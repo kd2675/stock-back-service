@@ -26,15 +26,15 @@ public interface StockExecutionRepository extends JpaRepository<StockExecution, 
 
     @Query(value = """
             select
-              coalesce(sum(case when side = 'BUY' then gross_amount else 0 end), 0) as buyGrossAmount,
-              coalesce(sum(case when side = 'SELL' then gross_amount else 0 end), 0) as sellGrossAmount,
-              coalesce(sum(case when side = 'BUY' then net_amount else 0 end), 0) as buyNetAmount,
-              coalesce(sum(case when side = 'SELL' then net_amount else 0 end), 0) as sellNetAmount,
+              coalesce(sum(buy_gross_amount), 0) as buyGrossAmount,
+              coalesce(sum(sell_gross_amount), 0) as sellGrossAmount,
+              coalesce(sum(buy_net_amount), 0) as buyNetAmount,
+              coalesce(sum(sell_net_amount), 0) as sellNetAmount,
               coalesce(sum(fee_amount), 0) as totalFeeAmount,
               coalesce(sum(tax_amount), 0) as totalTaxAmount,
               coalesce(sum(realized_profit), 0) as realizedProfit,
-              count(*) as executionCount
-            from stock_execution
+              coalesce(sum(execution_count), 0) as executionCount
+            from stock_execution_account_day_summary
             where account_id = :accountId
             """, nativeQuery = true)
     ProfitSummaryProjection summarizeProfitByAccountId(@Param("accountId") Long accountId);

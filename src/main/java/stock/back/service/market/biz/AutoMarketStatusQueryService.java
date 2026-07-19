@@ -18,7 +18,6 @@ import stock.back.service.database.entity.StockAutoParticipantProfileConfig;
 import stock.back.service.database.repository.StockAutoMarketConfigRepository;
 import stock.back.service.database.repository.StockAutoParticipantProfileConfigRepository;
 import stock.back.service.database.repository.StockAutoParticipantRepository;
-import stock.back.service.database.repository.StockExecutionMarketViewRepository;
 import stock.back.service.database.repository.StockListingAutoAccountConfigRepository;
 import stock.back.service.database.repository.StockOrderRepository;
 import stock.back.service.market.vo.AutoMarketConfigResponse;
@@ -38,7 +37,6 @@ public class AutoMarketStatusQueryService {
     private final StockAutoParticipantRepository stockAutoParticipantRepository;
     private final StockListingAutoAccountConfigRepository stockListingAutoAccountConfigRepository;
     private final StockOrderRepository stockOrderRepository;
-    private final StockExecutionMarketViewRepository stockExecutionMarketViewRepository;
     private final AutoMarketStatusDataLoader autoMarketStatusDataLoader;
     private final AutoMarketSummaryStatusQuery autoMarketSummaryStatusQuery;
     private final SimulationClockService simulationClockService;
@@ -164,10 +162,7 @@ public class AutoMarketStatusQueryService {
         List<OrderStatus> openStatuses = List.of(OrderStatus.PENDING, OrderStatus.PARTIALLY_FILLED);
         long openAutoOrderCount = options.includeRuntimeMetrics() ? stockOrderRepository.countOpenAutoOrders(openStatuses, MarketType.ORDER_BOOK) : 0L;
         long todayAutoExecutionCount = options.includeRuntimeMetrics()
-                ? stockExecutionMarketViewRepository.countAutoExecutionsBetween(
-                        simulationClockService.currentMarketDayStart(),
-                        currentMarketDateTime
-                )
+                ? autoMarketSummaryStatusQuery.countTodayAutoExecutions(currentMarketDateTime.toLocalDate())
                 : 0L;
         boolean enabled = simulationMarketSessionService.isRegularSession()
                 && enabledParticipantCount > 0 && (options.shouldLoadConfigs()

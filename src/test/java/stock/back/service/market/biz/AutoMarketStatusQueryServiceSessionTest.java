@@ -4,7 +4,6 @@ import org.junit.jupiter.api.Test;
 import stock.back.service.database.repository.StockAutoMarketConfigRepository;
 import stock.back.service.database.repository.StockAutoParticipantProfileConfigRepository;
 import stock.back.service.database.repository.StockAutoParticipantRepository;
-import stock.back.service.database.repository.StockExecutionMarketViewRepository;
 import stock.back.service.database.repository.StockListingAutoAccountConfigRepository;
 import stock.back.service.database.repository.StockOrderRepository;
 import stock.back.service.market.vo.AutoMarketStatusResponse;
@@ -46,7 +45,6 @@ class AutoMarketStatusQueryServiceSessionTest {
                 mock(StockAutoParticipantRepository.class),
                 mock(StockListingAutoAccountConfigRepository.class),
                 mock(StockOrderRepository.class),
-                mock(StockExecutionMarketViewRepository.class),
                 mock(AutoMarketStatusDataLoader.class),
                 summaryStatusQuery,
                 mock(SimulationClockService.class),

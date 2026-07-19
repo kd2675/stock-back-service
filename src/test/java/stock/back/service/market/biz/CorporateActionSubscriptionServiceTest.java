@@ -42,6 +42,9 @@ class CorporateActionSubscriptionServiceTest {
     @Mock
     private JdbcClient jdbcClient;
 
+    @Mock
+    private MarketLedgerFreezeGuard marketLedgerFreezeGuard;
+
     private CorporateActionSubscriptionService service;
 
     @BeforeEach
@@ -53,7 +56,8 @@ class CorporateActionSubscriptionServiceTest {
                 stockAccountCashFlowRepository,
                 simulationClockService,
                 simulationMarketSessionService,
-                jdbcClient
+                jdbcClient,
+                marketLedgerFreezeGuard
         );
     }
 

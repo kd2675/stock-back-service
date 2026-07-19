@@ -35,6 +35,7 @@ class InstrumentMarketReportQueryServiceTest {
         ));
         createSchema();
         jdbcTemplate.update("delete from stock_order_book_daily_snapshot");
+        jdbcTemplate.update("delete from stock_post_close_cycle");
         jdbcTemplate.update("delete from stock_market_close_run");
         jdbcTemplate.update("delete from stock_execution");
         jdbcTemplate.update("delete from stock_order");
@@ -66,7 +67,7 @@ class InstrumentMarketReportQueryServiceTest {
     }
 
     @Test
-    void getInstrumentMarketReport_usesLatestGlobalCloseAndExcludesLiveOrderBookState() {
+    void getInstrumentMarketReport_usesLatestFinalizedGlobalReportAndExcludesPartialOrLiveState() {
         insertInstrument();
         insertCompletedDailySnapshot();
         jdbcTemplate.update("update stock_order_book_instrument set enabled = false where symbol = 'DEMO002'");
@@ -133,6 +134,15 @@ class InstrumentMarketReportQueryServiceTest {
                     business_date date not null,
                     status varchar(20) not null,
                     completed_at timestamp
+                )
+                """);
+        jdbcTemplate.execute("""
+                create table if not exists stock_post_close_cycle (
+                    id bigint primary key,
+                    close_run_id bigint,
+                    scope_type varchar(20) not null,
+                    scope_key varchar(120) not null,
+                    phase varchar(60) not null
                 )
                 """);
         jdbcTemplate.execute("""
@@ -240,6 +250,10 @@ class InstrumentMarketReportQueryServiceTest {
                 values (1, null, ?, 'COMPLETED', ?)
                 """, DAY_START.toLocalDate(), DAY_START.plusHours(18));
         jdbcTemplate.update("""
+                insert into stock_post_close_cycle(id, close_run_id, scope_type, scope_key, phase)
+                values (1, 1, 'FULL_MARKET', 'ALL', 'REPORTS_AGGREGATED')
+                """);
+        jdbcTemplate.update("""
                 insert into stock_order_book_daily_snapshot(
                     id, close_run_id, symbol, simulation_trade_date, name, market, initial_price,
                     close_price, previous_close, issued_shares, tradable_shares, price_limit_rate,
@@ -250,6 +264,25 @@ class InstrumentMarketReportQueryServiceTest {
                     ?, 'internal-order-book', 2, 4000, 24050000.00,
                     6000.00, 6050.00, 6000.00, 6050.00, ?)
                 """, DAY_START.toLocalDate(), DAY_START.plusHours(10), DAY_START.plusHours(10));
+        jdbcTemplate.update("""
+                insert into stock_market_close_run(id, symbol, business_date, status, completed_at)
+                values (3, null, ?, 'COMPLETED', ?)
+                """, NOW.toLocalDate(), NOW.minusMinutes(30));
+        jdbcTemplate.update("""
+                insert into stock_post_close_cycle(id, close_run_id, scope_type, scope_key, phase)
+                values (3, 3, 'FULL_MARKET', 'ALL', 'CORPORATE_CASH_APPLIED')
+                """);
+        jdbcTemplate.update("""
+                insert into stock_order_book_daily_snapshot(
+                    id, close_run_id, symbol, simulation_trade_date, name, market, initial_price,
+                    close_price, previous_close, issued_shares, tradable_shares, price_limit_rate,
+                    price_time, price_provider, execution_count, buy_quantity, turnover_amount,
+                    open_price, high_price, low_price, last_execution_price, last_executed_at
+                ) values (3, 3, 'DEMO002', ?, '주식2', 'KOSPI', 5000.00,
+                    9999.00, 6050.00, 10000000, 8000000, 30.00,
+                    ?, 'internal-order-book', 99, 99000, 989901000.00,
+                    9999.00, 9999.00, 9999.00, 9999.00, ?)
+                """, NOW.toLocalDate(), NOW.minusMinutes(30), NOW.minusMinutes(30));
         jdbcTemplate.update("""
                 insert into stock_market_close_run(id, symbol, business_date, status, completed_at)
                 values (2, 'DEMO002', ?, 'COMPLETED', ?)

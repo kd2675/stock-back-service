@@ -18,7 +18,6 @@ import java.time.LocalDateTime;
 @RequiredArgsConstructor
 public class TradingReservationService {
 
-    private final AccountService accountService;
     private final StockHoldingRepository stockHoldingRepository;
 
     void reserveBuyOrder(StockAccount account, BigDecimal reservedCash, LocalDateTime reservedAt) {
@@ -40,21 +39,30 @@ public class TradingReservationService {
         holding.reserveQuantity(quantity, reservedAt);
     }
 
-    void releaseOnCancel(String userKey, Long accountId, StockOrder order, LocalDateTime cancelledAt) {
+    void releaseOnCancel(
+            StockAccount account,
+            StockHolding sellHolding,
+            StockOrder order,
+            LocalDateTime cancelledAt
+    ) {
         if (order.getSide() == OrderSide.BUY && order.getReservedCash().compareTo(BigDecimal.ZERO) > 0) {
-            accountService.requireAccountForUpdate(userKey).releaseCash(order.getReservedCash(), cancelledAt);
+            account.releaseCash(order.getReservedCash(), cancelledAt);
         }
-        if (order.getSide() == OrderSide.SELL) {
-            stockHoldingRepository.findByAccountIdAndSymbolForUpdate(accountId, order.getSymbol())
-                    .ifPresent(holding -> holding.releaseReservedQuantity(order.getQuantity() - order.getFilledQuantity(), cancelledAt));
+        if (order.getSide() == OrderSide.SELL && sellHolding != null) {
+            sellHolding.releaseReservedQuantity(order.getQuantity() - order.getFilledQuantity(), cancelledAt);
         }
     }
 
-    void amendBuyLimitOrder(String userKey, StockOrder order, long nextQuantity, BigDecimal nextLimitPrice, LocalDateTime amendedAt) {
+    void amendBuyLimitOrder(
+            StockAccount account,
+            StockOrder order,
+            long nextQuantity,
+            BigDecimal nextLimitPrice,
+            LocalDateTime amendedAt
+    ) {
         long nextRemainingQuantity = nextQuantity - order.getFilledQuantity();
         BigDecimal nextReservedCash = nextLimitPrice.multiply(BigDecimal.valueOf(nextRemainingQuantity));
         BigDecimal reserveDiff = nextReservedCash.subtract(order.getReservedCash());
-        StockAccount account = accountService.requireAccountForUpdate(userKey);
         if (reserveDiff.compareTo(BigDecimal.ZERO) > 0) {
             reserveBuyOrder(account, reserveDiff, amendedAt);
         } else if (reserveDiff.compareTo(BigDecimal.ZERO) < 0) {
@@ -63,11 +71,16 @@ public class TradingReservationService {
         order.amendLimitOrder(nextQuantity, nextLimitPrice, nextReservedCash, amendedAt);
     }
 
-    void amendSellLimitOrder(Long accountId, StockOrder order, long nextQuantity, BigDecimal nextLimitPrice, LocalDateTime amendedAt) {
+    void amendSellLimitOrder(
+            StockHolding holding,
+            StockOrder order,
+            long nextQuantity,
+            BigDecimal nextLimitPrice,
+            LocalDateTime amendedAt
+    ) {
         long currentRemainingQuantity = order.getQuantity() - order.getFilledQuantity();
         long nextRemainingQuantity = nextQuantity - order.getFilledQuantity();
         long reserveDiff = nextRemainingQuantity - currentRemainingQuantity;
-        StockHolding holding = findSellHoldingForUpdate(accountId, order.getSymbol());
         if (reserveDiff > 0) {
             reserveSellOrder(holding, reserveDiff, amendedAt);
         } else if (reserveDiff < 0) {
@@ -76,20 +89,24 @@ public class TradingReservationService {
         order.amendLimitOrder(nextQuantity, nextLimitPrice, BigDecimal.ZERO, amendedAt);
     }
 
-    void releaseAllRemainingReservation(String userKey, Long accountId, StockOrder order, LocalDateTime cancelledAt) {
+    void releaseAllRemainingReservation(
+            StockAccount account,
+            StockHolding sellHolding,
+            StockOrder order,
+            LocalDateTime cancelledAt
+    ) {
         if (order.getSide() == OrderSide.BUY && order.getReservedCash().compareTo(BigDecimal.ZERO) > 0) {
-            accountService.requireAccountForUpdate(userKey).releaseCash(order.getReservedCash(), cancelledAt);
+            account.releaseCash(order.getReservedCash(), cancelledAt);
             return;
         }
-        if (order.getSide() == OrderSide.SELL) {
-            StockHolding holding = findSellHoldingForUpdate(accountId, order.getSymbol());
-            holding.releaseReservedQuantity(order.getQuantity() - order.getFilledQuantity(), cancelledAt);
+        if (order.getSide() == OrderSide.SELL && sellHolding != null) {
+            sellHolding.releaseReservedQuantity(order.getQuantity() - order.getFilledQuantity(), cancelledAt);
         }
     }
 
     void releasePartialReservation(
-            String userKey,
-            Long accountId,
+            StockAccount account,
+            StockHolding sellHolding,
             StockOrder order,
             long cancelQuantity,
             long remainingQuantity,
@@ -97,7 +114,7 @@ public class TradingReservationService {
     ) {
         if (order.getSide() == OrderSide.BUY) {
             BigDecimal release = calculateReservedCashForCancel(order, cancelQuantity, remainingQuantity);
-            accountService.requireAccountForUpdate(userKey).releaseCash(release, cancelledAt);
+            account.releaseCash(release, cancelledAt);
             order.reduceOpenQuantity(
                     cancelQuantity,
                     order.getReservedCash().subtract(release).max(BigDecimal.ZERO),
@@ -106,8 +123,10 @@ public class TradingReservationService {
             return;
         }
 
-        StockHolding holding = findSellHoldingForUpdate(accountId, order.getSymbol());
-        holding.releaseReservedQuantity(cancelQuantity, cancelledAt);
+        if (sellHolding == null) {
+            throw StockException.conflict("Not enough holding quantity");
+        }
+        sellHolding.releaseReservedQuantity(cancelQuantity, cancelledAt);
         order.reduceOpenQuantity(cancelQuantity, BigDecimal.ZERO, cancelledAt);
     }
 

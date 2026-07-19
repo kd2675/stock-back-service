@@ -92,12 +92,27 @@ CREATE TABLE IF NOT EXISTS stock_execution_account_day_summary (
   buy_quantity BIGINT NOT NULL DEFAULT 0,
   sell_quantity BIGINT NOT NULL DEFAULT 0,
   gross_amount DECIMAL(19,2) NOT NULL DEFAULT 0.00,
+  buy_gross_amount DECIMAL(19,2) NOT NULL DEFAULT 0.00,
+  sell_gross_amount DECIMAL(19,2) NOT NULL DEFAULT 0.00,
+  buy_net_amount DECIMAL(19,2) NOT NULL DEFAULT 0.00,
+  sell_net_amount DECIMAL(19,2) NOT NULL DEFAULT 0.00,
+  fee_amount DECIMAL(19,2) NOT NULL DEFAULT 0.00,
+  tax_amount DECIMAL(19,2) NOT NULL DEFAULT 0.00,
+  realized_profit DECIMAL(19,2) NOT NULL DEFAULT 0.00,
   last_executed_at DATETIME NULL,
   updated_at DATETIME NOT NULL,
   PRIMARY KEY (simulation_trade_date, account_id),
   KEY idx_stock_execution_account_day_account_date (account_id, simulation_trade_date),
   CONSTRAINT chk_stock_execution_account_day_quantity CHECK (execution_count >= 0 AND buy_quantity >= 0 AND sell_quantity >= 0),
-  CONSTRAINT chk_stock_execution_account_day_amount CHECK (gross_amount >= 0)
+  CONSTRAINT chk_stock_execution_account_day_amount CHECK (
+    gross_amount >= 0
+    AND buy_gross_amount >= 0
+    AND sell_gross_amount >= 0
+    AND buy_net_amount >= 0
+    AND sell_net_amount >= 0
+    AND fee_amount >= 0
+    AND tax_amount >= 0
+  )
 );
 
 WITH ranked_execution AS (
@@ -194,7 +209,9 @@ SELECT snapshot.close_run_id,
 
 REPLACE INTO stock_execution_account_day_summary(
     simulation_trade_date, account_id, execution_count, buy_quantity,
-    sell_quantity, gross_amount, last_executed_at, updated_at
+    sell_quantity, gross_amount, buy_gross_amount, sell_gross_amount,
+    buy_net_amount, sell_net_amount, fee_amount, tax_amount,
+    realized_profit, last_executed_at, updated_at
 )
 SELECT DATE(executed_at),
        account_id,
@@ -202,6 +219,13 @@ SELECT DATE(executed_at),
        SUM(CASE WHEN side = 'BUY' THEN quantity ELSE 0 END),
        SUM(CASE WHEN side = 'SELL' THEN quantity ELSE 0 END),
        SUM(gross_amount),
+       SUM(CASE WHEN side = 'BUY' THEN gross_amount ELSE 0 END),
+       SUM(CASE WHEN side = 'SELL' THEN gross_amount ELSE 0 END),
+       SUM(CASE WHEN side = 'BUY' THEN net_amount ELSE 0 END),
+       SUM(CASE WHEN side = 'SELL' THEN net_amount ELSE 0 END),
+       SUM(fee_amount),
+       SUM(tax_amount),
+       SUM(COALESCE(realized_profit, 0)),
        MAX(executed_at),
        NOW()
  FROM stock_execution

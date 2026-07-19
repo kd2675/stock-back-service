@@ -171,6 +171,7 @@ class MarketServiceTest {
         lenient().when(stockOrderBookInstrumentRepository.findByIdForUpdate(anyString()))
                 .thenAnswer(invocation -> stockOrderBookInstrumentRepository.findById(invocation.getArgument(0)));
         SimulationClockService simulationClockService = mock(SimulationClockService.class);
+        MarketLedgerFreezeGuard marketLedgerFreezeGuard = mock(MarketLedgerFreezeGuard.class);
         lenient().when(simulationClockService.currentMarketDayStart()).thenReturn(SimulationDayClock.currentDayStart());
         lenient().when(simulationClockService.currentMarketDateTime()).thenAnswer(invocation -> LocalDateTime.now());
         lenient().when(simulationClockService.currentSnapshot()).thenAnswer(invocation -> currentSimulationClockSnapshot());
@@ -191,7 +192,8 @@ class MarketServiceTest {
                         stockCorporateActionRepository,
                         stockListingAutoAccountConfigRepository,
                         commandJdbcTemplate,
-                        simulationClockService
+                        simulationClockService,
+                        marketLedgerFreezeGuard
                 ),
                 new MarketCatalogQueryService(
                         stockInstrumentRepository,
@@ -211,14 +213,16 @@ class MarketServiceTest {
                         stockAutoParticipantRepository,
                         stockAccountRepository,
                         stockAccountCashFlowRepository,
-                        simulationClockService
+                        simulationClockService,
+                        marketLedgerFreezeGuard
                 ),
                 new AutoParticipantManagementService(
                         stockAutoParticipantRepository,
                         stockAccountRepository,
                         stockAccountCashFlowRepository,
                         accountOrderCleanupService,
-                        simulationClockService
+                        simulationClockService,
+                        marketLedgerFreezeGuard
                 ),
                 new AutoParticipantProfileConfigService(stockAutoParticipantProfileConfigRepository),
                 new AutoParticipantSymbolConfigService(
@@ -241,7 +245,8 @@ class MarketServiceTest {
                         stockOrderRepository,
                         stockExecutionMarketViewRepository,
                         simulationClockService,
-                        simulationMarketSessionService
+                        simulationMarketSessionService,
+                        mock(MarketSessionFenceCommandService.class)
                 ),
                 new CorporateActionCommandService(
                         stockOrderBookInstrumentRepository,
@@ -279,7 +284,6 @@ class MarketServiceTest {
                         stockAutoParticipantRepository,
                         stockListingAutoAccountConfigRepository,
                         stockOrderRepository,
-                        stockExecutionMarketViewRepository,
                         autoMarketStatusDataLoader,
                         autoMarketSummaryStatusQuery,
                         simulationClockService,
@@ -290,7 +294,6 @@ class MarketServiceTest {
                         stockOrderBookMarketConfigRepository,
                         stockOrderBookInstrumentRepository,
                         stockOrderRepository,
-                        stockExecutionMarketViewRepository,
                         simulationClockService,
                         simulationMarketSessionService
                 ),
@@ -620,7 +623,6 @@ class MarketServiceTest {
         ));
         when(stockAutoParticipantSymbolConfigRepository.findByUserKeyInOrderByUserKeyAscSymbolAsc(List.of("stock-auto-001"))).thenReturn(List.of());
         when(stockOrderRepository.countOpenAutoOrders(any(), any())).thenReturn(0L);
-        when(stockExecutionMarketViewRepository.countAutoExecutionsBetween(any(), any())).thenReturn(0L);
 
         var response = marketService.getAutoMarketStatus();
 
@@ -646,7 +648,6 @@ class MarketServiceTest {
         when(stockAutoMarketConfigRepository.findAll()).thenReturn(List.of(marketConfig));
         stubAutoParticipantStatusQuery();
         when(stockOrderRepository.countOpenAutoOrders(any(), any())).thenReturn(0L);
-        when(stockExecutionMarketViewRepository.countAutoExecutionsBetween(any(), any())).thenReturn(0L);
         doAnswer(invocation -> {
             @SuppressWarnings("unchecked")
             org.springframework.jdbc.core.RowMapper<Object> rowMapper = invocation.getArgument(1);
@@ -704,7 +705,6 @@ class MarketServiceTest {
         when(stockAutoMarketConfigRepository.findAll()).thenReturn(List.of(marketConfig));
         stubAutoParticipantStatusQuery(participant);
         when(stockOrderRepository.countOpenAutoOrders(any(), any())).thenReturn(0L);
-        when(stockExecutionMarketViewRepository.countAutoExecutionsBetween(any(), any())).thenReturn(0L);
 
         var response = marketService.getAutoMarketStatus(false);
 
@@ -749,7 +749,6 @@ class MarketServiceTest {
         verify(stockAutoParticipantRepository, never()).countByEnabledTrueAndWithdrawnAtIsNull();
         verify(stockListingAutoAccountConfigRepository, never()).count();
         verify(stockOrderRepository, never()).countOpenAutoOrders(any(), any());
-        verify(stockExecutionMarketViewRepository, never()).countAutoExecutionsBetween(any(), any());
     }
 
     @Test
@@ -920,9 +919,15 @@ class MarketServiceTest {
                 .contains("join active_accounts aa on aa.id = h.account_id")
                 .contains("join active_accounts aa on aa.id = f.account_id")
                 .contains("join active_accounts aa on aa.id = e.account_id")
+                .contains("from stock_execution_account_day_summary e")
                 .doesNotContain("join stock_account a on a.id = h.account_id")
                 .doesNotContain("join stock_account a on a.id = f.account_id")
-                .doesNotContain("join stock_account a on a.id = e.account_id");
+                .doesNotContain("join stock_account a on a.id = e.account_id")
+                .doesNotContain("from stock_execution e");
+
+        assertThat(AdminFlowQueryService.FUND_FLOW_SUMMARY_RECENT_SIMULATION_DAY_SQL)
+                .contains("where e.simulation_trade_date = ?")
+                .doesNotContain("e.executed_at");
     }
 
     @Test
@@ -1012,11 +1017,13 @@ class MarketServiceTest {
     }
 
     @Test
-    void getAdminSymbolFlows_allScopeKeepsAllTimeAggregatePath() {
+    void getAdminSymbolFlows_allScopeUsesDailySnapshotsAndBoundedCurrentDayExecutions() {
         when(jdbcTemplate.query(
                 org.mockito.ArgumentMatchers.any(String.class),
                 org.mockito.ArgumentMatchers.<org.springframework.jdbc.core.RowMapper<Object>>any(),
-                aryEq(new Object[0])
+                org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any()
         )).thenReturn(List.of());
 
         var response = marketService.getAdminSymbolFlows(0, AdminFundFlowScope.ALL);
@@ -1025,16 +1032,21 @@ class MarketServiceTest {
         verify(jdbcTemplate).query(
                 sqlCaptor.capture(),
                 org.mockito.ArgumentMatchers.<org.springframework.jdbc.core.RowMapper<Object>>any(),
-                aryEq(new Object[0])
+                org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any()
         );
         assertThat(response.totalCount()).isZero();
         assertThat(response.symbolFlows()).isEmpty();
         assertThat(sqlCaptor.getValue())
                 .doesNotContain("selected_symbols")
-                .doesNotContain("and executed_at >= ?")
-                .doesNotContain("and executed_at < ?")
+                .contains("historical_execution_flow as")
+                .contains("from stock_order_book_daily_snapshot candidate")
+                .contains("current_execution_flow as")
+                .contains("where candidate.simulation_trade_date < ?")
+                .contains("and executed_at >= ?")
+                .contains("and executed_at < ?")
                 .contains("from stock_order_book_instrument i")
-                .contains("from stock_execution")
                 .contains("from stock_order")
                 .contains("from stock_holding h")
                 .contains("from stock_corporate_action");
@@ -1156,7 +1168,7 @@ class MarketServiceTest {
                         new BigDecimal("0.20"),
                         new BigDecimal("50000.00"),
                         new BigDecimal("30"),
-                        "MINUTE",
+                        "DAY",
                         null
                 )
         );
@@ -1178,7 +1190,6 @@ class MarketServiceTest {
         stubAutoParticipantStatusQuery();
         when(stockListingAutoAccountConfigRepository.findAllByOrderBySymbolAsc()).thenReturn(List.of(listingConfig));
         when(stockOrderRepository.countOpenAutoOrders(any(), any())).thenReturn(0L);
-        when(stockExecutionMarketViewRepository.countAutoExecutionsBetween(any(), any())).thenReturn(0L);
         when(jdbcTemplate.query(
                 org.mockito.ArgumentMatchers.contains("from stock_listing_auto_account_config c"),
                 org.mockito.ArgumentMatchers.<org.springframework.jdbc.core.RowMapper<Object>>any(),
@@ -2232,6 +2243,11 @@ class MarketServiceTest {
                     List.of(),
                     List.of()
             );
+        }
+
+        @Override
+        long countTodayAutoExecutions(java.time.LocalDate simulationTradeDate) {
+            return todayAutoExecutionCount;
         }
 
         @Override

@@ -57,6 +57,15 @@ database:
       ddl-auto: validate
 
 stock:
+  back:
+    order-book-live-aggregate-cache:
+      trade-summary-ttl-ms: ${STOCK_ORDER_BOOK_TRADE_SUMMARY_CACHE_TTL_MS:10000}
+      candle-ttl-ms: ${STOCK_ORDER_BOOK_CANDLE_CACHE_TTL_MS:10000}
+      max-entries: ${STOCK_ORDER_BOOK_LIVE_AGGREGATE_CACHE_MAX_ENTRIES:1000}
+  schema-readiness:
+    enabled: ${STOCK_SCHEMA_READINESS_ENABLED:true}
+  batch-signal:
+    default-max-attempts: ${STOCK_BATCH_SIGNAL_DEFAULT_MAX_ATTEMPTS:12}
   simulation-clock:
     base-date: ${STOCK_SIMULATION_BASE_DATE:}
     real-seconds-per-day: ${STOCK_SIMULATION_REAL_SECONDS_PER_DAY:7200}

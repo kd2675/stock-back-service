@@ -24,6 +24,8 @@
 - `/api/stock/v1/markets/virtual-market`
 - `/api/stock/v1/markets/order-book-market`
 - `/api/stock/v1/markets/auto-market`
+- `GET /api/stock/v1/markets/batch-jobs/eod/overview` (`ADMIN`)
+- `POST /api/stock/v1/markets/batch-jobs/eod/cycles/{cycleId}/retry` (`ADMIN`, `FAILED` 현재 phase만)
 - `/api/stock/v1/users/me`
 - `/api/stock/v1/accounts/me`
 - `/api/stock/v1/accounts/me/status`
@@ -65,3 +67,9 @@
 - 주문 접수 API와 체결 엔진 책임을 섞지 말고, 체결 판단은 `stock-batch-service` 또는 이후 분리될 trade engine 쪽으로 둡니다.
 - 서비스별 세부 규칙은 이 문서와 README에 두고 루트 문서에는 긴 도메인 설명을 중복하지 않습니다.
 - `stock_order`와 `stock_execution`은 나중에 내부 주문장 매칭으로 바뀔 수 있으므로 현재가 기반 체결 가정만으로 컬럼을 좁히지 않습니다.
+- 정규장 운영·관리 조회는 `stock_order`·`stock_execution` 전체 집계를 반복하지 않고 일별 요약, close-cycle 스냅샷, bounded cursor를 우선합니다. 불가피한 원장 조회는 거래일/PK 범위와 페이지 상한을 둡니다.
+- 주문·체결 hot table의 인덱스·잠금·쿼리를 바꿀 때는 현재 거래량과 확장 거래량에서 동일 데이터·동일 동시성 MySQL A/B를 수행합니다. 주문/체결 TPS가 기준선의 95% 미만이거나 p95가 `max(5ms, 10%)`보다 증가하면 적용하지 않습니다.
+- EOD API는 cycle/attempt/요약 테이블만 읽도록 유지하며, 관리자 화면 조회를 이유로 정규장 주문·체결 원장에 새 인덱스를 추가하지 않습니다. 세부 기준은 `../stock-batch-service/docs/stock-eod-refactoring-plan-2026-07-15.md`를 따릅니다.
+- EOD phase 재시도는 가장 오래된 전체시장 `FAILED` cycle의 제어행 backoff만 해제하고 Job을 직접 실행하지 않습니다. `DEFERRED`·정규장·실행 owner가 있는 cycle을 우회하거나 주문·체결·계좌·보유 원장을 조회하지 않습니다.
+- 장중 전체 체결 건수와 사용자 누적 손익·관리자 체결 자금흐름은 `stock_execution_account_day_summary` 같은 비동기 read model을 사용하고 최대 지연을 응답/화면에 알립니다. 계좌의 전체 `stock_execution`을 주기적으로 다시 합산하지 않습니다. 종목 거래요약·캔들처럼 원본 범위 집계가 남은 API는 bounded single-flight 읽기 캐시와 짧은 query timeout을 거쳐야 하며, 캐시·요약 DB 갱신을 주문·체결 트랜잭션에 넣지 않습니다.
+- 자동 참여자 월급·정기 현금의 신규·수정 운영 설정은 `DAY`·`MONTH`·`YEAR`만 허용합니다. 과거 sub-day 값의 판독 enum은 호환을 위해 유지하되 일반 저장 과정에서 자동 변환하지 않고, 정규장 지급·catch-up 지급을 추가하지 않습니다.

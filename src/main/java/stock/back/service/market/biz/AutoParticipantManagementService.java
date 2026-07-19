@@ -32,6 +32,7 @@ public class AutoParticipantManagementService {
     private final StockAccountCashFlowRepository stockAccountCashFlowRepository;
     private final AccountOrderCleanupService accountOrderCleanupService;
     private final SimulationClockService simulationClockService;
+    private final MarketLedgerFreezeGuard marketLedgerFreezeGuard;
 
     @Transactional
     public AutoParticipantResponse upsertAutoParticipant(String userKey, AutoParticipantRequest request) {
@@ -101,14 +102,14 @@ public class AutoParticipantManagementService {
         }
         StockAutoParticipant participant = stockAutoParticipantRepository.findById(normalizedUserKey)
                 .orElseThrow(() -> StockException.notFound("Unknown auto participant: " + normalizedUserKey));
+        marketLedgerFreezeGuard.acquireMutationPermit("auto-participant withdrawal");
         cancelOpenAutoParticipantOrders(normalizedUserKey);
         participant.withdraw();
         return toAutoParticipantResponse(stockAutoParticipantRepository.save(participant));
     }
 
     private void cancelOpenAutoParticipantOrders(String userKey) {
-        stockAccountRepository.findByUserKeyAndStatus(userKey, StockAccountStatus.ACTIVE)
-                .map(StockAccount::getId)
+        stockAccountRepository.findByUserKeyAndStatusForUpdate(userKey, StockAccountStatus.ACTIVE)
                 .ifPresent(accountOrderCleanupService::cancelOpenOrderBookOrders);
     }
 
@@ -120,6 +121,7 @@ public class AutoParticipantManagementService {
             return null;
         }
 
+        marketLedgerFreezeGuard.acquireMutationPermit("auto-participant account funding");
         LocalDateTime now = simulationClockService.currentMarketDateTime();
         StockAccount account = findOrCreateActiveAccount(userKey, now);
         if (initialCashAmount.compareTo(BigDecimal.ZERO) > 0) {

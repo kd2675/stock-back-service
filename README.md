@@ -33,6 +33,8 @@
 - `GET /api/stock/v1/markets/virtual-market`
 - `GET /api/stock/v1/markets/order-book-market`
 - `GET /api/stock/v1/markets/auto-market`
+- `GET /api/stock/v1/markets/batch-jobs/eod/overview` (`ADMIN`)
+- `POST /api/stock/v1/markets/batch-jobs/eod/cycles/{cycleId}/retry` (`ADMIN`)
 - `GET /api/stock/v1/markets/rankings`
 - `GET /api/stock/v1/users/me`
 - `GET /api/stock/v1/accounts/me`
@@ -88,6 +90,16 @@ scripts/stock-smoke.sh
 - `web-common-core`
 - `auth-common-core`
 
+## 장중 집계 조회 부하 보호
+
+- `GET /api/stock/v1/markets/order-book-market`의 당일 체결 수는 대형 `stock_execution`을 매번 세지 않고, 배치가 체결 커밋 후 비동기로 적재하는 `stock_execution_account_day_summary`를 읽습니다. BUY·SELL 계좌 delta 두 행이 한 거래이므로 합계를 2로 나누며 정상 flush 상태에서 화면 값은 기본 간격인 약 30초 늦을 수 있습니다. flush 실패·재기동·요약 슬롯 상한 초과 시에는 더 늦을 수 있고 야간 REPORTS 원본 대사로 복구됩니다. 자동 참여자 당일 체결 수도 같은 요약을 활성 자동 참여자 계좌와 조인합니다.
+- 사용자 손익 요약과 관리자 전체 자금흐름의 매수/매도 금액·수수료·세금·실현손익도 계좌 전체 `stock_execution`을 반복 합산하지 않고 `(account_id, simulation_trade_date)` 일별 요약을 읽습니다. 장중 값은 정상 flush 상태에서 약 30초 지연될 수 있고, flush 실패·재기동 등으로 더 늦어진 값은 야간 보고서 단계가 해당 거래일의 `[00:00, 다음 날 00:00)` 원본 범위만 대사해 정확 값으로 확정합니다.
+- 종목 거래요약과 캔들은 아직 당일 체결 범위를 읽으므로 `OrderBookLiveAggregateCacheService`가 정규화된 종목/구간 키별 single-flight와 기본 10초 TTL을 적용합니다. 캐시는 인스턴스당 최대 1,000키이며 원장 쿼리는 5초 read-transaction timeout을 사용합니다.
+- 관리자 자금흐름·종목 흐름 같은 수동 분석 조회는 자동 폴링하지 않고 10초 read-transaction timeout을 적용합니다. 분석 조회가 실패하더라도 주문·체결용 DB 연결을 30초 socket timeout까지 점유하게 두지 않습니다.
+- 이 캐시는 읽기 계층에만 있습니다. 주문 접수·정정·자동 주문·체결 트랜잭션에는 캐시 쓰기, 요약 UPSERT, 신규 `stock_order`/`stock_execution` 인덱스나 추가 commit을 넣지 않습니다.
+- 설정은 `STOCK_ORDER_BOOK_TRADE_SUMMARY_CACHE_TTL_MS`, `STOCK_ORDER_BOOK_CANDLE_CACHE_TTL_MS`, `STOCK_ORDER_BOOK_LIVE_AGGREGATE_CACHE_MAX_ENTRIES`로 조정합니다. TTL은 1~60초, 키 상한은 10~10,000 범위만 허용합니다. TTL을 줄이기 전에는 현재/확장 거래량 MySQL A/B에서 주문·체결 TPS와 p95/p99를 확인해야 합니다.
+- EOD 재시도 API는 시장이 닫힌 상태에서 가장 오래된 전체시장 `FAILED` cycle의 현재 phase backoff만 해제합니다. Job 실행은 batch coordinator가 다시 판정하며, API는 `stock_order`·`stock_execution`·계좌·보유 원장을 읽거나 쓰지 않습니다. 정책상 `DEFERRED` 상태와 강제 마감은 이 API로 우회할 수 없습니다.
+
 ## 데이터베이스
 
 - schema: `STOCK_SERVICE`
@@ -103,6 +115,8 @@ scripts/stock-smoke.sh
 - 전체 stock 시뮬레이션 데이터를 지울 때는 `src/main/resources/db/maintenance/stock_clear_data.sql`을 사용합니다. 이 파일은 자동참여자, 계좌, 종목, 자동장 설정까지 모두 지우는 전체 초기화용입니다.
 - 자동참여자 등록, 프로필, 참여자별 전략, 종목, 자동장 설정은 남기고 실제시간으로 쌓인 주문/체결/차트/원장 히스토리만 새로 시작하려면 `src/main/resources/db/maintenance/stock_clear_runtime_history_keep_participants.sql`을 사용합니다. 이 파일은 계좌 식별 row는 보존하되 현금과 일반 보유를 0으로 리셋하고, 시뮬레이션 clock의 기준일과 1일 길이는 유지한 채 누적 시간을 0으로 되돌립니다. enabled 주문장 종목 가격은 초기 상장가와 시뮬레이션 기준일 00:00으로 되돌린 뒤, 자동장 batch가 거래 가능한 `OPEN` 종목의 `SELL_ONLY` 상장주관 자동계정에는 현재 유통주식수만큼 공급 보유분을 다시 만들어 삭제된 현금 원장과 손익/수익률 기준이 어긋나지 않게 합니다.
 - maintenance SQL은 실행 전 stock-back과 stock-batch 스케줄러를 멈춘 뒤 적용합니다.
+- EOD v1 운영 ALTER는 `../stock-batch-service/docs/stock-eod-refactoring-plan-2026-07-15.md`에 적힌 11개 파일 순서와 서버 종료·백업·전후 대사 절차를 따릅니다. MySQL DDL은 문장 단위로만 원자적이므로 여러 ALTER를 하나의 트랜잭션처럼 간주하지 않습니다.
+- 구버전 애플리케이션으로 긴급 복귀할 때는 `src/main/resources/db/ddl/stock_eod_application_rollback_alter.sql`을 사용합니다. 이 파일은 EOD 테이블·컬럼·인덱스와 감사 데이터를 삭제하지 않고, 구버전 signal INSERT를 위해 `next_attempt_at`만 nullable로 되돌립니다. 구버전이 phase/lease를 이해하지 못하므로 신규 앱에서 생성된 eligible·deferred·processing·dead-letter 신호는 자동 재실행하지 않고 `FAILED`로 종결합니다. 정확한 이전 스키마 복원은 ALTER 전 dump로만 수행하며 이 호환 롤백과 혼동하지 않습니다.
 - stock-back과 stock-batch는 물리적으로 분리된 서버로 본다. stock-back은 stock-batch 내부 HTTP API를 호출하지 않고 `STOCK_SERVICE.stock_batch_job_signal`에 실행 신호를 적재한다.
 - batch 스케줄러 runtime 제어는 stock-back이 `stock_batch_job_control.runtime_enabled`를 직접 읽고 쓰며, stock-batch는 자신의 실제 `enabled` 설정을 `scheduler_configured`에 동기화한 뒤 두 값을 함께 읽어 자동 실행 여부를 판단한다.
 - batch 수동 실행, 종목 장마감 롤오버, 거래정지/서킷브레이크 미체결 정리는 stock-back이 `PENDING` signal row를 만들고 stock-batch가 폴링해 기존 batch job launcher로 실행한다.

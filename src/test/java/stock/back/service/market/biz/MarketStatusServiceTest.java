@@ -29,6 +29,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -55,6 +56,9 @@ class MarketStatusServiceTest {
     @Mock
     private SimulationMarketSessionService simulationMarketSessionService;
 
+    @Mock
+    private MarketSessionFenceCommandService marketSessionFenceCommandService;
+
     private MarketStatusService service;
 
     @BeforeEach
@@ -68,7 +72,8 @@ class MarketStatusServiceTest {
                 stockOrderRepository,
                 stockExecutionMarketViewRepository,
                 simulationClockService,
-                simulationMarketSessionService
+                simulationMarketSessionService,
+                marketSessionFenceCommandService
         );
     }
 
@@ -102,6 +107,13 @@ class MarketStatusServiceTest {
         assertThat(response.symbol()).isEqualTo("ZQ001");
         assertThat(response.enabled()).isTrue();
         assertThat(response.marketStatus()).isEqualTo(MarketSessionStatus.CLOSED);
+        verify(marketSessionFenceCommandService).synchronize(
+                MarketType.ORDER_BOOK,
+                "ZQ001",
+                true,
+                MarketSessionStatus.CLOSED,
+                SIMULATION_NOW
+        );
     }
 
     @Test

@@ -14,9 +14,9 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import stock.back.service.market.biz.AutoMarketStatusQueryService;
 import stock.back.service.market.biz.MarketCatalogQueryService;
-import stock.back.service.market.biz.OrderBookCandleQueryService;
 import stock.back.service.market.biz.OrderBookInstrumentCommandService;
 import stock.back.service.market.biz.InstrumentMarketReportService;
+import stock.back.service.market.biz.OrderBookLiveAggregateCacheService;
 import stock.back.service.market.biz.OrderBookMarketStatusQueryService;
 import stock.back.service.market.biz.OrderBookQueryService;
 import stock.back.service.market.vo.AutoMarketStatusResponse;
@@ -41,7 +41,7 @@ public class OrderBookMarketController {
     private final MarketCatalogQueryService marketCatalogQueryService;
     private final OrderBookInstrumentCommandService orderBookInstrumentCommandService;
     private final OrderBookQueryService orderBookQueryService;
-    private final OrderBookCandleQueryService orderBookCandleQueryService;
+    private final OrderBookLiveAggregateCacheService orderBookLiveAggregateCacheService;
     private final OrderBookMarketStatusQueryService orderBookMarketStatusQueryService;
     private final AutoMarketStatusQueryService autoMarketStatusQueryService;
     private final InstrumentMarketReportService instrumentMarketReportService;
@@ -80,7 +80,7 @@ public class OrderBookMarketController {
 
     @GetMapping("/order-books/{symbol}/trade-summary")
     public ResponseDataDTO<OrderBookTradeSummaryResponse> getOrderBookTradeSummary(@PathVariable String symbol) {
-        return ResponseDataDTO.of(orderBookQueryService.getOrderBookTradeSummary(symbol));
+        return ResponseDataDTO.of(orderBookLiveAggregateCacheService.getTradeSummary(symbol));
     }
 
     @GetMapping("/order-books/{symbol}/executions/recent")
@@ -93,7 +93,7 @@ public class OrderBookMarketController {
             @PathVariable String symbol,
             @PathVariable String interval
     ) {
-        return ResponseDataDTO.of(orderBookCandleQueryService.getOrderBookCandles(symbol, interval));
+        return ResponseDataDTO.of(orderBookLiveAggregateCacheService.getCandles(symbol, interval));
     }
 
     @GetMapping("/order-book-market")

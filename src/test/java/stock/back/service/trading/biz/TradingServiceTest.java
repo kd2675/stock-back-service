@@ -110,6 +110,24 @@ class TradingServiceTest {
                 LocalDateTime.now(),
                 LocalDateTime.now()
         );
+        jdbcTemplate.update(
+                """
+                merge into stock_market_business_state(
+                    state_id,
+                    active_business_date,
+                    preparing_business_date,
+                    raw_simulation_date,
+                    version,
+                    created_at,
+                    updated_at
+                )
+                key(state_id)
+                values ('DEFAULT', date '2026-07-01', null, date '2026-07-01', 0, ?, ?)
+                """,
+                LocalDateTime.now(),
+                LocalDateTime.now()
+        );
+        mergeOpenSessionFence("VIRTUAL_PRICE", "005930");
     }
 
     @Test
@@ -1032,6 +1050,103 @@ class TradingServiceTest {
                 source,
                 executedAt
         );
+        upsertExecutionDaySummary(
+                accountId,
+                side,
+                quantity,
+                gross,
+                new BigDecimal(netAmount),
+                new BigDecimal(feeAmount),
+                new BigDecimal(taxAmount),
+                realizedProfit == null ? BigDecimal.ZERO : new BigDecimal(realizedProfit),
+                executedAt
+        );
+    }
+
+    private void upsertExecutionDaySummary(
+            long accountId,
+            String side,
+            long quantity,
+            BigDecimal grossAmount,
+            BigDecimal netAmount,
+            BigDecimal feeAmount,
+            BigDecimal taxAmount,
+            BigDecimal realizedProfit,
+            LocalDateTime executedAt
+    ) {
+        boolean buy = "BUY".equals(side);
+        BigDecimal buyGrossAmount = buy ? grossAmount : BigDecimal.ZERO;
+        BigDecimal sellGrossAmount = buy ? BigDecimal.ZERO : grossAmount;
+        BigDecimal buyNetAmount = buy ? netAmount : BigDecimal.ZERO;
+        BigDecimal sellNetAmount = buy ? BigDecimal.ZERO : netAmount;
+        int updated = jdbcTemplate.update(
+                """
+                update stock_execution_account_day_summary
+                   set execution_count = execution_count + 1,
+                       buy_quantity = buy_quantity + ?,
+                       sell_quantity = sell_quantity + ?,
+                       gross_amount = gross_amount + ?,
+                       buy_gross_amount = buy_gross_amount + ?,
+                       sell_gross_amount = sell_gross_amount + ?,
+                       buy_net_amount = buy_net_amount + ?,
+                       sell_net_amount = sell_net_amount + ?,
+                       fee_amount = fee_amount + ?,
+                       tax_amount = tax_amount + ?,
+                       realized_profit = realized_profit + ?,
+                       last_executed_at = case
+                           when last_executed_at is null or last_executed_at < ? then ?
+                           else last_executed_at
+                       end,
+                       updated_at = ?
+                 where simulation_trade_date = ?
+                   and account_id = ?
+                """,
+                buy ? quantity : 0L,
+                buy ? 0L : quantity,
+                grossAmount,
+                buyGrossAmount,
+                sellGrossAmount,
+                buyNetAmount,
+                sellNetAmount,
+                feeAmount,
+                taxAmount,
+                realizedProfit,
+                executedAt,
+                executedAt,
+                executedAt,
+                executedAt.toLocalDate(),
+                accountId
+        );
+        if (updated > 0) {
+            return;
+        }
+        jdbcTemplate.update(
+                """
+                insert into stock_execution_account_day_summary(
+                    simulation_trade_date, account_id, execution_count,
+                    buy_quantity, sell_quantity, gross_amount,
+                    buy_gross_amount, sell_gross_amount,
+                    buy_net_amount, sell_net_amount,
+                    fee_amount, tax_amount, realized_profit,
+                    last_executed_at, updated_at
+                )
+                values (?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                executedAt.toLocalDate(),
+                accountId,
+                buy ? quantity : 0L,
+                buy ? 0L : quantity,
+                grossAmount,
+                buyGrossAmount,
+                sellGrossAmount,
+                buyNetAmount,
+                sellNetAmount,
+                feeAmount,
+                taxAmount,
+                realizedProfit,
+                executedAt,
+                executedAt
+        );
     }
 
     private void insertAccount(String userKey, String cashBalance, String openingGrantAmount) {
@@ -1087,6 +1202,34 @@ class TradingServiceTest {
                 """,
                 symbol,
                 marketStatus,
+                LocalDateTime.now()
+        );
+        if ("OPEN".equals(marketStatus)) {
+            mergeOpenSessionFence("ORDER_BOOK", symbol);
+        }
+    }
+
+    private void mergeOpenSessionFence(String marketType, String symbol) {
+        jdbcTemplate.update(
+                """
+                merge into stock_market_session_fence(
+                    market_type,
+                    symbol,
+                    business_date,
+                    session_epoch,
+                    session_state,
+                    state_changed_at,
+                    version,
+                    created_at,
+                    updated_at
+                )
+                key(market_type, symbol)
+                values (?, ?, date '2026-07-01', 1, 'OPEN', ?, 0, ?, ?)
+                """,
+                marketType,
+                symbol,
+                LocalDateTime.now(),
+                LocalDateTime.now(),
                 LocalDateTime.now()
         );
     }

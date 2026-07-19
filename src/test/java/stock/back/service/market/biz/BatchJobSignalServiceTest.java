@@ -4,14 +4,21 @@ import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
+import stock.back.service.common.exception.StockException;
 import stock.back.service.market.vo.StockBatchJobRunResponse;
+import web.common.core.simulation.SimulationMarketSession;
 
 import javax.sql.DataSource;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.Map;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.anyString;
+import static org.mockito.Mockito.when;
 
 class BatchJobSignalServiceTest {
 
@@ -34,6 +41,14 @@ class BatchJobSignalServiceTest {
                 .containsEntry("status", "PENDING")
                 .containsEntry("requested_by", "admin-user");
         assertThat(row.get("symbol")).isNull();
+        assertThat(jdbcTemplate.queryForObject(
+                "select requested_business_date from stock_batch_job_signal",
+                LocalDate.class
+        )).isEqualTo(LocalDate.of(2026, 7, 3));
+        assertThat(jdbcTemplate.queryForObject(
+                "select eligible_at from stock_batch_job_signal",
+                LocalDateTime.class
+        )).isEqualTo(LocalDateTime.of(2026, 7, 4, 0, 0));
     }
 
     @Test
@@ -139,6 +154,27 @@ class BatchJobSignalServiceTest {
                 .containsEntry("symbol", "DEMO001")
                 .containsEntry("status", "PENDING")
                 .containsEntry("requested_by", "admin-user");
+        assertThat(jdbcTemplate.queryForObject(
+                "select requested_session_epoch from stock_batch_job_signal",
+                Long.class
+        )).isEqualTo(7L);
+        assertThat(jdbcTemplate.queryForObject(
+                "select expected_cycle_id from stock_batch_job_signal",
+                Long.class
+        )).isEqualTo(102L);
+    }
+
+    @Test
+    void enqueueMarketCloseRollover_regularSession_rejectsBeforeSignalInsert() {
+        JdbcTemplate jdbcTemplate = createJdbcTemplate();
+        BatchJobSignalService service = createService(jdbcTemplate, SimulationMarketSession.REGULAR);
+
+        assertThatThrownBy(() -> service.enqueueMarketCloseRollover("admin-user"))
+                .isInstanceOf(StockException.class)
+                .hasMessageContaining("only be requested after the regular session");
+
+        assertThat(jdbcTemplate.queryForObject("select count(*) from stock_batch_job_signal", Long.class))
+                .isZero();
     }
 
     @Test
@@ -176,9 +212,36 @@ class BatchJobSignalServiceTest {
     }
 
     private BatchJobSignalService createService(JdbcTemplate jdbcTemplate) {
+        return createService(jdbcTemplate, SimulationMarketSession.AFTER_CLOSE);
+    }
+
+    private BatchJobSignalService createService(
+            JdbcTemplate jdbcTemplate,
+            SimulationMarketSession marketSession
+    ) {
+        SimulationMarketSessionService sessionService = mock(SimulationMarketSessionService.class);
+        when(sessionService.currentSession()).thenReturn(marketSession);
+        BatchJobSignalContextService contextService = mock(BatchJobSignalContextService.class);
+        var fullMarketContext = new BatchJobSignalContextService.BatchJobSignalContext(
+                LocalDate.of(2026, 7, 3),
+                null,
+                101L,
+                LocalDateTime.of(2026, 7, 3, 18, 30)
+        );
+        var symbolContext = new BatchJobSignalContextService.BatchJobSignalContext(
+                LocalDate.of(2026, 7, 3),
+                7L,
+                102L,
+                LocalDateTime.of(2026, 7, 3, 18, 30)
+        );
+        when(contextService.resolveFullMarket()).thenReturn(fullMarketContext);
+        when(contextService.resolveSymbol(anyString())).thenReturn(symbolContext);
         return new BatchJobSignalService(
                 jdbcTemplate,
-                new BatchJobRuntimeControlService(JdbcClient.create(jdbcTemplate))
+                new BatchJobRuntimeControlService(JdbcClient.create(jdbcTemplate)),
+                sessionService,
+                contextService,
+                12
         );
     }
 
@@ -209,6 +272,16 @@ class BatchJobSignalServiceTest {
                   status varchar(20) not null,
                   requested_by varchar(64),
                   requested_at timestamp not null,
+                  requested_business_date date,
+                  requested_session_epoch bigint,
+                  expected_cycle_id bigint,
+                  eligible_at timestamp,
+                  next_attempt_at timestamp not null,
+                  attempt_count int not null,
+                  max_attempts int not null,
+                  claim_token varchar(64),
+                  lease_until timestamp,
+                  failure_class varchar(40),
                   picked_at timestamp,
                   completed_at timestamp,
                   processed_count int,

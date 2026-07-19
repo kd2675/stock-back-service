@@ -65,6 +65,9 @@ class OrderBookInstrumentCommandServiceTest {
     @Mock
     private SimulationClockService simulationClockService;
 
+    @Mock
+    private MarketLedgerFreezeGuard marketLedgerFreezeGuard;
+
     private final LocalDateTime simulationNow = LocalDateTime.of(2026, 7, 1, 10, 0);
     private JdbcTemplate jdbcTemplate;
 
@@ -83,7 +86,8 @@ class OrderBookInstrumentCommandServiceTest {
                 stockCorporateActionRepository,
                 stockListingAutoAccountConfigRepository,
                 jdbcTemplate,
-                simulationClockService
+                simulationClockService,
+                marketLedgerFreezeGuard
         );
     }
 

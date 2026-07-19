@@ -58,7 +58,7 @@ public class OrderBookQueryService {
         return new OrderBookResponse(normalizedSymbol, bids, asks);
     }
 
-    @Transactional(readOnly = true)
+    @Transactional(readOnly = true, timeout = 5)
     public OrderBookTradeSummaryResponse getOrderBookTradeSummary(String symbol) {
         String normalizedSymbol = requireEnabledOrderBookSymbol(symbol);
         LocalDateTime todayStart = simulationClockService.currentMarketDayStart();

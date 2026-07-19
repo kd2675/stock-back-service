@@ -32,6 +32,7 @@ public class MarketStatusService {
     private final StockExecutionMarketViewRepository stockExecutionMarketViewRepository;
     private final SimulationClockService simulationClockService;
     private final SimulationMarketSessionService simulationMarketSessionService;
+    private final MarketSessionFenceCommandService marketSessionFenceCommandService;
 
     @Transactional
     public SymbolMarketConfigResponse updateMarketStatus(MarketType marketType, String symbol, MarketStatusUpdateRequest request) {
@@ -49,7 +50,15 @@ public class MarketStatusService {
             StockVirtualMarketConfig config = stockVirtualMarketConfigRepository.findById(normalizedSymbol)
                     .orElseThrow(() -> StockException.notFound("Unknown virtual market symbol: " + normalizedSymbol));
             validateManualOpenSession(request.marketStatus(), normalizedSymbol);
-            config.updateStatus(request.enabled(), request.marketStatus(), simulationClockService.currentMarketDateTime());
+            LocalDateTime updatedAt = simulationClockService.currentMarketDateTime();
+            config.updateStatus(request.enabled(), request.marketStatus(), updatedAt);
+            marketSessionFenceCommandService.synchronize(
+                    marketType,
+                    normalizedSymbol,
+                    Boolean.TRUE.equals(config.getEnabled()),
+                    normalizeMarketSessionStatus(config.getMarketStatus()),
+                    updatedAt
+            );
             return toVirtualMarketConfigResponse(config);
         }
         StockOrderBookMarketConfig config = stockOrderBookMarketConfigRepository.findById(normalizedSymbol)
@@ -57,6 +66,13 @@ public class MarketStatusService {
         LocalDateTime updatedAt = simulationClockService.currentMarketDateTime();
         validateOrderBookManualOpenTransition(config, request.marketStatus(), updatedAt.toLocalDate());
         config.updateStatus(request.enabled(), request.marketStatus(), updatedAt);
+        marketSessionFenceCommandService.synchronize(
+                marketType,
+                normalizedSymbol,
+                Boolean.TRUE.equals(config.getEnabled()),
+                normalizeMarketSessionStatus(config.getMarketStatus()),
+                updatedAt
+        );
         return toOrderBookMarketConfigResponse(config);
     }
 

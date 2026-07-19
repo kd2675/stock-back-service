@@ -11,6 +11,7 @@ import stock.back.service.database.entity.StockAccountStatus;
 import stock.back.service.database.repository.StockAccountCashFlowRepository;
 import stock.back.service.database.repository.StockAccountRepository;
 import stock.back.service.market.biz.SimulationClockService;
+import stock.back.service.market.biz.MarketLedgerFreezeGuard;
 import stock.back.service.trading.vo.AccountCashAdjustmentRequest;
 
 import java.math.BigDecimal;
@@ -53,7 +54,8 @@ class AccountServiceTest {
                 stockAccountCashFlowRepository,
                 jdbcTemplate,
                 accountOrderCleanupService,
-                simulationClockService
+                simulationClockService,
+                mock(MarketLedgerFreezeGuard.class)
         );
         ReflectionTestUtils.setField(accountService, "openingGrantAmount", new BigDecimal("10000000"));
     }

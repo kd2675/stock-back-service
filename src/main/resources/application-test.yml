@@ -23,6 +23,8 @@ eureka:
     fetchRegistry: false
 
 stock:
+  schema-readiness:
+    enabled: false
   market:
     price-stream:
       redis-listener-enabled: false

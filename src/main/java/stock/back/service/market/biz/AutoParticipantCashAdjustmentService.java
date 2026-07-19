@@ -26,6 +26,7 @@ public class AutoParticipantCashAdjustmentService {
     private final StockAccountRepository stockAccountRepository;
     private final StockAccountCashFlowRepository stockAccountCashFlowRepository;
     private final SimulationClockService simulationClockService;
+    private final MarketLedgerFreezeGuard marketLedgerFreezeGuard;
 
     @Transactional
     public AutoParticipantCashAdjustmentResponse adjustAutoParticipantCash(
@@ -52,6 +53,7 @@ public class AutoParticipantCashAdjustmentService {
             throw StockException.badRequest("Adjustment type must be DEPOSIT or WITHDRAW");
         }
 
+        marketLedgerFreezeGuard.acquireMutationPermit("auto-participant cash adjustment");
         StockAccount account = stockAccountRepository.findByUserKeyAndStatusForUpdate(normalizedUserKey, StockAccountStatus.ACTIVE)
                 .orElseThrow(() -> StockException.notFound("Auto participant account is not opened yet: " + normalizedUserKey));
         LocalDateTime createdAt = simulationClockService.currentMarketDateTime();

@@ -1,5 +1,7 @@
 package stock.back.service.market.act;
 
+import java.util.List;
+
 import auth.common.core.constant.UserRole;
 import auth.common.core.context.RequirePrincipalRole;
 import auth.common.core.context.UserContext;
@@ -14,14 +16,16 @@ import org.springframework.web.bind.annotation.RestController;
 import stock.back.service.common.exception.StockException;
 import stock.back.service.market.biz.BatchJobRuntimeControlService;
 import stock.back.service.market.biz.BatchJobSignalService;
+import stock.back.service.market.biz.EodOperationsCommandService;
+import stock.back.service.market.biz.EodOperationsOverviewService;
 import stock.back.service.market.vo.AutoParticipantCashFlowControlRequest;
 import stock.back.service.market.vo.AutoParticipantCashFlowStatusResponse;
 import stock.back.service.market.vo.BatchJobRuntimeControlRequest;
 import stock.back.service.market.vo.BatchJobRuntimeStatusResponse;
+import stock.back.service.market.vo.EodOperationsOverviewResponse;
+import stock.back.service.market.vo.EodPhaseRetryResponse;
 import stock.back.service.market.vo.StockBatchJobRunResponse;
 import web.common.core.response.base.dto.ResponseDataDTO;
-
-import java.util.List;
 
 @RestController
 @RequestMapping("/api/stock/v1/markets")
@@ -30,6 +34,8 @@ public class MarketBatchJobController {
 
     private final BatchJobRuntimeControlService batchJobRuntimeControlService;
     private final BatchJobSignalService batchJobSignalService;
+    private final EodOperationsCommandService eodOperationsCommandService;
+    private final EodOperationsOverviewService eodOperationsOverviewService;
 
     @GetMapping("/auto-market/cash-flow")
     @RequirePrincipalRole(anyOf = {UserRole.ADMIN})
@@ -69,6 +75,24 @@ public class MarketBatchJobController {
     @RequirePrincipalRole(anyOf = {UserRole.ADMIN})
     public ResponseDataDTO<StockBatchJobRunResponse> runMarketCloseRollover(UserContext userContext) {
         return ResponseDataDTO.of(batchJobSignalService.enqueueMarketCloseRollover(userContext.getUserKey()));
+    }
+
+    @GetMapping("/batch-jobs/eod/overview")
+    @RequirePrincipalRole(anyOf = {UserRole.ADMIN})
+    public ResponseDataDTO<EodOperationsOverviewResponse> getEodOperationsOverview() {
+        return ResponseDataDTO.of(eodOperationsOverviewService.overview());
+    }
+
+    @PostMapping("/batch-jobs/eod/cycles/{cycleId}/retry")
+    @RequirePrincipalRole(anyOf = {UserRole.ADMIN})
+    public ResponseDataDTO<EodPhaseRetryResponse> retryFailedEodPhase(
+            @PathVariable long cycleId,
+            UserContext userContext
+    ) {
+        return ResponseDataDTO.of(eodOperationsCommandService.retryFailedPhase(
+                cycleId,
+                userContext.getUserKey()
+        ));
     }
 
     @GetMapping("/batch-jobs/runtime-controls")

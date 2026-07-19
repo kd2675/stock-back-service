@@ -8,7 +8,7 @@ import org.springframework.stereotype.Service;
 import stock.back.service.database.entity.AutoParticipantProfileType;
 import stock.back.service.market.vo.AutoMarketStatusResponse;
 
-import java.time.LocalDateTime;
+import java.time.LocalDate;
 
 @Service
 class AutoMarketSummaryStatusQuery {
@@ -39,8 +39,7 @@ class AutoMarketSummaryStatusQuery {
     }
 
     AutoMarketStatusResponse getSummaryStatus(boolean includeRuntimeMetrics, boolean includeSalaryEligibility) {
-        LocalDateTime todayStart = simulationClockService.currentMarketDayStart();
-        LocalDateTime todayEnd = simulationClockService.currentMarketDateTime();
+        LocalDate todayDate = simulationClockService.currentMarketDateTime().toLocalDate();
         String runtimeMetricSql = includeRuntimeMetrics
                 ? """
                        (select count(*)
@@ -55,18 +54,13 @@ class AutoMarketSummaryStatusQuery {
                                   and p.enabled = true
                                   and p.withdrawn_at is null
                            )) as open_auto_order_count,
-                       (select count(*)
-                          from stock_execution e
-                         where e.executed_at >= :todayStart
-                           and e.executed_at <= :todayEnd
-                           and exists (
-                               select 1
-                                 from stock_account a
-                                 join stock_auto_participant p on p.user_key = a.user_key
-                                where a.id = e.account_id
-                                  and p.enabled = true
-                                  and p.withdrawn_at is null
-                           )) as today_auto_execution_count
+                       (select coalesce(sum(summary.execution_count), 0)
+                          from stock_execution_account_day_summary summary
+                          join stock_account a on a.id = summary.account_id
+                          join stock_auto_participant p on p.user_key = a.user_key
+                         where summary.simulation_trade_date = :todayDate
+                           and p.enabled = true
+                           and p.withdrawn_at is null) as today_auto_execution_count
                         """
                 : """
                        0 as open_auto_order_count,
@@ -93,8 +87,7 @@ class AutoMarketSummaryStatusQuery {
                 """.formatted(salaryEligibilitySql, runtimeMetricSql);
         if (includeRuntimeMetrics) {
             return jdbcClient.sql(sql)
-                    .param("todayStart", todayStart)
-                    .param("todayEnd", todayEnd)
+                    .param("todayDate", todayDate)
                     .query((rs, rowNum) -> AutoMarketStatusResponseMapper.toSummaryStatus(rs, AutoParticipantProfileType.values().length))
                     .single();
         }
@@ -107,5 +100,23 @@ class AutoMarketSummaryStatusQuery {
         return jdbcClient.sql(SALARY_ELIGIBLE_PARTICIPANT_COUNT_SQL)
                 .query(Long.class)
                 .single();
+    }
+
+    long countTodayAutoExecutions(LocalDate simulationTradeDate) {
+        Long executionCount = jdbcClient.sql(
+                        """
+                        select coalesce(sum(summary.execution_count), 0)
+                          from stock_execution_account_day_summary summary
+                          join stock_account a on a.id = summary.account_id
+                          join stock_auto_participant p on p.user_key = a.user_key
+                         where summary.simulation_trade_date = ?
+                           and p.enabled = true
+                           and p.withdrawn_at is null
+                        """
+                )
+                .param(simulationTradeDate)
+                .query(Long.class)
+                .single();
+        return executionCount == null ? 0L : executionCount;
     }
 }

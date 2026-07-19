@@ -18,4 +18,17 @@ public interface StockHoldingRepository extends JpaRepository<StockHolding, Long
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select h from StockHolding h where h.accountId = :accountId and h.symbol = :symbol")
     Optional<StockHolding> findByAccountIdAndSymbolForUpdate(@Param("accountId") Long accountId, @Param("symbol") String symbol);
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("""
+            select h
+              from StockHolding h
+             where h.accountId = :accountId
+               and h.symbol in :symbols
+             order by h.symbol asc
+            """)
+    List<StockHolding> findByAccountIdAndSymbolsForUpdate(
+            @Param("accountId") Long accountId,
+            @Param("symbols") List<String> symbols
+    );
 }

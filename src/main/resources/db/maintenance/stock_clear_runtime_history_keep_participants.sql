@@ -20,10 +20,23 @@ UPDATE stock_account
 
 TRUNCATE TABLE stock_batch_job_signal;
 
+TRUNCATE TABLE stock_market_session_fence;
+TRUNCATE TABLE stock_market_business_state;
+TRUNCATE TABLE stock_close_open_order_snapshot;
+TRUNCATE TABLE stock_close_open_order_summary;
+TRUNCATE TABLE stock_close_price_snapshot;
+TRUNCATE TABLE stock_close_account_snapshot;
+TRUNCATE TABLE stock_post_close_cycle_metric;
+TRUNCATE TABLE stock_post_close_readiness_check;
+TRUNCATE TABLE stock_post_close_phase_attempt;
+TRUNCATE TABLE stock_post_close_cycle;
+
+TRUNCATE TABLE stock_corporate_action_processing;
 TRUNCATE TABLE stock_corporate_action_entitlement;
 TRUNCATE TABLE stock_execution;
 TRUNCATE TABLE stock_execution_account_day_summary;
 TRUNCATE TABLE stock_account_cash_flow;
+TRUNCATE TABLE stock_auto_participant_cash_flow_run;
 TRUNCATE TABLE stock_holding_snapshot;
 TRUNCATE TABLE stock_execution_daily_account_snapshot;
 TRUNCATE TABLE stock_order_book_daily_snapshot;
@@ -66,6 +79,62 @@ ON DUPLICATE KEY UPDATE
        last_started_at = null,
        last_heartbeat_at = null,
        updated_at = VALUES(updated_at);
+
+INSERT INTO stock_market_business_state(
+    state_id,
+    active_business_date,
+    preparing_business_date,
+    raw_simulation_date,
+    version,
+    created_at,
+    updated_at
+)
+SELECT 'DEFAULT',
+       base_simulation_date,
+       null,
+       base_simulation_date,
+       0,
+       NOW(),
+       NOW()
+  FROM stock_simulation_clock
+ WHERE clock_id = 'DEFAULT';
+
+INSERT INTO stock_market_session_fence(
+    market_type,
+    symbol,
+    business_date,
+    session_epoch,
+    session_state,
+    state_changed_at,
+    version,
+    created_at,
+    updated_at
+)
+SELECT 'VIRTUAL_PRICE',
+       c.symbol,
+       s.active_business_date,
+       1,
+       'CLOSED',
+       NOW(),
+       0,
+       NOW(),
+       NOW()
+  FROM stock_virtual_market_config c
+ CROSS JOIN stock_market_business_state s
+ WHERE s.state_id = 'DEFAULT'
+UNION ALL
+SELECT 'ORDER_BOOK',
+       c.symbol,
+       s.active_business_date,
+       1,
+       'CLOSED',
+       NOW(),
+       0,
+       NOW(),
+       NOW()
+  FROM stock_order_book_market_config c
+ CROSS JOIN stock_market_business_state s
+ WHERE s.state_id = 'DEFAULT';
 
 INSERT INTO stock_price(symbol, current_price, previous_close, price_time, provider)
 SELECT i.symbol,

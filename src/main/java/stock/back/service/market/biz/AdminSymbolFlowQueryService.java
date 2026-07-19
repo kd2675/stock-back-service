@@ -70,17 +70,17 @@ public class AdminSymbolFlowQueryService {
         this.simulationClockService = simulationClockService;
     }
 
-    @Transactional(readOnly = true)
+    @Transactional(readOnly = true, timeout = 10)
     public AdminSymbolFlowListResponse getAdminSymbolFlows(int symbolFlowLimit) {
         return getAdminSymbolFlows(symbolFlowLimit, AdminFundFlowScope.RECENT_SIMULATION_DAY);
     }
 
-    @Transactional(readOnly = true)
+    @Transactional(readOnly = true, timeout = 10)
     public AdminSymbolFlowListResponse getAdminSymbolFlows(int symbolFlowLimit, AdminFundFlowScope scope) {
         return getAdminSymbolFlows(symbolFlowLimit, scope, false, 0);
     }
 
-    @Transactional(readOnly = true)
+    @Transactional(readOnly = true, timeout = 10)
     public AdminSymbolFlowListResponse getAdminSymbolFlows(
             int symbolFlowLimit,
             AdminFundFlowScope scope,
@@ -96,7 +96,7 @@ public class AdminSymbolFlowQueryService {
         );
     }
 
-    @Transactional(readOnly = true)
+    @Transactional(readOnly = true, timeout = 10)
     public AdminSymbolFlowListResponse getAdminSymbolFlows(
             int symbolFlowLimit,
             AdminFundFlowScope scope,
@@ -124,7 +124,7 @@ public class AdminSymbolFlowQueryService {
         return new AdminSymbolFlowListResponse(totalCount, symbolFlows, dailyCumulativeFlows);
     }
 
-    @Transactional(readOnly = true)
+    @Transactional(readOnly = true, timeout = 10)
     public long countSymbols() {
         return stockOrderBookInstrumentRepository.count();
     }
@@ -161,22 +161,8 @@ public class AdminSymbolFlowQueryService {
     ) {
         String sql = """
                 with
-                """ + priceSourceCteSql(priceSnapshotTradeDate) + """
-                  execution_flow as (
-                       select symbol,
-                              sum(case when side = 'BUY' then 1 else 0 end) as execution_count,
-                              sum(case when side = 'BUY' then quantity else 0 end) as execution_quantity,
-                              sum(case when side = 'BUY' then gross_amount else 0 end) as turnover_amount,
-                              sum(case when side = 'BUY' then quantity else 0 end) as buy_quantity,
-                              sum(case when side = 'SELL' then quantity else 0 end) as sell_quantity,
-                              sum(case when side = 'BUY' then net_amount else 0 end) as buy_net_amount,
-                              sum(case when side = 'SELL' then net_amount else 0 end) as sell_net_amount,
-                              max(executed_at) as last_executed_at
-                         from stock_execution
-                        where source = 'INTERNAL_ORDER_BOOK'
-                """ + executionWindow.predicateSql() + """
-                        group by symbol
-                  ),
+                """ + priceSourceCteSql(priceSnapshotTradeDate)
+                + executionFlowCteSql(executionWindow) + """
                   selected_symbols as (
                        select i.symbol
                          from stock_order_book_instrument i
@@ -241,22 +227,8 @@ public class AdminSymbolFlowQueryService {
     ) {
         String sql = """
                 with
-                """ + priceSourceCteSql(priceSnapshotTradeDate) + """
-                  execution_flow as (
-                       select symbol,
-                              sum(case when side = 'BUY' then 1 else 0 end) as execution_count,
-                              sum(case when side = 'BUY' then quantity else 0 end) as execution_quantity,
-                              sum(case when side = 'BUY' then gross_amount else 0 end) as turnover_amount,
-                              sum(case when side = 'BUY' then quantity else 0 end) as buy_quantity,
-                              sum(case when side = 'SELL' then quantity else 0 end) as sell_quantity,
-                              sum(case when side = 'BUY' then net_amount else 0 end) as buy_net_amount,
-                              sum(case when side = 'SELL' then net_amount else 0 end) as sell_net_amount,
-                              max(executed_at) as last_executed_at
-                         from stock_execution
-                        where source = 'INTERNAL_ORDER_BOOK'
-                """ + executionWindow.predicateSql() + """
-                        group by symbol
-                  ),
+                """ + priceSourceCteSql(priceSnapshotTradeDate)
+                + executionFlowCteSql(executionWindow) + """
                   open_order_flow as (
                        select symbol,
                               count(*) as open_order_count,
@@ -335,11 +307,24 @@ public class AdminSymbolFlowQueryService {
                        select d.*
                          from stock_order_book_daily_snapshot d
                          join (
-                              select symbol,
-                                     max(close_run_id) as close_run_id
-                                from stock_order_book_daily_snapshot
-                               where simulation_trade_date = ?
-                               group by symbol
+                              select snapshot.symbol,
+                                     max(snapshot.close_run_id) as close_run_id
+                                from stock_order_book_daily_snapshot snapshot
+                                join stock_market_close_run close_run
+                                  on close_run.id = snapshot.close_run_id
+                                 and close_run.symbol is null
+                                 and close_run.status = 'COMPLETED'
+                                join stock_post_close_cycle close_cycle
+                                  on close_cycle.close_run_id = close_run.id
+                                 and close_cycle.scope_type = 'FULL_MARKET'
+                                 and close_cycle.scope_key = 'ALL'
+                                 and close_cycle.phase in (
+                                     'REPORTS_AGGREGATED', 'PREOPEN_SECURITY_TRANSFORMS_APPLIED',
+                                     'MARKET_DATA_PREPARED', 'AUTO_MARKET_PREPARED',
+                                     'READY_TO_OPEN', 'COMPLETED'
+                                 )
+                               where snapshot.simulation_trade_date = ?
+                               group by snapshot.symbol
                          ) latest on latest.symbol = d.symbol and latest.close_run_id = d.close_run_id
                         where d.simulation_trade_date = ?
                 )
@@ -397,11 +382,24 @@ public class AdminSymbolFlowQueryService {
                               d.previous_close
                          from stock_order_book_daily_snapshot d
                          join (
-                              select symbol,
-                                     max(close_run_id) as close_run_id
-                                from stock_order_book_daily_snapshot
-                               where simulation_trade_date = ?
-                               group by symbol
+                              select snapshot.symbol,
+                                     max(snapshot.close_run_id) as close_run_id
+                                from stock_order_book_daily_snapshot snapshot
+                                join stock_market_close_run close_run
+                                  on close_run.id = snapshot.close_run_id
+                                 and close_run.symbol is null
+                                 and close_run.status = 'COMPLETED'
+                                join stock_post_close_cycle close_cycle
+                                  on close_cycle.close_run_id = close_run.id
+                                 and close_cycle.scope_type = 'FULL_MARKET'
+                                 and close_cycle.scope_key = 'ALL'
+                                 and close_cycle.phase in (
+                                     'REPORTS_AGGREGATED', 'PREOPEN_SECURITY_TRANSFORMS_APPLIED',
+                                     'MARKET_DATA_PREPARED', 'AUTO_MARKET_PREPARED',
+                                     'READY_TO_OPEN', 'COMPLETED'
+                                 )
+                               where snapshot.simulation_trade_date = ?
+                               group by snapshot.symbol
                          ) latest on latest.symbol = d.symbol and latest.close_run_id = d.close_run_id
                   ),
                   price_source as (
@@ -438,8 +436,11 @@ public class AdminSymbolFlowQueryService {
             JdbcClient.StatementSpec statement,
             SymbolFlowExecutionWindow executionWindow
     ) {
-        if (executionWindow.unbounded()) {
-            return statement;
+        if (executionWindow.allTimeReadModel()) {
+            return statement
+                    .param(executionWindow.rangeStart().toLocalDate())
+                    .param(executionWindow.rangeStart())
+                    .param(executionWindow.rangeEnd());
         }
         return statement
                 .param(executionWindow.rangeStart())
@@ -448,7 +449,10 @@ public class AdminSymbolFlowQueryService {
 
     private SymbolFlowExecutionWindow symbolFlowExecutionWindow(AdminFundFlowScope scope) {
         if (scope == AdminFundFlowScope.ALL) {
-            return SymbolFlowExecutionWindow.all();
+            return SymbolFlowExecutionWindow.allTime(
+                    simulationClockService.currentMarketDayStart(),
+                    simulationClockService.currentMarketDateTime()
+            );
         }
         return SymbolFlowExecutionWindow.recent(
                 simulationClockService.currentMarketDayStart(),
@@ -460,27 +464,112 @@ public class AdminSymbolFlowQueryService {
         return scope == null ? AdminFundFlowScope.RECENT_SIMULATION_DAY : scope;
     }
 
+    private String executionFlowCteSql(SymbolFlowExecutionWindow executionWindow) {
+        if (!executionWindow.allTimeReadModel()) {
+            return """
+                  execution_flow as (
+                       select symbol,
+                              sum(case when side = 'BUY' then 1 else 0 end) as execution_count,
+                              sum(case when side = 'BUY' then quantity else 0 end) as execution_quantity,
+                              sum(case when side = 'BUY' then gross_amount else 0 end) as turnover_amount,
+                              sum(case when side = 'BUY' then quantity else 0 end) as buy_quantity,
+                              sum(case when side = 'SELL' then quantity else 0 end) as sell_quantity,
+                              sum(case when side = 'BUY' then net_amount else 0 end) as buy_net_amount,
+                              sum(case when side = 'SELL' then net_amount else 0 end) as sell_net_amount,
+                              max(executed_at) as last_executed_at
+                         from stock_execution
+                        where source = 'INTERNAL_ORDER_BOOK'
+                          and executed_at >= ?
+                          and executed_at < ?
+                        group by symbol
+                  ),
+            """;
+        }
+        return """
+                  historical_execution_flow as (
+                       select snapshot.symbol,
+                              sum(snapshot.execution_count) as execution_count,
+                              sum(snapshot.execution_quantity) as execution_quantity,
+                              sum(snapshot.turnover_amount) as turnover_amount,
+                              sum(snapshot.buy_quantity) as buy_quantity,
+                              sum(snapshot.sell_quantity) as sell_quantity,
+                              sum(snapshot.buy_net_amount) as buy_net_amount,
+                              sum(snapshot.sell_net_amount) as sell_net_amount,
+                              max(snapshot.last_executed_at) as last_executed_at
+                         from stock_order_book_daily_snapshot snapshot
+                         join (
+                              select candidate.symbol,
+                                     candidate.simulation_trade_date,
+                                     max(candidate.close_run_id) as close_run_id
+                                from stock_order_book_daily_snapshot candidate
+                                join stock_market_close_run close_run
+                                  on close_run.id = candidate.close_run_id
+                                 and close_run.symbol is null
+                                 and close_run.status = 'COMPLETED'
+                                join stock_post_close_cycle close_cycle
+                                  on close_cycle.close_run_id = close_run.id
+                                 and close_cycle.scope_type = 'FULL_MARKET'
+                                 and close_cycle.scope_key = 'ALL'
+                                 and close_cycle.phase in (
+                                     'REPORTS_AGGREGATED', 'PREOPEN_SECURITY_TRANSFORMS_APPLIED',
+                                     'MARKET_DATA_PREPARED', 'AUTO_MARKET_PREPARED',
+                                     'READY_TO_OPEN', 'COMPLETED'
+                                 )
+                               where candidate.simulation_trade_date < ?
+                               group by candidate.symbol, candidate.simulation_trade_date
+                         ) latest
+                           on latest.symbol = snapshot.symbol
+                          and latest.simulation_trade_date = snapshot.simulation_trade_date
+                          and latest.close_run_id = snapshot.close_run_id
+                        group by snapshot.symbol
+                  ),
+                  current_execution_flow as (
+                       select symbol,
+                              sum(case when side = 'BUY' then 1 else 0 end) as execution_count,
+                              sum(case when side = 'BUY' then quantity else 0 end) as execution_quantity,
+                              sum(case when side = 'BUY' then gross_amount else 0 end) as turnover_amount,
+                              sum(case when side = 'BUY' then quantity else 0 end) as buy_quantity,
+                              sum(case when side = 'SELL' then quantity else 0 end) as sell_quantity,
+                              sum(case when side = 'BUY' then net_amount else 0 end) as buy_net_amount,
+                              sum(case when side = 'SELL' then net_amount else 0 end) as sell_net_amount,
+                              max(executed_at) as last_executed_at
+                         from stock_execution
+                        where source = 'INTERNAL_ORDER_BOOK'
+                          and executed_at >= ?
+                          and executed_at < ?
+                        group by symbol
+                  ),
+                  execution_flow as (
+                       select combined.symbol,
+                              sum(combined.execution_count) as execution_count,
+                              sum(combined.execution_quantity) as execution_quantity,
+                              sum(combined.turnover_amount) as turnover_amount,
+                              sum(combined.buy_quantity) as buy_quantity,
+                              sum(combined.sell_quantity) as sell_quantity,
+                              sum(combined.buy_net_amount) as buy_net_amount,
+                              sum(combined.sell_net_amount) as sell_net_amount,
+                              max(combined.last_executed_at) as last_executed_at
+                         from (
+                              select * from historical_execution_flow
+                              union all
+                              select * from current_execution_flow
+                         ) combined
+                        group by combined.symbol
+                  ),
+            """;
+    }
+
     private record SymbolFlowExecutionWindow(
-            boolean unbounded,
+            boolean allTimeReadModel,
             LocalDateTime rangeStart,
             LocalDateTime rangeEnd
     ) {
-        private static SymbolFlowExecutionWindow all() {
-            return new SymbolFlowExecutionWindow(true, null, null);
+        private static SymbolFlowExecutionWindow allTime(LocalDateTime rangeStart, LocalDateTime rangeEnd) {
+            return new SymbolFlowExecutionWindow(true, rangeStart, rangeEnd);
         }
 
         private static SymbolFlowExecutionWindow recent(LocalDateTime rangeStart, LocalDateTime rangeEnd) {
             return new SymbolFlowExecutionWindow(false, rangeStart, rangeEnd);
-        }
-
-        private String predicateSql() {
-            if (unbounded) {
-                return "";
-            }
-            return """
-                   and executed_at >= ?
-                   and executed_at < ?
-            """;
         }
     }
 }

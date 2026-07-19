@@ -13,6 +13,7 @@ import stock.back.service.database.entity.StockAccountStatus;
 import stock.back.service.database.repository.StockAccountCashFlowRepository;
 import stock.back.service.database.repository.StockAccountRepository;
 import stock.back.service.market.biz.SimulationClockService;
+import stock.back.service.market.biz.MarketLedgerFreezeGuard;
 import stock.back.service.trading.vo.AccountCashAdjustmentRequest;
 import stock.back.service.trading.vo.AccountCashAdjustmentResponse;
 import stock.back.service.trading.vo.AccountReconnectRequest;
@@ -35,6 +36,7 @@ public class AccountService {
     private final JdbcTemplate jdbcTemplate;
     private final AccountOrderCleanupService accountOrderCleanupService;
     private final SimulationClockService simulationClockService;
+    private final MarketLedgerFreezeGuard marketLedgerFreezeGuard;
     private final AccountRecoveryCredentialGenerator credentialGenerator = new AccountRecoveryCredentialGenerator();
 
     @Value("${stock.trading.opening-grant-amount:10000000}")
@@ -93,6 +95,7 @@ public class AccountService {
 
     @Transactional
     public AccountResponse detachAccount(String userKey) {
+        marketLedgerFreezeGuard.acquireMutationPermit("account detach");
         StockAccount account = requireAccountForUpdate(userKey);
         accountOrderCleanupService.cancelOpenOrdersForDetach(account);
         account.assignAccountCodeIfMissing(credentialGenerator.generateAccountCode());
@@ -111,6 +114,7 @@ public class AccountService {
     @Transactional(noRollbackFor = StockException.class)
     public AccountResponse reconnectAccount(String userKey, AccountReconnectRequest request) {
         validateUserKey(userKey);
+        marketLedgerFreezeGuard.acquireMutationPermit("account reconnect");
         if (findAccount(userKey).isPresent()) {
             throw StockException.conflict("Active account already exists");
         }
@@ -156,6 +160,7 @@ public class AccountService {
             throw StockException.badRequest("Adjustment type must be DEPOSIT or WITHDRAW");
         }
 
+        marketLedgerFreezeGuard.acquireMutationPermit("user cash adjustment");
         StockAccount account = stockAccountRepository.findByUserKeyAndStatusForUpdate(userKey, StockAccountStatus.ACTIVE)
                 .orElseThrow(() -> StockException.notFound("User account is not opened yet: " + userKey));
         LocalDateTime createdAt = simulationClockService.currentMarketDateTime();
@@ -208,6 +213,7 @@ public class AccountService {
     }
 
     private StockAccount openAccountAfterCreateRace(String userKey) {
+        marketLedgerFreezeGuard.acquireMutationPermit("account opening");
         try {
             String recoveryCode = credentialGenerator.generateRecoveryCode();
             LocalDateTime createdAt = simulationClockService.currentMarketDateTime();
@@ -235,6 +241,7 @@ public class AccountService {
     }
 
     private StockAccount openAccountForUpdateAfterCreateRace(String userKey) {
+        marketLedgerFreezeGuard.acquireMutationPermit("account opening");
         try {
             insertAccount(userKey);
         } catch (DataIntegrityViolationException ex) {

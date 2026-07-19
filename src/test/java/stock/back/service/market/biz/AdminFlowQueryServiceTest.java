@@ -103,6 +103,19 @@ class AdminFlowQueryServiceTest {
         insertSymbolExecutionAt(jdbcTemplate, 2L, "STOCK001", "SELL", 3L, "300.00", "295.00", SIMULATION_DAY_START.minusMinutes(1));
         insertSymbolExecutionAt(jdbcTemplate, 3L, "STOCK001", "BUY", 2L, "200.00", "190.00", SIMULATION_NOW.minusMinutes(10));
         insertSymbolExecutionAt(jdbcTemplate, 4L, "STOCK001", "SELL", 2L, "200.00", "195.00", SIMULATION_NOW.minusMinutes(10));
+        insertDailySnapshot(
+                jdbcTemplate,
+                100L,
+                "STOCK001",
+                SIMULATION_DAY_START.minusDays(1).toLocalDate(),
+                "95.00",
+                "100.00",
+                1L,
+                3L,
+                "300.00",
+                3L,
+                3L
+        );
 
         var response = service.getAdminSymbolFlows(0, AdminFundFlowScope.ALL);
 
@@ -269,6 +282,36 @@ class AdminFlowQueryServiceTest {
     }
 
     @Test
+    void getAdminTotalAssetHistory_partialSettlement_doesNotExposeUncommittedCycleDate() {
+        JdbcTemplate jdbcTemplate = createJdbcTemplate("admin_flow_query_service_total_asset_partial_cycle_test");
+        AdminFlowQueryService service = createService(jdbcTemplate);
+        LocalDate completedDate = SIMULATION_DAY_START.toLocalDate().minusDays(1);
+        LocalDate partialDate = SIMULATION_DAY_START.toLocalDate();
+        insertAccount(jdbcTemplate, 1L, "history-user", "ACTIVE", "0.00");
+        insertPortfolioSnapshot(jdbcTemplate, 1L, 1L, completedDate, 1000L);
+        insertPostCloseCycle(jdbcTemplate, 10L, "LEDGER_FROZEN");
+        insertCyclePortfolioSnapshot(jdbcTemplate, 2L, 10L, 100L, 1L, partialDate, 2000L);
+
+        var page = service.getAdminTotalAssetHistory(0);
+
+        assertThat(page.content()).extracting(point -> point.snapshotDate()).containsExactly(completedDate);
+    }
+
+    @Test
+    void getAdminTotalAssetHistory_settledCycle_exposesCompletedCycleDate() {
+        JdbcTemplate jdbcTemplate = createJdbcTemplate("admin_flow_query_service_total_asset_settled_cycle_test");
+        AdminFlowQueryService service = createService(jdbcTemplate);
+        LocalDate snapshotDate = SIMULATION_DAY_START.toLocalDate();
+        insertAccount(jdbcTemplate, 1L, "history-user", "ACTIVE", "0.00");
+        insertPostCloseCycle(jdbcTemplate, 10L, "PORTFOLIO_SETTLED");
+        insertCyclePortfolioSnapshot(jdbcTemplate, 1L, 10L, 100L, 1L, snapshotDate, 2000L);
+
+        var page = service.getAdminTotalAssetHistory(0);
+
+        assertThat(page.content()).extracting(point -> point.snapshotDate()).containsExactly(snapshotDate);
+    }
+
+    @Test
     void getAdminFlowOverview_recentSimulationDay_countsUntilCurrentSimulationTime() {
         JdbcTemplate jdbcTemplate = createJdbcTemplate("admin_flow_query_service_overview_recent_until_now_test");
         AdminFlowQueryService service = createService(jdbcTemplate);
@@ -386,6 +429,24 @@ class AdminFlowQueryServiceTest {
                 )
                 """);
         jdbcTemplate.execute("""
+                create table stock_market_close_run (
+                    id bigint primary key,
+                    symbol varchar(20),
+                    business_date date not null,
+                    status varchar(20) not null,
+                    completed_at timestamp
+                )
+                """);
+        jdbcTemplate.execute("""
+                create table stock_post_close_cycle (
+                    id bigint primary key,
+                    close_run_id bigint,
+                    scope_type varchar(20) not null,
+                    scope_key varchar(120) not null,
+                    phase varchar(60) not null
+                )
+                """);
+        jdbcTemplate.execute("""
                 create table stock_order_book_instrument (
                     symbol varchar(20) primary key,
                     name varchar(100) not null,
@@ -444,8 +505,30 @@ class AdminFlowQueryServiceTest {
                 )
                 """);
         jdbcTemplate.execute("""
+                create table stock_execution_account_day_summary (
+                    simulation_trade_date date not null,
+                    account_id bigint not null,
+                    execution_count bigint not null default 0,
+                    buy_quantity bigint not null default 0,
+                    sell_quantity bigint not null default 0,
+                    gross_amount decimal(19, 2) not null default 0,
+                    buy_gross_amount decimal(19, 2) not null default 0,
+                    sell_gross_amount decimal(19, 2) not null default 0,
+                    buy_net_amount decimal(19, 2) not null default 0,
+                    sell_net_amount decimal(19, 2) not null default 0,
+                    fee_amount decimal(19, 2) not null default 0,
+                    tax_amount decimal(19, 2) not null default 0,
+                    realized_profit decimal(19, 2) not null default 0,
+                    last_executed_at timestamp,
+                    updated_at timestamp not null,
+                    primary key (simulation_trade_date, account_id)
+                )
+                """);
+        jdbcTemplate.execute("""
                 create table portfolio_snapshot (
                     id bigint primary key,
+                    close_cycle_id bigint,
+                    close_run_id bigint,
                     account_id bigint not null,
                     snapshot_date date not null,
                     total_asset decimal(19, 2) not null,
@@ -548,6 +631,47 @@ class AdminFlowQueryServiceTest {
                 accountId == 1L ? 10L : 20L,
                 accountId == 1L ? 2L : 3L,
                 accountId == 1L ? 1L : 2L,
+                snapshotDate.atTime(18, 0)
+        );
+    }
+
+    private void insertPostCloseCycle(JdbcTemplate jdbcTemplate, long cycleId, String phase) {
+        jdbcTemplate.update(
+                "insert into stock_post_close_cycle(id, scope_type, scope_key, phase) values (?, 'FULL_MARKET', 'ALL', ?)",
+                cycleId,
+                phase
+        );
+    }
+
+    private void insertCyclePortfolioSnapshot(
+            JdbcTemplate jdbcTemplate,
+            long id,
+            long closeCycleId,
+            long closeRunId,
+            long accountId,
+            LocalDate snapshotDate,
+            long totalAsset
+    ) {
+        BigDecimal totalAssetAmount = BigDecimal.valueOf(totalAsset).setScale(2);
+        BigDecimal cashBalance = totalAssetAmount.divide(BigDecimal.valueOf(2));
+        jdbcTemplate.update(
+                """
+                insert into portfolio_snapshot(
+                    id, close_cycle_id, close_run_id, account_id, snapshot_date,
+                    total_asset, cash_balance, market_value,
+                    holding_quantity, reserved_sell_quantity, holding_position_count,
+                    return_rate, created_at
+                )
+                values (?, ?, ?, ?, ?, ?, ?, ?, 10, 2, 1, 0, ?)
+                """,
+                id,
+                closeCycleId,
+                closeRunId,
+                accountId,
+                snapshotDate,
+                totalAssetAmount,
+                cashBalance,
+                totalAssetAmount.subtract(cashBalance),
                 snapshotDate.atTime(18, 0)
         );
     }
@@ -686,6 +810,7 @@ class AdminFlowQueryServiceTest {
             String taxAmount,
             String realizedProfit
     ) {
+        LocalDateTime executedAt = SIMULATION_NOW.minusMinutes(id);
         jdbcTemplate.update(
                 """
                 insert into stock_execution(
@@ -700,7 +825,18 @@ class AdminFlowQueryServiceTest {
                 new BigDecimal(feeAmount),
                 new BigDecimal(taxAmount),
                 new BigDecimal(realizedProfit),
-                SIMULATION_NOW.minusMinutes(id)
+                executedAt
+        );
+        upsertExecutionDaySummary(
+                jdbcTemplate,
+                accountId,
+                side,
+                BigDecimal.ZERO,
+                new BigDecimal(netAmount),
+                new BigDecimal(feeAmount),
+                new BigDecimal(taxAmount),
+                new BigDecimal(realizedProfit),
+                executedAt
         );
     }
 
@@ -729,6 +865,103 @@ class AdminFlowQueryServiceTest {
                 new BigDecimal(feeAmount),
                 new BigDecimal(taxAmount),
                 new BigDecimal(realizedProfit),
+                executedAt
+        );
+        upsertExecutionDaySummary(
+                jdbcTemplate,
+                accountId,
+                side,
+                BigDecimal.ZERO,
+                new BigDecimal(netAmount),
+                new BigDecimal(feeAmount),
+                new BigDecimal(taxAmount),
+                new BigDecimal(realizedProfit),
+                executedAt
+        );
+    }
+
+    private void upsertExecutionDaySummary(
+            JdbcTemplate jdbcTemplate,
+            long accountId,
+            String side,
+            BigDecimal grossAmount,
+            BigDecimal netAmount,
+            BigDecimal feeAmount,
+            BigDecimal taxAmount,
+            BigDecimal realizedProfit,
+            LocalDateTime executedAt
+    ) {
+        boolean buy = "BUY".equals(side);
+        BigDecimal buyGrossAmount = buy ? grossAmount : BigDecimal.ZERO;
+        BigDecimal sellGrossAmount = buy ? BigDecimal.ZERO : grossAmount;
+        BigDecimal buyNetAmount = buy ? netAmount : BigDecimal.ZERO;
+        BigDecimal sellNetAmount = buy ? BigDecimal.ZERO : netAmount;
+        int updated = jdbcTemplate.update(
+                """
+                update stock_execution_account_day_summary
+                   set execution_count = execution_count + 1,
+                       buy_quantity = buy_quantity + ?,
+                       sell_quantity = sell_quantity + ?,
+                       gross_amount = gross_amount + ?,
+                       buy_gross_amount = buy_gross_amount + ?,
+                       sell_gross_amount = sell_gross_amount + ?,
+                       buy_net_amount = buy_net_amount + ?,
+                       sell_net_amount = sell_net_amount + ?,
+                       fee_amount = fee_amount + ?,
+                       tax_amount = tax_amount + ?,
+                       realized_profit = realized_profit + ?,
+                       last_executed_at = case
+                           when last_executed_at is null or last_executed_at < ? then ?
+                           else last_executed_at
+                       end,
+                       updated_at = ?
+                 where simulation_trade_date = ?
+                   and account_id = ?
+                """,
+                buy ? 1L : 0L,
+                buy ? 0L : 1L,
+                grossAmount,
+                buyGrossAmount,
+                sellGrossAmount,
+                buyNetAmount,
+                sellNetAmount,
+                feeAmount,
+                taxAmount,
+                realizedProfit,
+                executedAt,
+                executedAt,
+                executedAt,
+                executedAt.toLocalDate(),
+                accountId
+        );
+        if (updated > 0) {
+            return;
+        }
+        jdbcTemplate.update(
+                """
+                insert into stock_execution_account_day_summary(
+                    simulation_trade_date, account_id, execution_count,
+                    buy_quantity, sell_quantity, gross_amount,
+                    buy_gross_amount, sell_gross_amount,
+                    buy_net_amount, sell_net_amount,
+                    fee_amount, tax_amount, realized_profit,
+                    last_executed_at, updated_at
+                )
+                values (?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                executedAt.toLocalDate(),
+                accountId,
+                buy ? 1L : 0L,
+                buy ? 0L : 1L,
+                grossAmount,
+                buyGrossAmount,
+                sellGrossAmount,
+                buyNetAmount,
+                sellNetAmount,
+                feeAmount,
+                taxAmount,
+                realizedProfit,
+                executedAt,
                 executedAt
         );
     }
@@ -774,6 +1007,23 @@ class AdminFlowQueryServiceTest {
             long buyQuantity,
             long sellQuantity
     ) {
+        jdbcTemplate.update(
+                """
+                insert into stock_market_close_run(id, symbol, business_date, status, completed_at)
+                values (?, null, ?, 'COMPLETED', ?)
+                """,
+                closeRunId,
+                simulationTradeDate,
+                SIMULATION_NOW
+        );
+        jdbcTemplate.update(
+                """
+                insert into stock_post_close_cycle(id, close_run_id, scope_type, scope_key, phase)
+                values (?, ?, 'FULL_MARKET', 'ALL', 'REPORTS_AGGREGATED')
+                """,
+                closeRunId,
+                closeRunId
+        );
         jdbcTemplate.update(
                 """
                 insert into stock_order_book_daily_snapshot(

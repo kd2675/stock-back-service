@@ -5,18 +5,15 @@ import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import stock.back.service.database.entity.ExecutionSource;
 import stock.back.service.database.entity.MarketType;
 import stock.back.service.database.entity.OrderStatus;
-import stock.back.service.database.entity.OrderSide;
-import stock.back.service.database.repository.StockExecutionMarketViewRepository;
 import stock.back.service.database.repository.StockOrderBookInstrumentRepository;
 import stock.back.service.database.repository.StockOrderBookMarketConfigRepository;
 import stock.back.service.database.repository.StockOrderRepository;
 import stock.back.service.market.vo.OrderBookMarketStatusResponse;
 import stock.back.service.market.vo.SymbolMarketConfigResponse;
 
-import java.time.LocalDateTime;
+import java.time.LocalDate;
 import java.util.List;
 
 @Service
@@ -26,7 +23,6 @@ public class OrderBookMarketStatusQueryService {
     private final StockOrderBookMarketConfigRepository stockOrderBookMarketConfigRepository;
     private final StockOrderBookInstrumentRepository stockOrderBookInstrumentRepository;
     private final StockOrderRepository stockOrderRepository;
-    private final StockExecutionMarketViewRepository stockExecutionMarketViewRepository;
     private final SimulationClockService simulationClockService;
     private final SimulationMarketSessionService simulationMarketSessionService;
 
@@ -35,7 +31,6 @@ public class OrderBookMarketStatusQueryService {
             StockOrderBookMarketConfigRepository stockOrderBookMarketConfigRepository,
             StockOrderBookInstrumentRepository stockOrderBookInstrumentRepository,
             StockOrderRepository stockOrderRepository,
-            StockExecutionMarketViewRepository stockExecutionMarketViewRepository,
             SimulationClockService simulationClockService,
             SimulationMarketSessionService simulationMarketSessionService
     ) {
@@ -43,7 +38,6 @@ public class OrderBookMarketStatusQueryService {
         this.stockOrderBookMarketConfigRepository = stockOrderBookMarketConfigRepository;
         this.stockOrderBookInstrumentRepository = stockOrderBookInstrumentRepository;
         this.stockOrderRepository = stockOrderRepository;
-        this.stockExecutionMarketViewRepository = stockExecutionMarketViewRepository;
         this.simulationClockService = simulationClockService;
         this.simulationMarketSessionService = simulationMarketSessionService;
     }
@@ -70,12 +64,7 @@ public class OrderBookMarketStatusQueryService {
         List<OrderStatus> openStatuses = List.of(OrderStatus.PENDING, OrderStatus.PARTIALLY_FILLED);
         long openOrderCount = stockOrderRepository.countByMarketTypeAndStatusIn(MarketType.ORDER_BOOK, openStatuses);
         long todayExecutionCount = includeTodayExecution
-                ? stockExecutionMarketViewRepository.countExecutionsBetweenBySourceAndSide(
-                        simulationClockService.currentMarketDayStart(),
-                        simulationClockService.currentMarketDateTime(),
-                        ExecutionSource.INTERNAL_ORDER_BOOK,
-                        OrderSide.BUY
-                )
+                ? countTodayInternalOrderBookExecutions()
                 : 0L;
         long configCount = configs.size();
         long openConfigCount = effectiveOpenConfigCount(configs.stream().filter(OrderBookMarketStatusResponseMapper::isOpen).count());
@@ -91,16 +80,12 @@ public class OrderBookMarketStatusQueryService {
     }
 
     private OrderBookMarketStatusResponse getOrderBookMarketSummaryStatus(boolean includeTodayExecution) {
-        LocalDateTime todayStart = simulationClockService.currentMarketDayStart();
-        LocalDateTime todayEnd = simulationClockService.currentMarketDateTime();
+        LocalDate todayDate = simulationClockService.currentMarketDateTime().toLocalDate();
         String todayExecutionSql = includeTodayExecution
                 ? """
-                         (select count(*)
-                            from stock_execution e
-                           where e.executed_at >= :todayStart
-                             and e.executed_at <= :todayEnd
-                             and e.source = 'INTERNAL_ORDER_BOOK'
-                             and e.side = 'BUY') as today_execution_count
+                         (select coalesce(sum(summary.execution_count), 0) / 2
+                            from stock_execution_account_day_summary summary
+                           where summary.simulation_trade_date = :todayDate) as today_execution_count
                         """
                 : "0 as today_execution_count";
         String sql = """
@@ -120,8 +105,7 @@ public class OrderBookMarketStatusQueryService {
                 """.formatted(todayExecutionSql);
         if (includeTodayExecution) {
             OrderBookMarketStatusResponse response = jdbcClient.sql(sql)
-                    .param("todayStart", todayStart)
-                    .param("todayEnd", todayEnd)
+                    .param("todayDate", todayDate)
                     .query((rs, rowNum) -> OrderBookMarketStatusResponseMapper.toSummaryStatus(rs))
                     .single();
             return withEffectiveSession(response);
@@ -130,6 +114,25 @@ public class OrderBookMarketStatusQueryService {
                 .query((rs, rowNum) -> OrderBookMarketStatusResponseMapper.toSummaryStatus(rs))
                 .single();
         return withEffectiveSession(response);
+    }
+
+    /**
+     * Internal order-book matching persists one BUY and one SELL account delta per trade. Reading the
+     * asynchronously flushed day summary keeps this status endpoint off the append-only execution ledger.
+     * The value is intentionally eventually consistent (normally within the batch flush interval).
+     */
+    private long countTodayInternalOrderBookExecutions() {
+        Long accountSideExecutionCount = jdbcClient.sql(
+                        """
+                        select coalesce(sum(summary.execution_count), 0)
+                          from stock_execution_account_day_summary summary
+                         where summary.simulation_trade_date = ?
+                        """
+                )
+                .param(simulationClockService.currentMarketDateTime().toLocalDate())
+                .query(Long.class)
+                .single();
+        return accountSideExecutionCount == null ? 0L : accountSideExecutionCount / 2L;
     }
 
     private long effectiveOpenConfigCount(long openConfigCount) {

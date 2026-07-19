@@ -51,7 +51,7 @@ public class OrderBookCandleQueryService {
         this.integerCastType = mysql ? "signed" : "integer";
     }
 
-    @Transactional(readOnly = true)
+    @Transactional(readOnly = true, timeout = 5)
     public List<OrderBookCandleResponse> getOrderBookCandles(String symbol, String interval) {
         String normalizedSymbol = requireEnabledOrderBookSymbol(symbol);
         OrderBookCandleInterval candleInterval = OrderBookCandleInterval.parse(interval);
@@ -231,6 +231,15 @@ public class OrderBookCandleQueryService {
                                     on close_run.id = snapshot.close_run_id
                                    and close_run.symbol is null
                                    and close_run.status = 'COMPLETED'
+                                  join stock_post_close_cycle close_cycle
+                                    on close_cycle.close_run_id = close_run.id
+                                   and close_cycle.scope_type = 'FULL_MARKET'
+                                   and close_cycle.scope_key = 'ALL'
+                                   and close_cycle.phase in (
+                                       'REPORTS_AGGREGATED', 'PREOPEN_SECURITY_TRANSFORMS_APPLIED',
+                                       'MARKET_DATA_PREPARED', 'AUTO_MARKET_PREPARED',
+                                       'READY_TO_OPEN', 'COMPLETED'
+                                   )
                                  where snapshot.symbol = ?
                                    and snapshot.simulation_trade_date >= ?
                                    and snapshot.simulation_trade_date < ?
@@ -326,6 +335,15 @@ public class OrderBookCandleQueryService {
                             on close_run.id = snapshot.close_run_id
                            and close_run.symbol is null
                            and close_run.status = 'COMPLETED'
+                          join stock_post_close_cycle close_cycle
+                            on close_cycle.close_run_id = close_run.id
+                           and close_cycle.scope_type = 'FULL_MARKET'
+                           and close_cycle.scope_key = 'ALL'
+                           and close_cycle.phase in (
+                               'REPORTS_AGGREGATED', 'PREOPEN_SECURITY_TRANSFORMS_APPLIED',
+                               'MARKET_DATA_PREPARED', 'AUTO_MARKET_PREPARED',
+                               'READY_TO_OPEN', 'COMPLETED'
+                           )
                          where snapshot.symbol = ?
                            and snapshot.simulation_trade_date < ?
                          order by snapshot.simulation_trade_date desc,

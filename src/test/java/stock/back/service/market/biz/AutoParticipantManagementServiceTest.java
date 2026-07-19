@@ -47,6 +47,9 @@ class AutoParticipantManagementServiceTest {
     @Mock
     private SimulationClockService simulationClockService;
 
+    @Mock
+    private MarketLedgerFreezeGuard marketLedgerFreezeGuard;
+
     private AutoParticipantManagementService service;
 
     @BeforeEach
@@ -58,7 +61,8 @@ class AutoParticipantManagementServiceTest {
                 stockAccountRepository,
                 stockAccountCashFlowRepository,
                 accountOrderCleanupService,
-                simulationClockService
+                simulationClockService,
+                marketLedgerFreezeGuard
         );
     }
 
@@ -216,7 +220,7 @@ class AutoParticipantManagementServiceTest {
         account.assignAccountCodeIfMissing("AC001");
         setAccountId(account, 101L);
         when(stockAutoParticipantRepository.findById("stock-auto-001")).thenReturn(Optional.of(participant));
-        when(stockAccountRepository.findByUserKeyAndStatus("stock-auto-001", StockAccountStatus.ACTIVE))
+        when(stockAccountRepository.findByUserKeyAndStatusForUpdate("stock-auto-001", StockAccountStatus.ACTIVE))
                 .thenReturn(Optional.of(account));
         when(stockAutoParticipantRepository.save(any(StockAutoParticipant.class)))
                 .thenAnswer(invocation -> invocation.getArgument(0));
@@ -226,7 +230,7 @@ class AutoParticipantManagementServiceTest {
 
         assertThat(response.enabled()).isFalse();
         assertThat(response.withdrawnAt()).isNotNull();
-        verify(accountOrderCleanupService).cancelOpenOrderBookOrders(101L);
+        verify(accountOrderCleanupService).cancelOpenOrderBookOrders(account);
     }
 
     private void setAccountId(StockAccount account, Long id) {

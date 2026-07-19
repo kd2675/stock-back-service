@@ -159,7 +159,7 @@ public class TradingQueryService {
                 .orElseGet(Collections::emptyList);
     }
 
-    @Transactional(readOnly = true)
+    @Transactional(readOnly = true, timeout = 5)
     public ProfitSummaryResponse getProfitSummary(String userKey) {
         Optional<StockAccount> accountOptional = accountService.findAccount(userKey);
         if (accountOptional.isEmpty()) {
@@ -174,7 +174,7 @@ public class TradingQueryService {
         return TradingResponseMapper.toProfitSummary(summary, unrealizedProfit);
     }
 
-    @Transactional(readOnly = true)
+    @Transactional(readOnly = true, timeout = 5)
     public FundFlowResponse getFundFlow(String userKey) {
         StockAccount account = accountService.requireAccount(userKey);
         List<HoldingResponse> holdings = buildHoldingResponses(account.getId());

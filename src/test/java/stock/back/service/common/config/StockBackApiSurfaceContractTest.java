@@ -80,6 +80,8 @@ class StockBackApiSurfaceContractTest {
             "POST /api/stock/v1/markets/auto-market/cash-flow/run",
             "GET /api/stock/v1/markets/auto-market/cash-flow/run/latest",
             "POST /api/stock/v1/markets/batch-jobs/market-close/rollover",
+            "GET /api/stock/v1/markets/batch-jobs/eod/overview",
+            "POST /api/stock/v1/markets/batch-jobs/eod/cycles/{cycleId}/retry",
             "POST /api/stock/v1/markets/corporate-actions/{actionId}/subscriptions/me",
             "GET /api/stock/v1/markets/batch-jobs/runtime-controls",
             "PATCH /api/stock/v1/markets/batch-jobs/runtime-controls/{jobName}",

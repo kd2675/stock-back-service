@@ -36,8 +36,7 @@ public class AdminFlowQueryService {
                and f.created_at <= ?
             """,
             """
-             where e.executed_at >= ?
-               and e.executed_at <= ?
+             where e.simulation_trade_date = ?
             """
     );
 
@@ -103,13 +102,13 @@ public class AdminFlowQueryService {
             %s
             ) f
             cross join (
-              select sum(case when e.side = 'BUY' then e.net_amount else 0 end) as buy_net_amount,
-                     sum(case when e.side = 'SELL' then e.net_amount else 0 end) as sell_net_amount,
+              select sum(e.buy_net_amount) as buy_net_amount,
+                     sum(e.sell_net_amount) as sell_net_amount,
                      sum(e.fee_amount) as total_fee_amount,
                      sum(e.tax_amount) as total_tax_amount,
                      sum(e.realized_profit) as realized_profit,
-                     count(*) as execution_count
-                from stock_execution e
+                     sum(e.execution_count) as execution_count
+                from stock_execution_account_day_summary e
                 join active_accounts aa on aa.id = e.account_id
             %s
             ) e
@@ -205,22 +204,22 @@ public class AdminFlowQueryService {
         this.simulationClockService = simulationClockService;
     }
 
-    @Transactional(readOnly = true)
+    @Transactional(readOnly = true, timeout = 10)
     public AdminFlowOverviewResponse getAdminFlowOverview() {
         return getAdminFlowOverview(0, true, true);
     }
 
-    @Transactional(readOnly = true)
+    @Transactional(readOnly = true, timeout = 10)
     public AdminFlowOverviewResponse getAdminFlowOverview(int symbolFlowLimit) {
         return getAdminFlowOverview(symbolFlowLimit, true, true);
     }
 
-    @Transactional(readOnly = true)
+    @Transactional(readOnly = true, timeout = 10)
     public AdminFlowOverviewResponse getAdminFlowOverview(int symbolFlowLimit, boolean includeFundFlow) {
         return getAdminFlowOverview(symbolFlowLimit, includeFundFlow, true);
     }
 
-    @Transactional(readOnly = true)
+    @Transactional(readOnly = true, timeout = 10)
     public AdminFlowOverviewResponse getAdminFlowOverview(int symbolFlowLimit, boolean includeFundFlow, boolean includeSymbolFlows) {
         return getAdminFlowOverview(
                 symbolFlowLimit,
@@ -231,7 +230,7 @@ public class AdminFlowQueryService {
         );
     }
 
-    @Transactional(readOnly = true)
+    @Transactional(readOnly = true, timeout = 10)
     public AdminFlowOverviewResponse getAdminFlowOverview(
             int symbolFlowLimit,
             boolean includeFundFlow,
@@ -247,7 +246,7 @@ public class AdminFlowQueryService {
         );
     }
 
-    @Transactional(readOnly = true)
+    @Transactional(readOnly = true, timeout = 10)
     public AdminFlowOverviewResponse getAdminFlowOverview(
             int symbolFlowLimit,
             boolean includeFundFlow,
@@ -271,27 +270,27 @@ public class AdminFlowQueryService {
         );
     }
 
-    @Transactional(readOnly = true)
+    @Transactional(readOnly = true, timeout = 10)
     public AdminFundFlowSummaryResponse getAdminFundFlowSummary() {
         return getAdminFundFlowSummary(AdminFundFlowScope.RECENT_SIMULATION_DAY);
     }
 
-    @Transactional(readOnly = true)
+    @Transactional(readOnly = true, timeout = 10)
     public AdminFundFlowSummaryResponse getAdminFundFlowSummary(AdminFundFlowScope scope) {
         return loadAdminFundFlowSummary(normalizeFlowScope(scope));
     }
 
-    @Transactional(readOnly = true)
+    @Transactional(readOnly = true, timeout = 10)
     public AdminSymbolFlowListResponse getAdminSymbolFlows(int symbolFlowLimit) {
         return getAdminSymbolFlows(symbolFlowLimit, AdminFundFlowScope.RECENT_SIMULATION_DAY);
     }
 
-    @Transactional(readOnly = true)
+    @Transactional(readOnly = true, timeout = 10)
     public AdminSymbolFlowListResponse getAdminSymbolFlows(int symbolFlowLimit, AdminFundFlowScope scope) {
         return adminSymbolFlowQueryService.getAdminSymbolFlows(symbolFlowLimit, normalizeFlowScope(scope));
     }
 
-    @Transactional(readOnly = true)
+    @Transactional(readOnly = true, timeout = 10)
     public AdminSymbolFlowListResponse getAdminSymbolFlows(
             int symbolFlowLimit,
             AdminFundFlowScope scope,
@@ -307,7 +306,7 @@ public class AdminFlowQueryService {
         );
     }
 
-    @Transactional(readOnly = true)
+    @Transactional(readOnly = true, timeout = 10)
     public AdminSymbolFlowListResponse getAdminSymbolFlows(
             int symbolFlowLimit,
             AdminFundFlowScope scope,
@@ -324,7 +323,7 @@ public class AdminFlowQueryService {
         );
     }
 
-    @Transactional(readOnly = true)
+    @Transactional(readOnly = true, timeout = 10)
     public AdminCashFlowPageResponse getAdminCashFlows(int page, int size) {
         AdminCashFlowPageRequest pageRequest = AdminCashFlowPageRequest.of(page, size);
         long total = jdbcClient.sql("""
@@ -349,15 +348,28 @@ public class AdminFlowQueryService {
         );
     }
 
-    @Transactional(readOnly = true)
+    @Transactional(readOnly = true, timeout = 10)
     public AdminTotalAssetHistoryPageResponse getAdminTotalAssetHistory(int page) {
         AdminTotalAssetHistoryPageRequest pageRequest = AdminTotalAssetHistoryPageRequest.of(page);
         long total = jdbcClient.sql("""
                 select count(distinct ps.snapshot_date)
                   from portfolio_snapshot ps
                   join stock_account a on a.id = ps.account_id
+                  left join stock_post_close_cycle cycle on cycle.id = ps.close_cycle_id
                  where a.user_key is not null
                    and a.user_key not like 'stock-listing-%'
+                   and (
+                       (ps.close_cycle_id is null and ps.close_run_id is null)
+                       or (
+                           cycle.scope_type = 'FULL_MARKET'
+                           and cycle.scope_key = 'ALL'
+                           and cycle.phase in (
+                               'PORTFOLIO_SETTLED', 'OVERNIGHT_CASH_APPLIED', 'CORPORATE_CASH_APPLIED',
+                               'REPORTS_AGGREGATED', 'PREOPEN_SECURITY_TRANSFORMS_APPLIED',
+                               'MARKET_DATA_PREPARED', 'AUTO_MARKET_PREPARED', 'READY_TO_OPEN', 'COMPLETED'
+                           )
+                       )
+                   )
                 """)
                 .query(Long.class)
                 .single();
@@ -373,8 +385,21 @@ public class AdminFlowQueryService {
                        case when count(*) = count(ps.holding_position_count) then sum(ps.holding_position_count) end as holding_position_count
                   from portfolio_snapshot ps
                   join stock_account a on a.id = ps.account_id
+                  left join stock_post_close_cycle cycle on cycle.id = ps.close_cycle_id
                  where a.user_key is not null
                    and a.user_key not like 'stock-listing-%'
+                   and (
+                       (ps.close_cycle_id is null and ps.close_run_id is null)
+                       or (
+                           cycle.scope_type = 'FULL_MARKET'
+                           and cycle.scope_key = 'ALL'
+                           and cycle.phase in (
+                               'PORTFOLIO_SETTLED', 'OVERNIGHT_CASH_APPLIED', 'CORPORATE_CASH_APPLIED',
+                               'REPORTS_AGGREGATED', 'PREOPEN_SECURITY_TRANSFORMS_APPLIED',
+                               'MARKET_DATA_PREPARED', 'AUTO_MARKET_PREPARED', 'READY_TO_OPEN', 'COMPLETED'
+                           )
+                       )
+                   )
                  group by ps.snapshot_date
                  order by ps.snapshot_date desc
                  limit ? offset ?
@@ -494,8 +519,7 @@ public class AdminFlowQueryService {
         return jdbcClient.sql(FUND_FLOW_SUMMARY_RECENT_SIMULATION_DAY_SQL)
                 .param(rangeStart)
                 .param(rangeEnd)
-                .param(rangeStart)
-                .param(rangeEnd)
+                .param(rangeStart.toLocalDate())
                 .query((rs, rowNum) -> AdminFlowResponseMapper.toFundFlowSummary(rs))
                 .single();
     }

@@ -53,7 +53,13 @@ final class RecurringCashPolicy {
             throw StockException.badRequest("Recurring cash interval unit is required when recurring cash amount is positive");
         }
         try {
-            return RecurringCashIntervalUnit.parseOrDefault(normalized);
+            RecurringCashIntervalUnit unit = RecurringCashIntervalUnit.parseOrDefault(normalized);
+            if (isSubDay(unit)) {
+                throw StockException.badRequest(
+                        "Recurring cash interval unit must be DAY, MONTH, or YEAR"
+                );
+            }
+            return unit;
         } catch (IllegalArgumentException exception) {
             throw StockException.badRequest("Unknown recurring cash interval unit");
         }
@@ -71,6 +77,12 @@ final class RecurringCashPolicy {
             throw StockException.badRequest("Recurring cash interval value must be between 0 and 1000");
         }
         return value;
+    }
+
+    private static boolean isSubDay(RecurringCashIntervalUnit unit) {
+        return RecurringCashIntervalUnit.SECOND.equals(unit)
+                || RecurringCashIntervalUnit.MINUTE.equals(unit)
+                || RecurringCashIntervalUnit.HOUR.equals(unit);
     }
 
 }

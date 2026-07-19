@@ -214,6 +214,15 @@ public class InstrumentMarketReportAnalyticsQueryService {
                                             on close_run.id = snapshot.close_run_id
                                            and close_run.symbol is null
                                            and close_run.status = 'COMPLETED'
+                                          join stock_post_close_cycle close_cycle
+                                            on close_cycle.close_run_id = close_run.id
+                                           and close_cycle.scope_type = 'FULL_MARKET'
+                                           and close_cycle.scope_key = 'ALL'
+                                           and close_cycle.phase in (
+                                               'REPORTS_AGGREGATED', 'PREOPEN_SECURITY_TRANSFORMS_APPLIED',
+                                               'MARKET_DATA_PREPARED', 'AUTO_MARKET_PREPARED',
+                                               'READY_TO_OPEN', 'COMPLETED'
+                                           )
                                          where snapshot.symbol = ?
                                            and snapshot.simulation_trade_date <= ?
                                   ) latest_by_date
@@ -438,6 +447,15 @@ public class InstrumentMarketReportAnalyticsQueryService {
                                 on close_run.id = daily.close_run_id
                                and close_run.symbol is null
                                and close_run.status = 'COMPLETED'
+                              join stock_post_close_cycle close_cycle
+                                on close_cycle.close_run_id = close_run.id
+                               and close_cycle.scope_type = 'FULL_MARKET'
+                               and close_cycle.scope_key = 'ALL'
+                               and close_cycle.phase in (
+                                   'REPORTS_AGGREGATED', 'PREOPEN_SECURITY_TRANSFORMS_APPLIED',
+                                   'MARKET_DATA_PREPARED', 'AUTO_MARKET_PREPARED',
+                                   'READY_TO_OPEN', 'COMPLETED'
+                               )
                              where daily.symbol = :symbol
                                and daily.simulation_trade_date >= :startDate
                                and daily.simulation_trade_date <= :endDate
@@ -552,6 +570,15 @@ public class InstrumentMarketReportAnalyticsQueryService {
                                 on close_run.id = daily.close_run_id
                                and close_run.symbol is null
                                and close_run.status = 'COMPLETED'
+                              join stock_post_close_cycle close_cycle
+                                on close_cycle.close_run_id = close_run.id
+                               and close_cycle.scope_type = 'FULL_MARKET'
+                               and close_cycle.scope_key = 'ALL'
+                               and close_cycle.phase in (
+                                   'REPORTS_AGGREGATED', 'PREOPEN_SECURITY_TRANSFORMS_APPLIED',
+                                   'MARKET_DATA_PREPARED', 'AUTO_MARKET_PREPARED',
+                                   'READY_TO_OPEN', 'COMPLETED'
+                               )
                              where daily.symbol = ?
                                and daily.simulation_trade_date >= ?
                                and daily.simulation_trade_date <= ?
@@ -885,6 +912,15 @@ public class InstrumentMarketReportAnalyticsQueryService {
                                         on close_run.id = snapshot.close_run_id
                                        and close_run.symbol is null
                                        and close_run.status = 'COMPLETED'
+                                      join stock_post_close_cycle close_cycle
+                                        on close_cycle.close_run_id = close_run.id
+                                       and close_cycle.scope_type = 'FULL_MARKET'
+                                       and close_cycle.scope_key = 'ALL'
+                                       and close_cycle.phase in (
+                                           'REPORTS_AGGREGATED', 'PREOPEN_SECURITY_TRANSFORMS_APPLIED',
+                                           'MARKET_DATA_PREPARED', 'AUTO_MARKET_PREPARED',
+                                           'READY_TO_OPEN', 'COMPLETED'
+                                       )
                                      where snapshot.simulation_trade_date = ?
                                ) ranked_snapshot
                               where snapshot_rank = 1
@@ -923,6 +959,15 @@ public class InstrumentMarketReportAnalyticsQueryService {
                                     on close_run.id = snapshot.close_run_id
                                    and close_run.symbol is null
                                    and close_run.status = 'COMPLETED'
+                                  join stock_post_close_cycle close_cycle
+                                    on close_cycle.close_run_id = close_run.id
+                                   and close_cycle.scope_type = 'FULL_MARKET'
+                                   and close_cycle.scope_key = 'ALL'
+                                   and close_cycle.phase in (
+                                       'REPORTS_AGGREGATED', 'PREOPEN_SECURITY_TRANSFORMS_APPLIED',
+                                       'MARKET_DATA_PREPARED', 'AUTO_MARKET_PREPARED',
+                                       'READY_TO_OPEN', 'COMPLETED'
+                                   )
                                  where snapshot.simulation_trade_date >= ?
                                    and snapshot.simulation_trade_date <= ?
                           ) latest_by_date

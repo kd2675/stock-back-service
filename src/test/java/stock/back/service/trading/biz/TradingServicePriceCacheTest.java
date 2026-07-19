@@ -28,11 +28,11 @@ import stock.back.service.database.repository.StockPriceRepository;
 import stock.back.service.database.repository.StockVirtualMarketConfigRepository;
 import stock.back.service.market.cache.CachedStockPrice;
 import stock.back.service.market.cache.StockPriceCacheService;
-import stock.back.service.market.biz.SimulationClockService;
 import stock.back.service.market.biz.SimulationMarketSessionService;
 import stock.back.service.trading.vo.OrderRequest;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
@@ -91,7 +91,7 @@ class TradingServicePriceCacheTest {
     private StockPriceCacheService stockPriceCacheService;
 
     @Mock
-    private SimulationClockService simulationClockService;
+    private TradingSessionFenceService tradingSessionFenceService;
 
     @Mock
     private SimulationMarketSessionService simulationMarketSessionService;
@@ -103,7 +103,13 @@ class TradingServicePriceCacheTest {
 
     @BeforeEach
     void setUp() {
-        lenient().when(simulationClockService.currentMarketDateTime()).thenReturn(LocalDateTime.of(2026, 7, 1, 10, 0));
+        lenient().when(tradingSessionFenceService.acquireOpenSession(any(), any())).thenReturn(
+                new TradingSessionFenceService.TradingSessionApproval(
+                        LocalDate.of(2026, 7, 1),
+                        1L,
+                        LocalDateTime.of(2026, 7, 1, 10, 0)
+                )
+        );
         lenient().when(simulationMarketSessionService.isRegularSession()).thenReturn(true);
         TradingQueryService tradingQueryService = new TradingQueryService(
                 accountService,
@@ -123,14 +129,11 @@ class TradingServicePriceCacheTest {
                 new TradingMarketRuleService(
                         stockInstrumentRepository,
                         stockOrderBookInstrumentRepository,
-                        stockVirtualMarketConfigRepository,
-                        stockOrderBookMarketConfigRepository,
                         stockPriceRepository,
-                        stockPriceCacheService,
-                        simulationMarketSessionService
+                        stockPriceCacheService
                 ),
-                new TradingReservationService(accountService, stockHoldingRepository),
-                simulationClockService,
+                new TradingReservationService(stockHoldingRepository),
+                tradingSessionFenceService,
                 orderBookReadySymbolPublisher
         );
     }
@@ -141,7 +144,6 @@ class TradingServicePriceCacheTest {
         account.depositCash(new BigDecimal("10000000.00"));
         ReflectionTestUtils.setField(account, "id", 101L);
         when(stockInstrumentRepository.existsById("005930")).thenReturn(true);
-        when(stockVirtualMarketConfigRepository.findById("005930")).thenReturn(Optional.of(virtualMarketConfig("005930")));
         when(stockPriceCacheService.getCachedPrice("005930"))
                 .thenReturn(Optional.of(new CachedStockPrice(new BigDecimal("72000.00"), "redis-cache")));
         when(accountService.requireAccountForUpdate("cache-order-user")).thenReturn(account);
@@ -159,15 +161,18 @@ class TradingServicePriceCacheTest {
 
     @Test
     void placeOrder_outsideRegularSession_rejectsBeforeReservation() {
-        when(simulationMarketSessionService.isRegularSession()).thenReturn(false);
         when(stockInstrumentRepository.existsById("005930")).thenReturn(true);
+        when(stockPriceCacheService.getCachedPrice("005930"))
+                .thenReturn(Optional.of(new CachedStockPrice(new BigDecimal("72000.00"), "redis-cache")));
+        when(tradingSessionFenceService.acquireOpenSession(any(), any()))
+                .thenThrow(StockException.conflict("Market session is closed for new orders: 005930"));
 
         assertThatThrownBy(() -> tradingService.placeOrder(
                 "cache-order-user",
                 new OrderRequest("005930", OrderSide.BUY, OrderType.MARKET, null, 2)
         ))
                 .isInstanceOf(StockException.class)
-                .hasMessageContaining("regular trading session");
+                .hasMessageContaining("Market session is closed");
         verify(accountService, never()).requireAccountForUpdate(any());
     }
 

@@ -13,7 +13,6 @@ import stock.back.service.database.entity.StockAccount;
 import stock.back.service.database.entity.StockHolding;
 import stock.back.service.database.entity.StockOrder;
 import stock.back.service.database.repository.StockOrderRepository;
-import stock.back.service.market.biz.SimulationClockService;
 import stock.back.service.trading.vo.ExecutionResponse;
 import stock.back.service.trading.vo.FundFlowResponse;
 import stock.back.service.trading.vo.HoldingResponse;
@@ -39,7 +38,7 @@ public class TradingService {
     private final TradingQueryService tradingQueryService;
     private final TradingMarketRuleService tradingMarketRuleService;
     private final TradingReservationService tradingReservationService;
-    private final SimulationClockService simulationClockService;
+    private final TradingSessionFenceService tradingSessionFenceService;
     private final OrderBookReadySymbolPublisher orderBookReadySymbolPublisher;
 
     @Transactional
@@ -54,12 +53,13 @@ public class TradingService {
 
         MarketType marketType = TradingOrderRequestPolicy.normalizeMarketType(request);
         tradingMarketRuleService.validateSymbolExists(symbol, marketType);
-        tradingMarketRuleService.validateMarketOpen(symbol, marketType);
         tradingMarketRuleService.validateLimitPriceRule(symbol, marketType, request.orderType(), request.limitPrice());
 
         BigDecimal reservedCash = tradingMarketRuleService.calculateReservedCash(request, symbol);
+        TradingSessionFenceService.TradingSessionApproval sessionApproval =
+                tradingSessionFenceService.acquireOpenSession(symbol, marketType);
         StockAccount account = accountService.requireAccountForUpdate(userKey);
-        LocalDateTime orderedAt = simulationClockService.currentMarketDateTime();
+        LocalDateTime orderedAt = sessionApproval.businessEffectiveAt();
 
         if (request.side() == OrderSide.BUY) {
             existingOrder = findExistingClientOrder(account.getId(), clientOrderId);
@@ -96,25 +96,30 @@ public class TradingService {
 
     @Transactional
     public OrderResponse cancelOrder(String userKey, Long orderId) {
+        TradingSessionFenceService.OwnedOrderSessionApproval sessionApproval =
+                tradingSessionFenceService.acquireOwnedOpenOrderMutationSession(
+                        userKey,
+                        orderId,
+                        "Only pending orders can be cancelled"
+                );
         StockAccount account = accountService.requireAccountForUpdate(userKey);
+        StockHolding sellHolding = lockSellHoldingBeforeOrder(account, sessionApproval);
         StockOrder order = stockOrderRepository.findByIdForUpdate(orderId)
                 .orElseThrow(() -> StockException.notFound("Order not found"));
-        if (!order.getAccountId().equals(account.getId())) {
-            throw StockException.notFound("Order not found");
-        }
-        if (order.getStatus() != OrderStatus.PENDING && order.getStatus() != OrderStatus.PARTIALLY_FILLED) {
-            throw StockException.conflict("Only pending orders can be cancelled");
-        }
-        LocalDateTime cancelledAt = simulationClockService.currentMarketDateTime();
-        tradingReservationService.releaseOnCancel(userKey, account.getId(), order, cancelledAt);
+        validateLockedOrder(account, order, sessionApproval, "Only pending orders can be cancelled");
+        LocalDateTime cancelledAt = sessionApproval.businessEffectiveAt();
+        tradingReservationService.releaseOnCancel(account, sellHolding, order, cancelledAt);
         order.cancel(cancelledAt);
         return TradingResponseMapper.toOrderResponse(order);
     }
 
     @Transactional
     public OrderResponse amendOrder(String userKey, Long orderId, OrderAmendRequest request) {
+        TradingSessionFenceService.OwnedOrderSessionApproval sessionApproval =
+                tradingSessionFenceService.acquireOwnedOpenOrderEntrySession(userKey, orderId);
         StockAccount account = accountService.requireAccountForUpdate(userKey);
-        StockOrder order = findOwnOpenOrderForUpdate(account.getId(), orderId);
+        StockHolding sellHolding = lockSellHoldingBeforeOrder(account, sessionApproval);
+        StockOrder order = findOwnOpenOrderForUpdate(account, orderId, sessionApproval);
         if (request == null || (request.quantity() == null && request.limitPrice() == null)) {
             throw StockException.badRequest("Order amendment requires quantity or limit price");
         }
@@ -133,11 +138,11 @@ public class TradingService {
             throw StockException.badRequest("Amended quantity must be greater than filled quantity");
         }
 
-        LocalDateTime amendedAt = simulationClockService.currentMarketDateTime();
+        LocalDateTime amendedAt = sessionApproval.businessEffectiveAt();
         if (order.getSide() == OrderSide.BUY) {
-            tradingReservationService.amendBuyLimitOrder(userKey, order, nextQuantity, nextLimitPrice, amendedAt);
+            tradingReservationService.amendBuyLimitOrder(account, order, nextQuantity, nextLimitPrice, amendedAt);
         } else {
-            tradingReservationService.amendSellLimitOrder(account.getId(), order, nextQuantity, nextLimitPrice, amendedAt);
+            tradingReservationService.amendSellLimitOrder(sellHolding, order, nextQuantity, nextLimitPrice, amendedAt);
         }
         orderBookReadySymbolPublisher.enqueueAfterCommit(order.getSymbol(), order.getMarketType());
         return TradingResponseMapper.toOrderResponse(order);
@@ -145,8 +150,15 @@ public class TradingService {
 
     @Transactional
     public OrderResponse cancelOrderPartially(String userKey, Long orderId, OrderCancelRequest request) {
+        TradingSessionFenceService.OwnedOrderSessionApproval sessionApproval =
+                tradingSessionFenceService.acquireOwnedOpenOrderMutationSession(
+                        userKey,
+                        orderId,
+                        "Only pending orders can be changed"
+                );
         StockAccount account = accountService.requireAccountForUpdate(userKey);
-        StockOrder order = findOwnOpenOrderForUpdate(account.getId(), orderId);
+        StockHolding sellHolding = lockSellHoldingBeforeOrder(account, sessionApproval);
+        StockOrder order = findOwnOpenOrderForUpdate(account, orderId, sessionApproval);
         if (request == null || request.quantity() == null || request.quantity() <= 0) {
             throw StockException.badRequest("Cancel quantity must be positive");
         }
@@ -156,19 +168,19 @@ public class TradingService {
             throw StockException.badRequest("Cancel quantity cannot exceed remaining quantity");
         }
         if (request.quantity() == remainingQuantity) {
-            LocalDateTime cancelledAt = simulationClockService.currentMarketDateTime();
-            tradingReservationService.releaseAllRemainingReservation(userKey, account.getId(), order, cancelledAt);
+            LocalDateTime cancelledAt = sessionApproval.businessEffectiveAt();
+            tradingReservationService.releaseAllRemainingReservation(account, sellHolding, order, cancelledAt);
             order.cancel(cancelledAt);
             return TradingResponseMapper.toOrderResponse(order);
         }
 
         tradingReservationService.releasePartialReservation(
-                userKey,
-                account.getId(),
+                account,
+                sellHolding,
                 order,
                 request.quantity(),
                 remainingQuantity,
-                simulationClockService.currentMarketDateTime()
+                sessionApproval.businessEffectiveAt()
         );
         return TradingResponseMapper.toOrderResponse(order);
     }
@@ -241,16 +253,42 @@ public class TradingService {
                 });
     }
 
-    private StockOrder findOwnOpenOrderForUpdate(Long accountId, Long orderId) {
+    private StockHolding lockSellHoldingBeforeOrder(
+            StockAccount account,
+            TradingSessionFenceService.OwnedOrderSessionApproval sessionApproval
+    ) {
+        if (sessionApproval.orderSide() != OrderSide.SELL) {
+            return null;
+        }
+        return tradingReservationService.findSellHoldingForUpdate(account.getId(), sessionApproval.symbol());
+    }
+
+    private StockOrder findOwnOpenOrderForUpdate(
+            StockAccount account,
+            Long orderId,
+            TradingSessionFenceService.OwnedOrderSessionApproval sessionApproval
+    ) {
         StockOrder order = stockOrderRepository.findByIdForUpdate(orderId)
                 .orElseThrow(() -> StockException.notFound("Order not found"));
-        if (!order.getAccountId().equals(accountId)) {
+        validateLockedOrder(account, order, sessionApproval, "Only pending orders can be changed");
+        return order;
+    }
+
+    private void validateLockedOrder(
+            StockAccount account,
+            StockOrder order,
+            TradingSessionFenceService.OwnedOrderSessionApproval sessionApproval,
+            String unavailableOrderMessage
+    ) {
+        if (!order.getAccountId().equals(account.getId())
+                || !order.getSymbol().equals(sessionApproval.symbol())
+                || order.getMarketType() != sessionApproval.marketType()
+                || order.getSide() != sessionApproval.orderSide()) {
             throw StockException.notFound("Order not found");
         }
         if (order.getStatus() != OrderStatus.PENDING && order.getStatus() != OrderStatus.PARTIALLY_FILLED) {
-            throw StockException.conflict("Only pending orders can be changed");
+            throw StockException.conflict(unavailableOrderMessage);
         }
-        return order;
     }
 
 }

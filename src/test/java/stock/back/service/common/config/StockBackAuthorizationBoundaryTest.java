@@ -67,6 +67,13 @@ class StockBackAuthorizationBoundaryTest {
                     buy_quantity bigint not null default 0,
                     sell_quantity bigint not null default 0,
                     gross_amount decimal(24, 2) not null default 0,
+                    buy_gross_amount decimal(24, 2) not null default 0,
+                    sell_gross_amount decimal(24, 2) not null default 0,
+                    buy_net_amount decimal(24, 2) not null default 0,
+                    sell_net_amount decimal(24, 2) not null default 0,
+                    fee_amount decimal(24, 2) not null default 0,
+                    tax_amount decimal(24, 2) not null default 0,
+                    realized_profit decimal(24, 2) not null default 0,
                     last_executed_at timestamp null,
                     updated_at timestamp not null,
                     primary key (simulation_trade_date, account_id)
@@ -159,6 +166,31 @@ class StockBackAuthorizationBoundaryTest {
                 key(clock_id)
                 values ('DEFAULT', date '2026-07-01', 7200, 3000, false, null, null, 'Asia/Seoul', ?, ?)
                 """,
+                LocalDateTime.now(),
+                LocalDateTime.now()
+        );
+        jdbcTemplate.update(
+                """
+                merge into stock_market_business_state(
+                    state_id, active_business_date, preparing_business_date,
+                    raw_simulation_date, version, created_at, updated_at
+                )
+                key(state_id)
+                values ('DEFAULT', date '2026-07-01', null, date '2026-07-01', 0, ?, ?)
+                """,
+                LocalDateTime.now(),
+                LocalDateTime.now()
+        );
+        jdbcTemplate.update(
+                """
+                merge into stock_market_session_fence(
+                    market_type, symbol, business_date, session_epoch, session_state,
+                    state_changed_at, version, created_at, updated_at
+                )
+                key(market_type, symbol)
+                values ('VIRTUAL_PRICE', '005930', date '2026-07-01', 1, 'OPEN', ?, 0, ?, ?)
+                """,
+                LocalDateTime.now(),
                 LocalDateTime.now(),
                 LocalDateTime.now()
         );
@@ -623,6 +655,8 @@ class StockBackAuthorizationBoundaryTest {
             "PATCH /api/stock/v1/markets/auto-market/cash-flow",
             "POST /api/stock/v1/markets/auto-market/cash-flow/run",
             "POST /api/stock/v1/markets/batch-jobs/market-close/rollover",
+            "GET /api/stock/v1/markets/batch-jobs/eod/overview",
+            "POST /api/stock/v1/markets/batch-jobs/eod/cycles/1/retry",
             "GET /api/stock/v1/markets/batch-jobs/runtime-controls",
             "PATCH /api/stock/v1/markets/batch-jobs/runtime-controls/auto-market",
             "PATCH /api/stock/v1/markets/simulation-clock"
@@ -659,6 +693,8 @@ class StockBackAuthorizationBoundaryTest {
             "PATCH /api/stock/v1/markets/auto-market/cash-flow",
             "POST /api/stock/v1/markets/auto-market/cash-flow/run",
             "POST /api/stock/v1/markets/batch-jobs/market-close/rollover",
+            "GET /api/stock/v1/markets/batch-jobs/eod/overview",
+            "POST /api/stock/v1/markets/batch-jobs/eod/cycles/1/retry",
             "GET /api/stock/v1/markets/batch-jobs/runtime-controls",
             "PATCH /api/stock/v1/markets/batch-jobs/runtime-controls/auto-market",
             "PATCH /api/stock/v1/markets/simulation-clock"

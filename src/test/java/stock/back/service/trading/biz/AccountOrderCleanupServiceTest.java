@@ -12,7 +12,7 @@ import stock.back.service.market.biz.SimulationClockService;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
-import java.util.Optional;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
@@ -30,8 +30,8 @@ class AccountOrderCleanupServiceTest {
         account.depositCash(new BigDecimal("1000.00"));
         account.reserveCash(new BigDecimal("140.00"));
         StockHolding holding = holding(10L, "STOCK001", 10L, 5L, "70000.00");
-        when(stockHoldingRepository.findByAccountIdAndSymbolForUpdate(10L, "STOCK001"))
-                .thenReturn(Optional.of(holding));
+        when(stockHoldingRepository.findByAccountIdAndSymbolsForUpdate(10L, List.of("STOCK001")))
+                .thenReturn(List.of(holding));
         insertOrder(jdbcTemplate, 10L, "BUY", "PENDING", "STOCK001", 2L, 0L, "100.00", 1L);
         insertOrder(jdbcTemplate, 10L, "BUY", "PARTIALLY_FILLED", "STOCK001", 2L, 1L, "40.00", 2L);
         insertOrder(jdbcTemplate, 10L, "BUY", "FILLED", "STOCK001", 1L, 1L, "20.00", 3L);
@@ -75,34 +75,48 @@ class AccountOrderCleanupServiceTest {
     }
 
     @Test
-    void cancelOpenOrderBookOrders_accountIdPath_cancelsOrdersBeforeRefundingCash() {
+    void cancelOpenOrderBookOrders_lockedAccountPath_cancelsOrdersBeforeRefundingCash() {
         JdbcTemplate jdbcTemplate = createJdbcTemplate();
         StockHoldingRepository stockHoldingRepository = mock(StockHoldingRepository.class);
         AccountOrderCleanupService cleanupService = createCleanupService(stockHoldingRepository, jdbcTemplate);
         StockHolding holding = holding(10L, "STOCK001", 10L, 4L, "70000.00");
-        when(stockHoldingRepository.findByAccountIdAndSymbolForUpdate(10L, "STOCK001"))
-                .thenReturn(Optional.of(holding));
-        jdbcTemplate.update(
-                """
-                insert into stock_account(id, cash_balance, updated_at)
-                values (?, ?, ?)
-                """,
-                10L,
-                new BigDecimal("700.00"),
-                LocalDateTime.of(2026, 7, 1, 9, 0)
-        );
+        when(stockHoldingRepository.findByAccountIdAndSymbolsForUpdate(10L, List.of("STOCK001")))
+                .thenReturn(List.of(holding));
+        StockAccount account = StockAccount.open("cleanup-locked-account");
+        ReflectionTestUtils.setField(account, "id", 10L);
+        account.depositCash(new BigDecimal("800.00"));
+        account.reserveCash(new BigDecimal("100.00"));
         insertOrder(jdbcTemplate, 10L, "ORDER_BOOK", "BUY", "PENDING", "STOCK001", 1L, 0L, "100.00", 1L);
         insertOrder(jdbcTemplate, 10L, "ORDER_BOOK", "SELL", "PENDING", "STOCK001", 3L, 1L, "0.00", 2L);
 
-        cleanupService.cancelOpenOrderBookOrders(10L);
+        cleanupService.cancelOpenOrderBookOrders(account);
 
-        assertThat(decimal(jdbcTemplate, "select cash_balance from stock_account where id = 10"))
+        assertThat(account.getCashBalance())
                 .isEqualByComparingTo(new BigDecimal("800.00"));
         assertThat(holding.getReservedQuantity()).isEqualTo(2L);
         assertThat(count(jdbcTemplate, "select count(*) from stock_order where account_id = 10 and status = 'CANCELLED'"))
                 .isEqualTo(2L);
         assertThat(decimal(jdbcTemplate, "select coalesce(sum(reserved_cash), 0) from stock_order where account_id = 10"))
                 .isEqualByComparingTo(BigDecimal.ZERO);
+    }
+
+    @Test
+    void cancelOpenOrderBookOrders_sameCreatedAtAcrossChunks_cancelsEveryCandidate() {
+        JdbcTemplate jdbcTemplate = createJdbcTemplate();
+        StockHoldingRepository stockHoldingRepository = mock(StockHoldingRepository.class);
+        AccountOrderCleanupService cleanupService = createCleanupService(stockHoldingRepository, jdbcTemplate);
+        StockAccount account = StockAccount.open("cleanup-many-orders");
+        ReflectionTestUtils.setField(account, "id", 10L);
+        account.depositCash(new BigDecimal("501.00"));
+        account.reserveCash(new BigDecimal("501.00"));
+        for (long id = 1L; id <= 501L; id++) {
+            insertOrder(jdbcTemplate, 10L, "ORDER_BOOK", "BUY", "PENDING", "STOCK001", 1L, 0L, "1.00", id);
+        }
+
+        cleanupService.cancelOpenOrderBookOrders(account);
+
+        assertThat(count(jdbcTemplate, "select count(*) from stock_order where status = 'CANCELLED'"))
+                .isEqualTo(501L);
     }
 
     private JdbcTemplate createJdbcTemplate() {
@@ -129,6 +143,7 @@ class AccountOrderCleanupServiceTest {
                     quantity bigint not null,
                     filled_quantity bigint not null,
                     reserved_cash decimal(19, 2) not null,
+                    created_at timestamp not null,
                     updated_at timestamp
                 )
                 """);
@@ -157,8 +172,10 @@ class AccountOrderCleanupServiceTest {
     ) {
         jdbcTemplate.update(
                 """
-                insert into stock_order(id, account_id, side, status, symbol, quantity, filled_quantity, reserved_cash)
-                values (?, ?, ?, ?, ?, ?, ?, ?)
+                insert into stock_order(
+                    id, account_id, side, status, symbol, quantity, filled_quantity, reserved_cash, created_at
+                )
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 id,
                 accountId,
@@ -167,7 +184,8 @@ class AccountOrderCleanupServiceTest {
                 symbol,
                 quantity,
                 filledQuantity,
-                new BigDecimal(reservedCash)
+                new BigDecimal(reservedCash),
+                LocalDateTime.of(2026, 7, 1, 9, 0)
         );
     }
 
@@ -185,8 +203,11 @@ class AccountOrderCleanupServiceTest {
     ) {
         jdbcTemplate.update(
                 """
-                insert into stock_order(id, account_id, market_type, side, status, symbol, quantity, filled_quantity, reserved_cash)
-                values (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                insert into stock_order(
+                    id, account_id, market_type, side, status, symbol,
+                    quantity, filled_quantity, reserved_cash, created_at
+                )
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 id,
                 accountId,
@@ -196,7 +217,8 @@ class AccountOrderCleanupServiceTest {
                 symbol,
                 quantity,
                 filledQuantity,
-                new BigDecimal(reservedCash)
+                new BigDecimal(reservedCash),
+                LocalDateTime.of(2026, 7, 1, 9, 0)
         );
     }
 
