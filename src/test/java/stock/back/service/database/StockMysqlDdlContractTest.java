@@ -184,6 +184,9 @@ class StockMysqlDdlContractTest {
             "uk_stock_close_open_order_summary_cycle_symbol",
             "uk_stock_close_open_order_snapshot_cycle_order",
             "uk_portfolio_snapshot_cycle_account",
+            "pending_subscription_asset",
+            "chk_portfolio_snapshot_pending_subscription_non_negative",
+            "chk_portfolio_snapshot_asset_composition",
             "input_hash",
             "calculation_version",
             "data_quality_status"
@@ -539,6 +542,43 @@ class StockMysqlDdlContractTest {
         assertThat(backDdl).doesNotContain(
                 "ALTER TABLE stock_order",
                 "ALTER TABLE stock_execution"
+        );
+    }
+
+    @Test
+    void portfolioPostCloseCashDataFix_isGuardedIdempotentAndMatchesBatchCopy() throws IOException {
+        String backDdl = Files.readString(
+                Path.of("src/main/resources/db/ddl/stock_portfolio_snapshot_post_close_cash_data_fix.sql"),
+                StandardCharsets.UTF_8
+        );
+        String batchDdl = Files.readString(
+                Path.of("../stock-batch-service/src/main/resources/db/ddl/stock_portfolio_snapshot_post_close_cash_data_fix.sql"),
+                StandardCharsets.UTF_8
+        );
+
+        assertThat(normalizeSqlBlock(backDdl)).isEqualTo(normalizeSqlBlock(batchDdl));
+        assertThat(firstExecutableSqlLine(backDdl)).isEqualTo("USE STOCK_SERVICE;");
+        assertThat(backDdl).contains(
+                "stock_portfolio_asset_fix_guard",
+                "pending_subscription_asset",
+                "portfolio-v2-frozen-close",
+                "portfolio-v3-post-close-cash",
+                "portfolio-v4-explicit-subscription-asset",
+                "portfolio-v1-explicit-asset-backfill",
+                "account_snapshot.post_cancel_cash",
+                "entitlement.subscribed_at <= legacy.created_at",
+                "chk_portfolio_snapshot_asset_composition",
+                "SHA2(",
+                "START TRANSACTION;",
+                "COMMIT;"
+        );
+        assertThat(backDdl).doesNotContain(
+                "FROM stock_order ",
+                "JOIN stock_order ",
+                "UPDATE stock_order ",
+                "FROM stock_execution ",
+                "JOIN stock_execution ",
+                "UPDATE stock_execution "
         );
     }
 

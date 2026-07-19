@@ -231,7 +231,7 @@ class AdminFlowQueryServiceTest {
         assertThat(firstPage.hasNext()).isTrue();
         assertThat(firstPage.content().getFirst().snapshotDate()).isEqualTo(LocalDate.of(2026, 7, 3));
         assertThat(firstPage.content().getFirst().totalAsset()).isEqualByComparingTo("3000.00");
-        assertThat(firstPage.content().getFirst().reservedCash()).isZero();
+        assertThat(firstPage.content().getFirst().pendingSubscriptionAsset()).isZero();
         assertThat(firstPage.content().getFirst().holdingQuantity()).isEqualTo(30L);
         assertThat(firstPage.content().getFirst().reservedSellQuantity()).isEqualTo(5L);
         assertThat(firstPage.content().getFirst().availableHoldingQuantity()).isEqualTo(25L);
@@ -309,6 +309,30 @@ class AdminFlowQueryServiceTest {
         var page = service.getAdminTotalAssetHistory(0);
 
         assertThat(page.content()).extracting(point -> point.snapshotDate()).containsExactly(snapshotDate);
+    }
+
+    @Test
+    void getAdminTotalAssetHistory_settledSnapshot_exposesStoredCashAndSubscriptionAsset() {
+        JdbcTemplate jdbcTemplate = createJdbcTemplate("admin_flow_query_service_total_asset_components_test");
+        AdminFlowQueryService service = createService(jdbcTemplate);
+        LocalDate snapshotDate = SIMULATION_DAY_START.toLocalDate();
+        insertAccount(jdbcTemplate, 1L, "history-user", "ACTIVE", "0.00");
+        insertPostCloseCycle(jdbcTemplate, 10L, "PORTFOLIO_SETTLED");
+        insertCyclePortfolioSnapshot(jdbcTemplate, 1L, 10L, 100L, 1L, snapshotDate, 1000L);
+        jdbcTemplate.update(
+                """
+                update portfolio_snapshot
+                   set cash_balance = 750,
+                       pending_subscription_asset = 50,
+                       market_value = 200
+                 where id = 1
+                """
+        );
+
+        var point = service.getAdminTotalAssetHistory(0).content().getFirst();
+
+        assertThat(point.cashBalance()).isEqualByComparingTo("750.00");
+        assertThat(point.pendingSubscriptionAsset()).isEqualByComparingTo("50.00");
     }
 
     @Test
@@ -533,6 +557,7 @@ class AdminFlowQueryServiceTest {
                     snapshot_date date not null,
                     total_asset decimal(19, 2) not null,
                     cash_balance decimal(19, 2) not null,
+                    pending_subscription_asset decimal(19, 2) not null default 0,
                     market_value decimal(19, 2) not null,
                     holding_quantity bigint,
                     reserved_sell_quantity bigint,

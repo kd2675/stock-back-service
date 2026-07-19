@@ -31,7 +31,7 @@ class StockSchemaReadinessValidatorTest {
         StockSchemaReadinessValidator validator = new StockSchemaReadinessValidator(
                 dataSource,
                 buildPropertiesProvider,
-                "2026-07-15-eod-v1"
+                "2026-07-19-eod-v2"
         );
 
         assertThatCode(() -> validator.run(null)).doesNotThrowAnyException();
@@ -50,7 +50,7 @@ class StockSchemaReadinessValidatorTest {
         StockSchemaReadinessValidator validator = new StockSchemaReadinessValidator(
                 dataSource,
                 buildPropertiesProvider,
-                "2026-07-15-eod-v1"
+                "2026-07-19-eod-v2"
         );
 
         assertThatThrownBy(() -> validator.run(null))

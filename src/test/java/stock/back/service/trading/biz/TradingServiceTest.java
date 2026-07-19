@@ -733,6 +733,7 @@ class TradingServiceTest {
         assertThat(snapshots).hasSize(2);
         assertThat(snapshots.get(0).snapshotDate()).hasToString("2026-06-17");
         assertThat(snapshots.get(0).totalAsset()).isEqualByComparingTo(new BigDecimal("10100000.00"));
+        assertThat(snapshots.get(0).pendingSubscriptionAsset()).isEqualByComparingTo(BigDecimal.ZERO);
         assertThat(snapshots.get(1).snapshotDate()).hasToString("2026-06-16");
     }
 
@@ -1259,8 +1260,11 @@ class TradingServiceTest {
         Long accountId = accountIdFor(userKey);
         jdbcTemplate.update(
                 """
-                insert into portfolio_snapshot(account_id, snapshot_date, total_asset, cash_balance, market_value, return_rate, created_at)
-                values (?, ?, ?, ?, ?, ?, ?)
+                insert into portfolio_snapshot(
+                    account_id, snapshot_date, total_asset, cash_balance,
+                    pending_subscription_asset, market_value, return_rate, created_at
+                )
+                values (?, ?, ?, ?, 0, ?, ?, ?)
                 """,
                 accountId,
                 java.time.LocalDate.parse(snapshotDate),

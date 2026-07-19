@@ -7,6 +7,7 @@ public record PortfolioSnapshotResponse(
         LocalDate snapshotDate,
         BigDecimal totalAsset,
         BigDecimal cashBalance,
+        BigDecimal pendingSubscriptionAsset,
         BigDecimal marketValue,
         BigDecimal returnRate
 ) {

@@ -655,6 +655,9 @@ class MarketServiceTest {
             when(resultSet.getString("symbol")).thenReturn("ZQ001");
             when(resultSet.getObject("simulation_trade_date", LocalDate.class)).thenReturn(LocalDate.of(2026, 7, 7));
             when(resultSet.getString("regime_phase")).thenReturn("SLOT_0600");
+            when(resultSet.getString("source_regime_phase")).thenReturn("SLOT_0600");
+            when(resultSet.getInt("daily_application_count")).thenReturn(3);
+            when(resultSet.getInt("prepared_regime_slot_count")).thenReturn(4);
             when(resultSet.getInt("price_pressure")).thenReturn(80);
             when(resultSet.getInt("asset_preference_pressure")).thenReturn(70);
             when(resultSet.getInt("volatility_pressure")).thenReturn(20);
@@ -677,6 +680,8 @@ class MarketServiceTest {
         assertThat(response.configs()).hasSize(1);
         assertThat(response.configs().get(0).dailyRegime()).isNotNull();
         assertThat(response.configs().get(0).dailyRegime().regimePhase()).isEqualTo("SLOT_0600");
+        assertThat(response.configs().get(0).dailyRegime().dailyApplicationCount()).isEqualTo(3);
+        assertThat(response.configs().get(0).dailyRegime().preparedRegimeSlotCount()).isEqualTo(4);
         assertThat(response.configs().get(0).dailyRegime().pricePressure()).isEqualTo(80);
         assertThat(response.configs().get(0).dailyRegime().assetPreferencePressure()).isEqualTo(70);
         assertThat(response.configs().get(0).dailyRegime().executionAggressionPressure()).isEqualTo(40);

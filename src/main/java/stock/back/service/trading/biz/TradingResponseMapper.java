@@ -86,6 +86,7 @@ final class TradingResponseMapper {
                 snapshot.getSnapshotDate(),
                 snapshot.getTotalAsset(),
                 snapshot.getCashBalance(),
+                snapshot.getPendingSubscriptionAsset(),
                 snapshot.getMarketValue(),
                 snapshot.getReturnRate()
         );

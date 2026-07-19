@@ -142,6 +142,19 @@ public class AutoMarketStatusDataLoader {
                        simulation_trade_date,
                        regime_phase,
                        coalesce(source_regime_phase, regime_phase) as source_regime_phase,
+                       (
+                           select count(*)
+                             from stock_order_book_daily_regime prepared
+                            where prepared.symbol = current_regime.symbol
+                              and prepared.simulation_trade_date = current_regime.simulation_trade_date
+                       ) as prepared_regime_slot_count,
+                       (
+                           select count(*)
+                             from stock_order_book_daily_regime applied
+                            where applied.symbol = current_regime.symbol
+                              and applied.simulation_trade_date = current_regime.simulation_trade_date
+                              and coalesce(applied.source_regime_phase, applied.regime_phase) = applied.regime_phase
+                       ) as daily_application_count,
                        price_pressure,
                        asset_preference_pressure,
                        volatility_pressure,
@@ -150,11 +163,11 @@ public class AutoMarketStatusDataLoader {
                        seed,
                        created_at,
                        updated_at
-                 from stock_order_book_daily_regime
-                 where symbol in (%s)
-                   and simulation_trade_date = ?
-                   and regime_phase = ?
-                 order by symbol asc
+                 from stock_order_book_daily_regime current_regime
+                 where current_regime.symbol in (%s)
+                   and current_regime.simulation_trade_date = ?
+                   and current_regime.regime_phase = ?
+                 order by current_regime.symbol asc
                 """.formatted(placeholders);
         List<Object> params = new ArrayList<>(symbols);
         params.add(simulationTradeDate);
@@ -166,6 +179,8 @@ public class AutoMarketStatusDataLoader {
                         rs.getObject("simulation_trade_date", LocalDate.class),
                         rs.getString("regime_phase"),
                         rs.getString("source_regime_phase"),
+                        rs.getInt("daily_application_count"),
+                        rs.getInt("prepared_regime_slot_count"),
                         rs.getInt("price_pressure"),
                         rs.getInt("asset_preference_pressure"),
                         rs.getInt("volatility_pressure"),

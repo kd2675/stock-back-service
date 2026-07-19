@@ -9,7 +9,7 @@ public record AdminTotalAssetHistoryPointResponse(
         BigDecimal totalAsset,
         BigDecimal cashBalance,
         BigDecimal marketValue,
-        BigDecimal reservedCash,
+        BigDecimal pendingSubscriptionAsset,
         Long holdingQuantity,
         Long reservedSellQuantity,
         Long availableHoldingQuantity,

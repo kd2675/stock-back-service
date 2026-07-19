@@ -12,6 +12,7 @@ import stock.back.service.database.entity.ListingAutoPosition;
 import stock.back.service.database.entity.ListingAutoPriceDirection;
 import stock.back.service.database.entity.StockAutoMarketConfig;
 import stock.back.service.database.entity.StockListingAutoAccountConfig;
+import stock.back.service.database.entity.StockOrderBookInstrument;
 import stock.back.service.database.repository.StockAutoMarketConfigRepository;
 import stock.back.service.database.repository.StockListingAutoAccountConfigRepository;
 import stock.back.service.database.repository.StockOrderBookInstrumentRepository;
@@ -202,6 +203,9 @@ class AutoMarketConfigServiceTest {
                 "ZQ001",
                 LocalDate.of(2026, 7, 7),
                 "SLOT_1200",
+                "SLOT_0900",
+                3,
+                4,
                 70,
                 60,
                 10,
@@ -232,6 +236,9 @@ class AutoMarketConfigServiceTest {
         assertThat(response.symbol()).isEqualTo("ZQ001");
         assertThat(response.dailyRegime()).isNotNull();
         assertThat(response.dailyRegime().seed()).isEqualTo("daily-seed");
+        assertThat(response.dailyRegime().sourceRegimePhase()).isEqualTo("SLOT_0900");
+        assertThat(response.dailyRegime().dailyApplicationCount()).isEqualTo(3);
+        assertThat(response.dailyRegime().preparedRegimeSlotCount()).isEqualTo(4);
         assertThat(response.dailyRegime().currentModifier()).isNotNull();
         assertThat(response.dailyRegime().currentModifier().modifierWindowStartAt())
                 .isEqualTo(LocalDateTime.of(2026, 7, 7, 12, 30));
@@ -398,5 +405,106 @@ class AutoMarketConfigServiceTest {
         ))
                 .isInstanceOf(StockException.class)
                 .hasMessageContaining("buy quote target cannot exceed inventory band quantity");
+    }
+
+    @Test
+    void updateListingAutoAccountConfig_quoteTargetNeedsMoreThanTenOrders_throwsBadRequest() {
+        StockListingAutoAccountConfig config = StockListingAutoAccountConfig.defaults(
+                "ZQ001",
+                "stock-listing-zq001",
+                "상장주관사",
+                100000L
+        );
+        when(stockListingAutoAccountConfigRepository.findById("ZQ001")).thenReturn(Optional.of(config));
+
+        assertThatThrownBy(() -> service.updateListingAutoAccountConfig(
+                "zq001",
+                new ListingAutoAccountRequest(
+                        "상장주관사",
+                        true,
+                        ListingAutoPosition.TWO_SIDED,
+                        50,
+                        20,
+                        2,
+                        501L,
+                        500L,
+                        50000L,
+                        1000L,
+                        ListingAutoPriceDirection.DOWN,
+                        ListingAutoPriceDirection.UP
+                )
+        ))
+                .isInstanceOf(StockException.class)
+                .hasMessageContaining("cannot exceed 10 times max order quantity");
+    }
+
+    @Test
+    void updateListingAutoAccountConfig_targetHoldingAboveIssuedShares_throwsBadRequest() {
+        StockListingAutoAccountConfig config = StockListingAutoAccountConfig.defaults(
+                "ZQ001",
+                "stock-listing-zq001",
+                "상장주관사",
+                100000L
+        );
+        StockOrderBookInstrument instrument = StockOrderBookInstrument.listed(
+                "ZQ001",
+                "주식1",
+                "ORDERBOOK",
+                new BigDecimal("1000.00"),
+                100000L
+        );
+        when(stockListingAutoAccountConfigRepository.findById("ZQ001")).thenReturn(Optional.of(config));
+        when(stockOrderBookInstrumentRepository.findById("ZQ001")).thenReturn(Optional.of(instrument));
+
+        assertThatThrownBy(() -> service.updateListingAutoAccountConfig(
+                "zq001",
+                new ListingAutoAccountRequest(
+                        "상장주관사",
+                        true,
+                        ListingAutoPosition.SELL_ONLY,
+                        50,
+                        20,
+                        2,
+                        0L,
+                        50L,
+                        100001L,
+                        0L,
+                        ListingAutoPriceDirection.DOWN,
+                        ListingAutoPriceDirection.UP
+                )
+        ))
+                .isInstanceOf(StockException.class)
+                .hasMessageContaining("cannot exceed issued shares");
+    }
+
+    @Test
+    void updateListingAutoAccountConfig_buyOnlyWithoutTargetHolding_throwsBadRequest() {
+        StockListingAutoAccountConfig config = StockListingAutoAccountConfig.defaults(
+                "ZQ001",
+                "stock-listing-zq001",
+                "상장주관사",
+                100000L
+        );
+        when(stockListingAutoAccountConfigRepository.findById("ZQ001")).thenReturn(Optional.of(config));
+
+        assertThatThrownBy(() -> service.updateListingAutoAccountConfig(
+                "zq001",
+                new ListingAutoAccountRequest(
+                        "상장주관사",
+                        true,
+                        ListingAutoPosition.BUY_ONLY,
+                        50,
+                        20,
+                        2,
+                        50L,
+                        0L,
+                        0L,
+                        0L,
+                        ListingAutoPriceDirection.DOWN,
+                        ListingAutoPriceDirection.UP
+                )
+        ))
+                .isInstanceOf(StockException.class)
+                .hasMessageContaining("requires a positive target holding quantity");
     }
 }

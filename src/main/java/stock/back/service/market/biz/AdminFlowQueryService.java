@@ -380,6 +380,7 @@ public class AdminFlowQueryService {
                        sum(ps.total_asset) as total_asset,
                        sum(ps.cash_balance) as cash_balance,
                        sum(ps.market_value) as market_value,
+                       sum(ps.pending_subscription_asset) as pending_subscription_asset,
                        case when count(*) = count(ps.holding_quantity) then sum(ps.holding_quantity) end as holding_quantity,
                        case when count(*) = count(ps.reserved_sell_quantity) then sum(ps.reserved_sell_quantity) end as reserved_sell_quantity,
                        case when count(*) = count(ps.holding_position_count) then sum(ps.holding_position_count) end as holding_position_count
@@ -411,6 +412,7 @@ public class AdminFlowQueryService {
                         rs.getBigDecimal("total_asset"),
                         rs.getBigDecimal("cash_balance"),
                         rs.getBigDecimal("market_value"),
+                        rs.getBigDecimal("pending_subscription_asset"),
                         rs.getObject("holding_quantity", Long.class),
                         rs.getObject("reserved_sell_quantity", Long.class),
                         rs.getObject("holding_position_count", Long.class)
@@ -448,7 +450,7 @@ public class AdminFlowQueryService {
                     current.totalAsset(),
                     current.cashBalance(),
                     current.marketValue(),
-                    current.totalAsset().subtract(current.cashBalance()).subtract(current.marketValue()),
+                    current.pendingSubscriptionAsset(),
                     current.holdingQuantity(),
                     current.reservedSellQuantity(),
                     availableHoldingQuantity(current.holdingQuantity(), current.reservedSellQuantity()),
@@ -563,6 +565,7 @@ public class AdminFlowQueryService {
             BigDecimal totalAsset,
             BigDecimal cashBalance,
             BigDecimal marketValue,
+            BigDecimal pendingSubscriptionAsset,
             Long holdingQuantity,
             Long reservedSellQuantity,
             Long holdingPositionCount

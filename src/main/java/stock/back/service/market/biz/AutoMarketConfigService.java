@@ -148,20 +148,7 @@ public class AutoMarketConfigService {
         );
         return toAutoMarketConfigResponse(
                 config,
-                new AutoMarketDailyRegimeResponse(
-                        dailyRegime.symbol(),
-                        dailyRegime.simulationTradeDate(),
-                        dailyRegime.regimePhase(),
-                        dailyRegime.pricePressure(),
-                        dailyRegime.assetPreferencePressure(),
-                        dailyRegime.volatilityPressure(),
-                        dailyRegime.liquidityPressure(),
-                        dailyRegime.executionAggressionPressure(),
-                        dailyRegime.seed(),
-                        modifier,
-                        dailyRegime.createdAt(),
-                        dailyRegime.updatedAt()
-                )
+                dailyRegime.withCurrentModifier(modifier)
         );
     }
 
@@ -306,10 +293,25 @@ public class AutoMarketConfigService {
                     seed
             );
         }
+        AutoMarketDailyRegimeResponse regenerated = loadDailyRegime(
+                config.getSymbol(),
+                currentMarketDateTime,
+                regimePhase
+        );
+        if (regenerated != null) {
+            return regenerated.withCurrentModifier(loadCurrentModifier(
+                    config.getSymbol(),
+                    currentMarketDateTime,
+                    regimePhase
+            ));
+        }
         return new AutoMarketDailyRegimeResponse(
                 config.getSymbol(),
                 currentMarketDateTime.toLocalDate(),
                 regimePhase,
+                regimePhase,
+                1,
+                1,
                 pricePressure,
                 assetPreferencePressure,
                 volatilityPressure,
@@ -545,6 +547,19 @@ public class AutoMarketConfigService {
                                simulation_trade_date,
                                regime_phase,
                                coalesce(source_regime_phase, regime_phase) as source_regime_phase,
+                               (
+                                   select count(*)
+                                     from stock_order_book_daily_regime prepared
+                                    where prepared.symbol = current_regime.symbol
+                                      and prepared.simulation_trade_date = current_regime.simulation_trade_date
+                               ) as prepared_regime_slot_count,
+                               (
+                                   select count(*)
+                                     from stock_order_book_daily_regime applied
+                                    where applied.symbol = current_regime.symbol
+                                      and applied.simulation_trade_date = current_regime.simulation_trade_date
+                                      and coalesce(applied.source_regime_phase, applied.regime_phase) = applied.regime_phase
+                               ) as daily_application_count,
                                price_pressure,
                                asset_preference_pressure,
                                volatility_pressure,
@@ -553,16 +568,18 @@ public class AutoMarketConfigService {
                                seed,
                                created_at,
                                updated_at
-                         from stock_order_book_daily_regime
-                         where symbol = ?
-                           and simulation_trade_date = ?
-                           and regime_phase = ?
+                         from stock_order_book_daily_regime current_regime
+                         where current_regime.symbol = ?
+                           and current_regime.simulation_trade_date = ?
+                           and current_regime.regime_phase = ?
                         """,
                         (rs, rowNum) -> new AutoMarketDailyRegimeResponse(
                                 rs.getString("symbol"),
                                 rs.getDate("simulation_trade_date").toLocalDate(),
                                 rs.getString("regime_phase"),
                                 rs.getString("source_regime_phase"),
+                                rs.getInt("daily_application_count"),
+                                rs.getInt("prepared_regime_slot_count"),
                                 rs.getInt("price_pressure"),
                                 rs.getInt("asset_preference_pressure"),
                                 rs.getInt("volatility_pressure"),

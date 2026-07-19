@@ -55,6 +55,9 @@ public class PortfolioSnapshot {
     @Column(name = "cash_balance", nullable = false, precision = 19, scale = 2)
     private BigDecimal cashBalance;
 
+    @Column(name = "pending_subscription_asset", nullable = false, precision = 19, scale = 2)
+    private BigDecimal pendingSubscriptionAsset;
+
     @Column(name = "market_value", nullable = false, precision = 19, scale = 2)
     private BigDecimal marketValue;
 

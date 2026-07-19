@@ -8,6 +8,8 @@ public record AutoMarketDailyRegimeResponse(
         LocalDate simulationTradeDate,
         String regimePhase,
         String sourceRegimePhase,
+        int dailyApplicationCount,
+        int preparedRegimeSlotCount,
         int pricePressure,
         int assetPreferencePressure,
         int volatilityPressure,
@@ -22,6 +24,8 @@ public record AutoMarketDailyRegimeResponse(
         sourceRegimePhase = sourceRegimePhase == null || sourceRegimePhase.isBlank()
                 ? regimePhase
                 : sourceRegimePhase;
+        dailyApplicationCount = Math.clamp(dailyApplicationCount, 0, 4);
+        preparedRegimeSlotCount = Math.clamp(preparedRegimeSlotCount, 0, 4);
     }
 
     public AutoMarketDailyRegimeResponse(
@@ -43,6 +47,8 @@ public record AutoMarketDailyRegimeResponse(
                 simulationTradeDate,
                 regimePhase,
                 regimePhase,
+                0,
+                0,
                 pricePressure,
                 assetPreferencePressure,
                 volatilityPressure,
@@ -50,6 +56,26 @@ public record AutoMarketDailyRegimeResponse(
                 executionAggressionPressure,
                 seed,
                 currentModifier,
+                createdAt,
+                updatedAt
+        );
+    }
+
+    public AutoMarketDailyRegimeResponse withCurrentModifier(AutoMarketRegimeModifierResponse modifier) {
+        return new AutoMarketDailyRegimeResponse(
+                symbol,
+                simulationTradeDate,
+                regimePhase,
+                sourceRegimePhase,
+                dailyApplicationCount,
+                preparedRegimeSlotCount,
+                pricePressure,
+                assetPreferencePressure,
+                volatilityPressure,
+                liquidityPressure,
+                executionAggressionPressure,
+                seed,
+                modifier,
                 createdAt,
                 updatedAt
         );

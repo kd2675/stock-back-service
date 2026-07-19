@@ -7,6 +7,8 @@ import stock.back.service.database.entity.StockListingAutoAccountConfig;
 
 final class ListingAutoAccountConfigValidator {
 
+    private static final int MAX_NEW_ORDERS_PER_SIDE_PER_RUN = 10;
+
     private ListingAutoAccountConfigValidator() {
     }
 
@@ -50,6 +52,18 @@ final class ListingAutoAccountConfigValidator {
                 && config.getTargetSellQuantity() <= 0) {
             throw StockException.badRequest("Listing auto account active sell side requires a positive target quantity");
         }
+        if (config.getPositionSide() == ListingAutoPosition.BUY_ONLY
+                && config.getTargetHoldingQuantity() <= 0) {
+            throw StockException.badRequest("Buy-only listing operation requires a positive target holding quantity");
+        }
+        if (config.getPositionSide() == ListingAutoPosition.BUY_ONLY
+                || config.getPositionSide() == ListingAutoPosition.TWO_SIDED) {
+            validateQuoteTargetCanBeReplenished(config, config.getTargetBuyQuantity(), "buy");
+        }
+        if (config.getPositionSide() == ListingAutoPosition.SELL_ONLY
+                || config.getPositionSide() == ListingAutoPosition.TWO_SIDED) {
+            validateQuoteTargetCanBeReplenished(config, config.getTargetSellQuantity(), "sell");
+        }
         if (config.getPositionSide() == ListingAutoPosition.TWO_SIDED) {
             validateTwoSidedInventoryPolicy(config);
         }
@@ -59,10 +73,27 @@ final class ListingAutoAccountConfigValidator {
 
     static void validate(StockListingAutoAccountConfig config, long issuedShares) {
         validate(config);
+        if (issuedShares > 0 && config.getTargetHoldingQuantity() > issuedShares) {
+            throw StockException.badRequest("Listing auto account target holding quantity cannot exceed issued shares");
+        }
         if (config.getPositionSide() == ListingAutoPosition.TWO_SIDED
                 && issuedShares > 0
                 && config.getTargetHoldingQuantity() > issuedShares - config.getInventoryBandQuantity()) {
             throw StockException.badRequest("Two-sided inventory upper limit cannot exceed issued shares");
+        }
+    }
+
+    private static void validateQuoteTargetCanBeReplenished(
+            StockListingAutoAccountConfig config,
+            long targetQuantity,
+            String side
+    ) {
+        long oneRunCapacity = (long) config.getMaxOrderQuantity() * MAX_NEW_ORDERS_PER_SIDE_PER_RUN;
+        if (targetQuantity > oneRunCapacity) {
+            throw StockException.badRequest(
+                    "Listing auto account %s quote target cannot exceed %d times max order quantity"
+                            .formatted(side, MAX_NEW_ORDERS_PER_SIDE_PER_RUN)
+            );
         }
     }
 
