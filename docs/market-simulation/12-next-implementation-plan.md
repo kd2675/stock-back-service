@@ -58,9 +58,9 @@
 
 현재 결정:
 
-- 초기 단계는 가격대별 tick ladder가 아니라 종목별 단일 tick size를 사용한다.
-- `VIRTUAL_PRICE`는 기본 1원 tick, `stock_price.previous_close` 기준 ±30%를 사용한다.
-- `ORDER_BOOK`은 `stock_order_book_instrument.tick_size`, `price_limit_rate`를 사용한다.
+- `ORDER_BOOK`은 가격대별 동적 호가단위를 사용하고 종목의 `tick_size`는 현재가 기준 참고값으로 유지한다.
+- `VIRTUAL_PRICE`는 프로젝트 공통 가격대별 동적 호가단위와 `stock_price.previous_close` 기준 ±30%를 사용한다.
+- `ORDER_BOOK`은 종목 market·지정가 가격대별 호가단위와 `price_limit_rate`를 사용한다.
 - 가격제한폭 기준가는 `stock_price.previous_close`이며, 주문장 종목에 아직 가격 row가 없으면 `initial_price`로 fallback한다.
 
 검증:

@@ -50,7 +50,7 @@
 - 수요/공급 주문장 전용 종목이다.
 - 관리자가 만든다.
 - `issued_shares`, `tradable_shares`는 기업 이벤트와 자동장 공급 제한에 사용한다.
-- `tick_size`는 LIMIT 주문 지정가가 맞춰야 하는 최소 가격 단위다.
+- `tick_size`는 종목 생성 시 현재가 기준으로 저장한 표시·호환용 호가단위다. LIMIT 주문의 실제 유효성은 market과 지정가 가격대에서 동적 호가단위를 다시 계산해 검증한다.
 - `price_limit_rate`는 `stock_price.previous_close` 기준 일일 상하한 검증에 사용한다.
 
 `stock_virtual_market_config`

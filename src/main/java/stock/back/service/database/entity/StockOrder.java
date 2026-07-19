@@ -133,10 +133,18 @@ public class StockOrder {
     }
 
     public void amendLimitOrder(long quantity, BigDecimal limitPrice, BigDecimal reservedCash, LocalDateTime amendedAt) {
+        LocalDateTime effectiveAmendedAt = amendedAt == null ? LocalDateTime.now() : amendedAt;
+        boolean priceChanged = this.limitPrice == null
+                ? limitPrice != null
+                : limitPrice == null || this.limitPrice.compareTo(limitPrice) != 0;
+        boolean quantityIncreased = this.quantity != null && quantity > this.quantity;
+        if (priceChanged || quantityIncreased) {
+            this.createdAt = effectiveAmendedAt;
+        }
         this.quantity = quantity;
         this.limitPrice = limitPrice;
         this.reservedCash = reservedCash;
-        this.updatedAt = amendedAt == null ? LocalDateTime.now() : amendedAt;
+        this.updatedAt = effectiveAmendedAt;
     }
 
     public void reduceOpenQuantity(long quantityToCancel, BigDecimal reservedCash) {

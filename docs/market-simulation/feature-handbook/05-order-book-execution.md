@@ -24,7 +24,7 @@
 
 ## 현재 불변식
 
-- 같은 사용자끼리 자전거래하지 않는다.
+- 같은 계좌의 매수·매도 주문끼리는 자전거래하지 않는다.
 - 주문장 종목은 현재가 시장 종목과 공유하지 않는다.
 - `stock_order_book_market_config.enabled=true`, `market_status='OPEN'`인 symbol만 체결한다.
 - 체결가 반영은 Redis 실패와 무관하게 DB 원장을 우선한다.

@@ -56,8 +56,9 @@
    - `VIRTUAL_PRICE`: `stock_virtual_market_config`
    - `ORDER_BOOK`: `stock_order_book_market_config`
 7. LIMIT 주문은 호가 단위와 가격제한폭을 검증한다.
-   - `VIRTUAL_PRICE`: 기본 1원 tick, `stock_price.previous_close` 기준 ±30%
-   - `ORDER_BOOK`: `stock_order_book_instrument.tick_size`, `price_limit_rate`, `stock_price.previous_close` 기준
+   - `VIRTUAL_PRICE`: 프로젝트 공통 가격대별 동적 호가단위, `stock_price.previous_close` 기준 ±30%
+   - `ORDER_BOOK`: 종목 market과 지정가 가격대별 동적 호가단위, `price_limit_rate`, `stock_price.previous_close` 기준
+   - `stock_order_book_instrument.tick_size`는 현재가 기준 표시·저장 참고값이며 실제 지정가 검증은 지정가 가격대에서 호가단위를 다시 계산한다.
    - 주문장 종목에 아직 `stock_price`가 없으면 `initial_price`를 가격제한 기준가로 사용한다.
    - `stock_price.previous_close`는 장마감 롤오버 job이 직전 장 `current_price`로 갱신한다.
 8. 매수 주문은 예약금을 계산한다.
@@ -104,12 +105,13 @@
    - 새 예약수량이 기존보다 크면 보유 가능 수량을 추가 예약한다.
    - 새 예약수량이 기존보다 작으면 차이를 해제한다.
 9. 주문의 총 수량, 지정가, 예약금을 갱신한다.
+10. 지정가 변경 또는 총 수량 증가는 새 주문처럼 시간 우선순위를 잃고 우선순위 시각을 정정 시각으로 바꾼다. 같은 가격에서 총 수량을 줄이는 정정과 부분 취소는 기존 시간 우선순위를 유지한다.
 
 ## 현재 한계
 
 - 정정/취소 이력 테이블은 아직 없다. 현재는 `stock_order` 현재 상태만 갱신한다.
 - 시장가 주문 정정은 막혀 있다. 시장가 주문의 가격 기준은 체결 시점 반대편 호가 또는 현재가에 의존하기 때문이다.
-- 가격대별 tick ladder는 아직 없다. 현재는 주문장 종목별 단일 tick size와 현재가 시장 기본 1원 tick을 사용한다.
+- `VIRTUAL_PRICE`와 `ORDER_BOOK` 모두 가격대별 동적 호가단위를 사용한다. 현재 market 값은 프로젝트의 공통 주권 호가단위 또는 ETF·ETN·ELW 5원 고정 규칙을 선택하며, 거래소·시장별 세부 분리는 아직 단순화되어 있다.
 - 장전 주문 접수 같은 시간 조건은 아직 없다. 현재는 `OPEN` 상태에서만 신규 주문을 받는다.
 
 ## 다음에 바꿀 때 순서
@@ -123,9 +125,9 @@
 
 가격 정책을 더 정교하게 바꿀 때:
 
-1. 가격대별 tick ladder 테이블을 추가할지 결정한다.
+1. 거래소·시장별 호가단위를 더 세분화할지 결정한다.
 2. 동시호가/휴장/거래정지가 생길 때 장마감 롤오버 실행 시점을 함께 설계한다.
-3. 기존 주문장 종목의 `tick_size`, `price_limit_rate` migration 값을 점검한다.
+3. 기존 주문장 종목의 market, `tick_size`, `price_limit_rate` migration 값을 점검한다.
 
 장 운영 시간을 추가할 때:
 

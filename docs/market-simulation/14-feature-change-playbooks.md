@@ -90,7 +90,7 @@
 - scheduler: `OrderBookExecutionScheduler`
 - 대상: `market_type='ORDER_BOOK'`
 - 우선순위: 가격 우선, 시간 우선
-- 자전거래 방지: 같은 `user_key`끼리는 매칭하지 않는다.
+- 자전거래 방지: 같은 `account_id`끼리는 매칭하지 않는다.
 
 변경 순서:
 
