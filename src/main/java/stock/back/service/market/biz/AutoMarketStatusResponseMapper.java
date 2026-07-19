@@ -7,6 +7,7 @@ import stock.back.service.database.entity.StockListingAutoAccountConfig;
 import stock.back.service.market.vo.AutoMarketConfigResponse;
 import stock.back.service.market.vo.AutoMarketDailyRegimeResponse;
 import stock.back.service.market.vo.AutoMarketDistributionBiasResponse;
+import stock.back.service.market.vo.AutoMarketRegimeCountWeightsResponse;
 import stock.back.service.market.vo.AutoMarketStatusResponse;
 import stock.back.service.market.vo.AutoParticipantProfileConfigResponse;
 import stock.back.service.market.vo.AutoParticipantResponse;
@@ -98,6 +99,7 @@ final class AutoMarketStatusResponseMapper {
                 Boolean.TRUE.equals(config.getEnabled()),
                 config.getMaxOrderQuantity() == null ? 0 : config.getMaxOrderQuantity(),
                 config.getOrderTtlSeconds() == null ? 0 : config.getOrderTtlSeconds(),
+                primaryRegimeCountWeights(config),
                 primaryDistributionBias(config),
                 secondaryDistributionBias(config),
                 dailyRegime
@@ -179,6 +181,17 @@ final class AutoMarketStatusResponseMapper {
                 valueOrZero(config.getPrimaryVolatilityPressureBias()),
                 valueOrZero(config.getPrimaryLiquidityPressureBias()),
                 valueOrZero(config.getPrimaryExecutionAggressionPressureBias())
+        );
+    }
+
+    static AutoMarketRegimeCountWeightsResponse primaryRegimeCountWeights(
+            StockAutoMarketConfig config
+    ) {
+        return new AutoMarketRegimeCountWeightsResponse(
+                valueOrZero(config.getPrimaryRegimeCount1Weight()),
+                valueOrZero(config.getPrimaryRegimeCount2Weight()),
+                valueOrZero(config.getPrimaryRegimeCount3Weight()),
+                config.getPrimaryRegimeCount4Weight() == null ? 100 : config.getPrimaryRegimeCount4Weight()
         );
     }
 

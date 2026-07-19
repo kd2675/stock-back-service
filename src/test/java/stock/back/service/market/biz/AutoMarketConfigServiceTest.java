@@ -80,6 +80,7 @@ class AutoMarketConfigServiceTest {
                         false,
                         1000,
                         30,
+                        new stock.back.service.market.vo.AutoMarketRegimeCountWeightsRequest(10, 20, 50, 20),
                         new stock.back.service.market.vo.AutoMarketDistributionBiasRequest(90, -20, 10, 0, 40),
                         new stock.back.service.market.vo.AutoMarketDistributionBiasRequest(-30, 20, 0, 10, -10)
                 )
@@ -89,6 +90,7 @@ class AutoMarketConfigServiceTest {
         assertThat(response.enabled()).isFalse();
         assertThat(response.primaryDistributionBias().pricePressure()).isEqualTo(90);
         assertThat(response.secondaryDistributionBias().pricePressure()).isEqualTo(-30);
+        assertThat(response.primaryRegimeCountWeights().threeTimes()).isEqualTo(50);
         assertThat(response.maxOrderQuantity()).isEqualTo(1000);
         assertThat(response.orderTtlSeconds()).isEqualTo(30);
         verify(stockAutoMarketConfigRepository).save(any(StockAutoMarketConfig.class));
@@ -105,12 +107,36 @@ class AutoMarketConfigServiceTest {
                         true,
                         100,
                         30,
+                        null,
                         new stock.back.service.market.vo.AutoMarketDistributionBiasRequest(101, 0, 0, 0, 0),
                         null
                 )
         ))
                 .isInstanceOf(StockException.class)
                 .hasMessageContaining("must be between -100 and 100");
+
+        verify(stockAutoMarketConfigRepository, never()).save(any());
+    }
+
+    @Test
+    void updateAutoMarketConfig_allRegimeCountWeightsZero_throwsBadRequest() {
+        when(stockOrderBookInstrumentRepository.existsById("ZQ001")).thenReturn(true);
+        when(stockAutoMarketConfigRepository.findById("ZQ001"))
+                .thenReturn(Optional.of(StockAutoMarketConfig.defaults("ZQ001")));
+
+        assertThatThrownBy(() -> service.updateAutoMarketConfig(
+                "zq001",
+                new AutoMarketConfigUpdateRequest(
+                        true,
+                        100,
+                        30,
+                        new stock.back.service.market.vo.AutoMarketRegimeCountWeightsRequest(0, 0, 0, 0),
+                        null,
+                        null
+                )
+        ))
+                .isInstanceOf(StockException.class)
+                .hasMessageContaining("At least one primary regime count weight");
 
         verify(stockAutoMarketConfigRepository, never()).save(any());
     }
@@ -131,8 +157,18 @@ class AutoMarketConfigServiceTest {
                 any(),
                 any(),
                 any(),
+                any(),
+                any(),
+                any(),
                 any()
         )).thenReturn(1);
+        lenient().when(jdbcTemplate.query(
+                org.mockito.ArgumentMatchers.contains("from stock_order_book_daily_regime"),
+                org.mockito.ArgumentMatchers.<RowMapper<AutoMarketDailyRegimeResponse>>any(),
+                any(),
+                any(),
+                any()
+        )).thenReturn(java.util.List.of());
         when(jdbcTemplate.query(
                 org.mockito.ArgumentMatchers.contains("from stock_order_book_regime_modifier"),
                 org.mockito.ArgumentMatchers.<org.springframework.jdbc.core.RowMapper<Object>>any(),

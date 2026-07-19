@@ -812,6 +812,33 @@ class StockMysqlDdlContractTest {
     }
 
     @Test
+    void autoMarketRegimeCountWeightsDdl_matchesBatchAndCanonicalSchema() throws IOException {
+        String backAlter = Files.readString(
+                Path.of("src/main/resources/db/ddl/stock_auto_market_regime_count_weights_alter.sql"),
+                StandardCharsets.UTF_8
+        );
+        String batchAlter = Files.readString(
+                Path.of("../stock-batch-service/src/main/resources/db/ddl/stock_auto_market_regime_count_weights_alter.sql"),
+                StandardCharsets.UTF_8
+        );
+        String canonicalDdl = Files.readString(
+                Path.of("src/main/resources/db/ddl/stock_all.sql"),
+                StandardCharsets.UTF_8
+        );
+
+        assertThat(List.of(
+                backAlter.equals(batchAlter),
+                backAlter.contains("USE STOCK_SERVICE"),
+                backAlter.contains("primary_regime_count_1_weight"),
+                backAlter.contains("primary_regime_count_4_weight"),
+                backAlter.contains("source_regime_phase"),
+                backAlter.contains("chk_stock_auto_market_regime_count_weights"),
+                canonicalDdl.contains("primary_regime_count_4_weight INT NOT NULL DEFAULT 100"),
+                canonicalDdl.contains("source_regime_phase VARCHAR(20) NULL")
+        )).doesNotContain(false);
+    }
+
+    @Test
     void priceTickLatestLookupAlterDdl_isIdempotentAndMatchesBatchCopy() throws IOException {
         String backDdl = Files.readString(
                 Path.of("src/main/resources/db/ddl/stock_price_tick_latest_lookup_alter.sql"),

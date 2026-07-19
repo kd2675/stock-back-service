@@ -23,6 +23,18 @@ public class StockAutoMarketConfig {
     @Column(name = "enabled", nullable = false)
     private Boolean enabled;
 
+    @Column(name = "primary_regime_count_1_weight", nullable = false)
+    private Integer primaryRegimeCount1Weight;
+
+    @Column(name = "primary_regime_count_2_weight", nullable = false)
+    private Integer primaryRegimeCount2Weight;
+
+    @Column(name = "primary_regime_count_3_weight", nullable = false)
+    private Integer primaryRegimeCount3Weight;
+
+    @Column(name = "primary_regime_count_4_weight", nullable = false)
+    private Integer primaryRegimeCount4Weight;
+
     @Column(name = "primary_price_pressure_bias", nullable = false)
     private Integer primaryPricePressureBias;
 
@@ -70,6 +82,10 @@ public class StockAutoMarketConfig {
         StockAutoMarketConfig config = new StockAutoMarketConfig();
         config.symbol = symbol;
         config.enabled = true;
+        config.primaryRegimeCount1Weight = 0;
+        config.primaryRegimeCount2Weight = 0;
+        config.primaryRegimeCount3Weight = 0;
+        config.primaryRegimeCount4Weight = 100;
         config.primaryPricePressureBias = 0;
         config.primaryAssetPreferencePressureBias = 0;
         config.primaryVolatilityPressureBias = 0;
@@ -111,6 +127,19 @@ public class StockAutoMarketConfig {
         primaryVolatilityPressureBias = valueOrCurrent(volatility, primaryVolatilityPressureBias);
         primaryLiquidityPressureBias = valueOrCurrent(liquidity, primaryLiquidityPressureBias);
         primaryExecutionAggressionPressureBias = valueOrCurrent(executionAggression, primaryExecutionAggressionPressureBias);
+    }
+
+    public void updatePrimaryRegimeCountWeights(
+            Integer oneTime,
+            Integer twoTimes,
+            Integer threeTimes,
+            Integer fourTimes
+    ) {
+        primaryRegimeCount1Weight = valueOrCurrent(oneTime, primaryRegimeCount1Weight);
+        primaryRegimeCount2Weight = valueOrCurrent(twoTimes, primaryRegimeCount2Weight);
+        primaryRegimeCount3Weight = valueOrCurrent(threeTimes, primaryRegimeCount3Weight);
+        primaryRegimeCount4Weight = valueOrCurrent(fourTimes, primaryRegimeCount4Weight);
+        updatedAt = LocalDateTime.now();
     }
 
     public void updateSecondaryDistributionBias(

@@ -5,6 +5,7 @@ public record AutoMarketConfigResponse(
         boolean enabled,
         int maxOrderQuantity,
         int orderTtlSeconds,
+        AutoMarketRegimeCountWeightsResponse primaryRegimeCountWeights,
         AutoMarketDistributionBiasResponse primaryDistributionBias,
         AutoMarketDistributionBiasResponse secondaryDistributionBias,
         AutoMarketDailyRegimeResponse dailyRegime
