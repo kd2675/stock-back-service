@@ -1,9 +1,13 @@
 package stock.back.service.market.act;
 
+import java.time.LocalDate;
+import java.util.List;
+
 import auth.common.core.constant.UserRole;
 import auth.common.core.context.RequirePrincipalRole;
 import auth.common.core.context.UserContext;
 import lombok.RequiredArgsConstructor;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
@@ -14,6 +18,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import stock.back.service.market.biz.AutoMarketConfigService;
+import stock.back.service.market.biz.AutoMarketRegimeHistoryQueryService;
 import stock.back.service.market.biz.AutoParticipantOverviewCacheService;
 import stock.back.service.market.biz.AutoParticipantCashAdjustmentService;
 import stock.back.service.market.biz.AutoParticipantManagementService;
@@ -22,6 +27,7 @@ import stock.back.service.market.biz.AutoParticipantProfileConfigService;
 import stock.back.service.market.biz.AutoParticipantSymbolConfigService;
 import stock.back.service.market.vo.AutoMarketConfigResponse;
 import stock.back.service.market.vo.AutoMarketConfigUpdateRequest;
+import stock.back.service.market.vo.AutoMarketRegimeHistoryResponse;
 import stock.back.service.market.vo.AutoParticipantActivityScope;
 import stock.back.service.market.vo.AutoParticipantCashAdjustmentRequest;
 import stock.back.service.market.vo.AutoParticipantCashAdjustmentResponse;
@@ -38,8 +44,6 @@ import stock.back.service.market.vo.ListingAutoAccountRequest;
 import stock.back.service.market.vo.ListingAutoAccountResponse;
 import web.common.core.response.base.dto.ResponseDataDTO;
 
-import java.util.List;
-
 @RestController
 @RequestMapping("/api/stock/v1/markets")
 @RequiredArgsConstructor
@@ -50,6 +54,7 @@ public class AutoMarketAdminController {
     private final AutoParticipantOverviewCacheService autoParticipantOverviewCacheService;
     private final AutoParticipantProfileConfigService autoParticipantProfileConfigService;
     private final AutoMarketConfigService autoMarketConfigService;
+    private final AutoMarketRegimeHistoryQueryService autoMarketRegimeHistoryQueryService;
     private final AutoParticipantManagementService autoParticipantManagementService;
     private final AutoParticipantCashAdjustmentService autoParticipantCashAdjustmentService;
     private final AutoParticipantSymbolConfigService autoParticipantSymbolConfigService;
@@ -115,6 +120,15 @@ public class AutoMarketAdminController {
     @PostMapping("/auto-market/configs/{symbol}/regime-modifier/regenerate")
     public ResponseDataDTO<AutoMarketConfigResponse> regenerateAutoMarketRegimeModifier(@PathVariable String symbol) {
         return ResponseDataDTO.of(autoMarketConfigService.regenerateRegimeModifier(symbol));
+    }
+
+    @GetMapping("/auto-market/configs/{symbol}/regime-history")
+    public ResponseDataDTO<AutoMarketRegimeHistoryResponse> getAutoMarketRegimeHistory(
+            @PathVariable String symbol,
+            @RequestParam(required = false)
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate tradeDate
+    ) {
+        return ResponseDataDTO.of(autoMarketRegimeHistoryQueryService.getHistory(symbol, tradeDate));
     }
 
     @PatchMapping("/auto-market/participants/{userKey}")

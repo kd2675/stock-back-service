@@ -87,6 +87,7 @@ class StockBackApiSurfaceContractTest {
             "PATCH /api/stock/v1/markets/batch-jobs/runtime-controls/{jobName}",
             "PATCH /api/stock/v1/markets/auto-market/profile-configs/{profileType}",
             "PATCH /api/stock/v1/markets/auto-market/configs/{symbol}",
+            "GET /api/stock/v1/markets/auto-market/configs/{symbol}/regime-history",
             "POST /api/stock/v1/markets/auto-market/configs/{symbol}/daily-regime/regenerate",
             "POST /api/stock/v1/markets/auto-market/configs/{symbol}/regime-modifier/regenerate",
             "PATCH /api/stock/v1/markets/auto-market/listing-accounts/{symbol}",
