@@ -10,6 +10,7 @@ import stock.back.service.market.vo.AdminFlowOverviewResponse;
 import stock.back.service.market.vo.AdminFundFlowScope;
 import stock.back.service.market.vo.AdminFundFlowSummaryResponse;
 import stock.back.service.market.vo.AdminInvestorCategoryFlowResponse;
+import stock.back.service.market.vo.AdminInvestorFlowHistoryResponse;
 import stock.back.service.market.vo.AdminInvestorFlowSummaryResponse;
 import stock.back.service.market.vo.AdminOrderFlowSummaryResponse;
 import stock.back.service.market.vo.AdminRecentCashFlowResponse;
@@ -32,7 +33,7 @@ import java.util.Objects;
 public class AdminFlowQueryService {
 
     private static final int TOTAL_ASSET_HISTORY_PAGE_SIZE = 7;
-    private static final List<String> INVESTOR_CATEGORIES = List.of(
+    private static final List<String> PARTICIPANT_CATEGORIES = List.of(
             "MANUAL_PARTICIPANT",
             "AUTO_PARTICIPANT",
             "LISTING_UNDERWRITER"
@@ -40,9 +41,9 @@ public class AdminFlowQueryService {
 
     static final String INVESTOR_FLOW_SUMMARY_SQL = """
             select case
-                     when a.user_key like 'stock-listing-%' then 'LISTING_UNDERWRITER'
-                     when auto_participant.user_key is not null then 'AUTO_PARTICIPANT'
-                     else 'MANUAL_PARTICIPANT'
+                       when account.user_key like 'stock-listing-%' then 'LISTING_UNDERWRITER'
+                       when participant.user_key is not null then 'AUTO_PARTICIPANT'
+                       else 'MANUAL_PARTICIPANT'
                    end as participant_category,
                    sum(summary.buy_quantity) as buy_quantity,
                    sum(summary.sell_quantity) as sell_quantity,
@@ -52,14 +53,42 @@ public class AdminFlowQueryService {
                    sum(summary.sell_net_amount) as sell_net_amount,
                    max(summary.updated_at) as source_updated_at
               from stock_execution_account_day_summary summary
-              join stock_account a on a.id = summary.account_id
-              left join stock_auto_participant auto_participant on auto_participant.user_key = a.user_key
+              join stock_account account on account.id = summary.account_id
+              left join stock_auto_participant participant on participant.user_key = account.user_key
              where summary.simulation_trade_date = ?
              group by case
-                        when a.user_key like 'stock-listing-%' then 'LISTING_UNDERWRITER'
-                        when auto_participant.user_key is not null then 'AUTO_PARTICIPANT'
+                        when account.user_key like 'stock-listing-%' then 'LISTING_UNDERWRITER'
+                        when participant.user_key is not null then 'AUTO_PARTICIPANT'
                         else 'MANUAL_PARTICIPANT'
                       end
+            """;
+
+    static final String INVESTOR_FLOW_HISTORY_SQL = """
+            select summary.simulation_trade_date,
+                   case
+                       when account.user_key like 'stock-listing-%' then 'LISTING_UNDERWRITER'
+                       when participant.user_key is not null then 'AUTO_PARTICIPANT'
+                       else 'MANUAL_PARTICIPANT'
+                   end as participant_category,
+                   sum(summary.buy_quantity) as buy_quantity,
+                   sum(summary.sell_quantity) as sell_quantity,
+                   sum(summary.buy_gross_amount) as buy_amount,
+                   sum(summary.sell_gross_amount) as sell_amount,
+                   sum(summary.buy_net_amount) as buy_net_amount,
+                   sum(summary.sell_net_amount) as sell_net_amount,
+                   max(summary.updated_at) as source_updated_at
+              from stock_execution_account_day_summary summary
+              join stock_account account on account.id = summary.account_id
+              left join stock_auto_participant participant on participant.user_key = account.user_key
+             where summary.simulation_trade_date >= ?
+               and summary.simulation_trade_date <= ?
+             group by summary.simulation_trade_date,
+                      case
+                        when account.user_key like 'stock-listing-%' then 'LISTING_UNDERWRITER'
+                        when participant.user_key is not null then 'AUTO_PARTICIPANT'
+                        else 'MANUAL_PARTICIPANT'
+                      end
+             order by summary.simulation_trade_date desc
             """;
 
     static final String FUND_FLOW_SUMMARY_SQL = fundFlowSummarySql("", "");
@@ -313,6 +342,48 @@ public class AdminFlowQueryService {
     @Transactional(readOnly = true, timeout = 10)
     public AdminFundFlowSummaryResponse getAdminFundFlowSummary(AdminFundFlowScope scope) {
         return loadAdminFundFlowSummary(normalizeFlowScope(scope));
+    }
+
+    @Transactional(readOnly = true, timeout = 10)
+    public AdminInvestorFlowSummaryResponse getAdminInvestorFlowSummary() {
+        return loadAdminInvestorFlowSummary(todayStart().toLocalDate());
+    }
+
+    @Transactional(readOnly = true, timeout = 10)
+    public AdminInvestorFlowHistoryResponse getAdminInvestorFlowHistory(int days) {
+        int normalizedDays = Math.clamp(days, 1, 14);
+        LocalDate rangeEnd = todayStart().toLocalDate();
+        LocalDate rangeStart = rangeEnd.minusDays(normalizedDays - 1L);
+        Map<LocalDate, Map<String, InvestorCategoryAggregate>> aggregatesByDate = new LinkedHashMap<>();
+        jdbcClient.sql(INVESTOR_FLOW_HISTORY_SQL)
+                .params(rangeStart, rangeEnd)
+                .query((rs, rowNum) -> new DatedInvestorCategoryAggregate(
+                        rs.getObject("simulation_trade_date", LocalDate.class),
+                        new InvestorCategoryAggregate(
+                                rs.getString("participant_category"),
+                                rs.getLong("buy_quantity"),
+                                rs.getLong("sell_quantity"),
+                                MarketQuerySupport.zeroIfNull(rs.getBigDecimal("buy_amount")),
+                                MarketQuerySupport.zeroIfNull(rs.getBigDecimal("sell_amount")),
+                                MarketQuerySupport.zeroIfNull(rs.getBigDecimal("buy_net_amount")),
+                                MarketQuerySupport.zeroIfNull(rs.getBigDecimal("sell_net_amount")),
+                                MarketQuerySupport.toDateTime(rs.getTimestamp("source_updated_at"))
+                        )
+                ))
+                .list()
+                .forEach(datedAggregate -> aggregatesByDate
+                        .computeIfAbsent(datedAggregate.simulationTradeDate(), ignored -> new LinkedHashMap<>())
+                        .put(datedAggregate.aggregate().category(), datedAggregate.aggregate()));
+
+        List<AdminInvestorFlowSummaryResponse> dailyFlows = new ArrayList<>(normalizedDays);
+        for (int dayOffset = 0; dayOffset < normalizedDays; dayOffset++) {
+            LocalDate simulationTradeDate = rangeEnd.minusDays(dayOffset);
+            dailyFlows.add(toInvestorFlowSummary(
+                    simulationTradeDate,
+                    aggregatesByDate.getOrDefault(simulationTradeDate, Map.of())
+            ));
+        }
+        return new AdminInvestorFlowHistoryResponse(rangeStart, rangeEnd, dailyFlows);
     }
 
     @Transactional(readOnly = true, timeout = 10)
@@ -597,6 +668,13 @@ public class AdminFlowQueryService {
                 .list()
                 .forEach(aggregate -> aggregatesByCategory.put(aggregate.category(), aggregate));
 
+        return toInvestorFlowSummary(simulationTradeDate, aggregatesByCategory);
+    }
+
+    private AdminInvestorFlowSummaryResponse toInvestorFlowSummary(
+            LocalDate simulationTradeDate,
+            Map<String, InvestorCategoryAggregate> aggregatesByCategory
+    ) {
         long totalBuyQuantity = aggregatesByCategory.values().stream()
                 .mapToLong(InvestorCategoryAggregate::buyQuantity)
                 .sum();
@@ -610,7 +688,7 @@ public class AdminFlowQueryService {
                 .max(LocalDateTime::compareTo)
                 .orElse(null);
 
-        List<AdminInvestorCategoryFlowResponse> categories = INVESTOR_CATEGORIES.stream()
+        List<AdminInvestorCategoryFlowResponse> categories = PARTICIPANT_CATEGORIES.stream()
                 .map(category -> toInvestorCategoryFlow(
                         aggregatesByCategory.getOrDefault(category, InvestorCategoryAggregate.empty(category)),
                         totalBuyQuantity,
@@ -708,5 +786,11 @@ public class AdminFlowQueryService {
                     null
             );
         }
+    }
+
+    private record DatedInvestorCategoryAggregate(
+            LocalDate simulationTradeDate,
+            InvestorCategoryAggregate aggregate
+    ) {
     }
 }

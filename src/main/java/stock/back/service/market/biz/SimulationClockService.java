@@ -43,6 +43,12 @@ public class SimulationClockService {
     @Value("${stock.market-session.close-time:18:00}")
     private String closeTimeValue;
 
+    @Value("${stock.market-session.preopen-transform-time:04:30}")
+    private String preOpenTransformTimeValue;
+
+    @Value("${stock.market-session.auto-market-preparation-time:05:30}")
+    private String autoMarketPreparationTimeValue;
+
     @Transactional
     public SimulationClockSnapshot currentSnapshot() {
         SimulationClockRow row = findClock().orElseGet(this::createPausedClock);
@@ -124,6 +130,8 @@ public class SimulationClockService {
     ) {
         LocalTime openTime = marketOpenTime();
         LocalTime closeTime = marketCloseTime();
+        LocalTime preOpenTransformTime = preOpenTransformTime();
+        LocalTime autoMarketPreparationTime = autoMarketPreparationTime();
         SimulationMarketSession marketSession = SimulationMarketSessions.resolve(snapshot.simulationDateTime(), openTime, closeTime);
         ClockControlState controlState = resolveClockControlState(
                 snapshot,
@@ -137,8 +145,12 @@ public class SimulationClockService {
                 marketSession,
                 openTime,
                 closeTime,
+                preOpenTransformTime,
+                autoMarketPreparationTime,
                 controlState.activeBusinessDate(),
                 controlState.preparingBusinessDate(),
+                controlState.postClosePhase(),
+                controlState.postCloseStatus(),
                 controlState.advanceState().settlementCompleted(),
                 controlState.advanceState().marketOpenReady(),
                 controlState.availableJumpActions(),
@@ -273,12 +285,9 @@ public class SimulationClockService {
         return switch (action) {
             case TODAY_MARKET_CLOSE -> currentDateTime.toLocalDate().atTime(closeTime);
             case NEXT_SIMULATION_DAY_START -> currentDateTime.toLocalDate().plusDays(1).atStartOfDay();
-            case NEXT_MARKET_OPEN -> {
-                LocalDate targetDate = session == SimulationMarketSession.AFTER_CLOSE
-                        ? currentDateTime.toLocalDate().plusDays(1)
-                        : currentDateTime.toLocalDate();
-                yield targetDate.atTime(openTime);
-            }
+            case NEXT_PREOPEN_TRANSFORM_START -> currentDateTime.toLocalDate().atTime(preOpenTransformTime());
+            case NEXT_AUTO_MARKET_PREPARATION_START -> currentDateTime.toLocalDate().atTime(autoMarketPreparationTime());
+            case NEXT_MARKET_OPEN -> currentDateTime.toLocalDate().atTime(openTime);
         };
     }
 
@@ -346,7 +355,7 @@ public class SimulationClockService {
                 activeBusinessDate
         );
         List<SimulationClockJumpAction> availableJumpActions = resolveAvailableJumpActions(
-                snapshot.simulationDate(),
+                snapshot.simulationDateTime(),
                 session,
                 baseSimulationDate,
                 activeBusinessDate,
@@ -356,6 +365,8 @@ public class SimulationClockService {
         return new ClockControlState(
                 activeBusinessDate,
                 row.preparingBusinessDate(),
+                row.phase(),
+                row.status(),
                 advanceState,
                 availableJumpActions
         );
@@ -401,19 +412,27 @@ public class SimulationClockService {
                 && "COMPLETED".equals(row.status());
         boolean settlementCompleted = isSettledPhase(row.phase())
                 && (reconciledSettlement || legacyCompleted);
+        boolean reportsAggregated = settlementCompleted && isReportsAggregatedPhase(row.phase());
+        boolean marketDataPrepared = settlementCompleted && isMarketDataPreparedPhase(row.phase());
         boolean marketOpenReady = settlementCompleted
                 && ("READY_TO_OPEN".equals(row.phase()) || "COMPLETED".equals(row.phase()));
-        return new PostCloseAdvanceState(settlementCompleted, marketOpenReady);
+        return new PostCloseAdvanceState(
+                settlementCompleted,
+                reportsAggregated,
+                marketDataPrepared,
+                marketOpenReady
+        );
     }
 
     private List<SimulationClockJumpAction> resolveAvailableJumpActions(
-            LocalDate rawSimulationDate,
+            LocalDateTime rawSimulationDateTime,
             SimulationMarketSession session,
             LocalDate baseSimulationDate,
             LocalDate activeBusinessDate,
             LocalDate preparingBusinessDate,
             PostCloseAdvanceState advanceState
     ) {
+        LocalDate rawSimulationDate = rawSimulationDateTime.toLocalDate();
         return switch (session) {
             case REGULAR -> activeBusinessDate.equals(rawSimulationDate)
                     && preparingBusinessDate == null
@@ -422,12 +441,6 @@ public class SimulationClockService {
             case AFTER_CLOSE -> {
                 if (!activeBusinessDate.equals(rawSimulationDate)) {
                     yield List.of();
-                }
-                if (advanceState.marketOpenReady()) {
-                    yield List.of(
-                            SimulationClockJumpAction.NEXT_SIMULATION_DAY_START,
-                            SimulationClockJumpAction.NEXT_MARKET_OPEN
-                    );
                 }
                 yield advanceState.settlementCompleted()
                         ? List.of(SimulationClockJumpAction.NEXT_SIMULATION_DAY_START)
@@ -438,10 +451,26 @@ public class SimulationClockService {
                         && activeBusinessDate.equals(baseSimulationDate);
                 boolean preparedNextBusinessDate = activeBusinessDate.plusDays(1).equals(rawSimulationDate)
                         && rawSimulationDate.equals(preparingBusinessDate);
-                yield advanceState.marketOpenReady()
-                        && (initialSimulationDate || preparedNextBusinessDate)
-                        ? List.of(SimulationClockJumpAction.NEXT_MARKET_OPEN)
-                        : List.of();
+                if (!initialSimulationDate && !preparedNextBusinessDate) {
+                    yield List.of();
+                }
+                LocalTime currentTime = rawSimulationDateTime.toLocalTime();
+                if (currentTime.isBefore(preOpenTransformTime())) {
+                    yield advanceState.reportsAggregated()
+                            ? List.of(SimulationClockJumpAction.NEXT_PREOPEN_TRANSFORM_START)
+                            : List.of();
+                }
+                if (currentTime.isBefore(autoMarketPreparationTime())) {
+                    yield advanceState.marketDataPrepared()
+                            ? List.of(SimulationClockJumpAction.NEXT_AUTO_MARKET_PREPARATION_START)
+                            : List.of();
+                }
+                if (currentTime.isBefore(marketOpenTime())) {
+                    yield advanceState.marketOpenReady()
+                            ? List.of(SimulationClockJumpAction.NEXT_MARKET_OPEN)
+                            : List.of();
+                }
+                yield List.of();
             }
         };
     }
@@ -476,6 +505,16 @@ public class SimulationClockService {
                     : StockException.conflict(
                             "Market close freeze, portfolio settlement, and active business-date alignment are required before moving to the next simulation day"
                     );
+            case NEXT_PREOPEN_TRANSFORM_START -> session != SimulationMarketSession.PRE_OPEN
+                    ? StockException.conflict("Pre-open transform jump is only allowed before market open")
+                    : StockException.conflict(
+                            "Overnight cash flow, corporate cash actions, report aggregation, and prepared business-date alignment are required before moving to the pre-open transform boundary"
+                    );
+            case NEXT_AUTO_MARKET_PREPARATION_START -> session != SimulationMarketSession.PRE_OPEN
+                    ? StockException.conflict("Auto-market preparation jump is only allowed before market open")
+                    : StockException.conflict(
+                            "Pre-open security transforms, market-data preparation, and prepared business-date alignment are required before moving to the auto-market preparation boundary"
+                    );
             case NEXT_MARKET_OPEN -> session == SimulationMarketSession.REGULAR
                     ? StockException.conflict("Next market open jump is not allowed during regular session")
                     : StockException.conflict(
@@ -489,6 +528,21 @@ public class SimulationClockService {
             case "PORTFOLIO_SETTLED", "OVERNIGHT_CASH_APPLIED", "CORPORATE_CASH_APPLIED",
                     "REPORTS_AGGREGATED", "PREOPEN_SECURITY_TRANSFORMS_APPLIED",
                     "MARKET_DATA_PREPARED", "AUTO_MARKET_PREPARED", "READY_TO_OPEN", "COMPLETED" -> true;
+            default -> false;
+        };
+    }
+
+    private boolean isReportsAggregatedPhase(String phase) {
+        return switch (phase) {
+            case "REPORTS_AGGREGATED", "PREOPEN_SECURITY_TRANSFORMS_APPLIED",
+                    "MARKET_DATA_PREPARED", "AUTO_MARKET_PREPARED", "READY_TO_OPEN", "COMPLETED" -> true;
+            default -> false;
+        };
+    }
+
+    private boolean isMarketDataPreparedPhase(String phase) {
+        return switch (phase) {
+            case "MARKET_DATA_PREPARED", "AUTO_MARKET_PREPARED", "READY_TO_OPEN", "COMPLETED" -> true;
             default -> false;
         };
     }
@@ -513,6 +567,14 @@ public class SimulationClockService {
 
     private LocalTime marketCloseTime() {
         return parseTime(closeTimeValue, LocalTime.of(18, 0));
+    }
+
+    private LocalTime preOpenTransformTime() {
+        return parseTime(preOpenTransformTimeValue, LocalTime.of(4, 30));
+    }
+
+    private LocalTime autoMarketPreparationTime() {
+        return parseTime(autoMarketPreparationTimeValue, LocalTime.of(5, 30));
     }
 
     private LocalTime parseTime(String value, LocalTime defaultValue) {
@@ -543,14 +605,21 @@ public class SimulationClockService {
     ) {
     }
 
-    private record PostCloseAdvanceState(boolean settlementCompleted, boolean marketOpenReady) {
-        private static final PostCloseAdvanceState PENDING = new PostCloseAdvanceState(false, false);
-        private static final PostCloseAdvanceState READY = new PostCloseAdvanceState(true, true);
+    private record PostCloseAdvanceState(
+            boolean settlementCompleted,
+            boolean reportsAggregated,
+            boolean marketDataPrepared,
+            boolean marketOpenReady
+    ) {
+        private static final PostCloseAdvanceState PENDING = new PostCloseAdvanceState(false, false, false, false);
+        private static final PostCloseAdvanceState READY = new PostCloseAdvanceState(true, true, true, true);
     }
 
     private record ClockControlState(
             LocalDate activeBusinessDate,
             LocalDate preparingBusinessDate,
+            String postClosePhase,
+            String postCloseStatus,
             PostCloseAdvanceState advanceState,
             List<SimulationClockJumpAction> availableJumpActions
     ) {

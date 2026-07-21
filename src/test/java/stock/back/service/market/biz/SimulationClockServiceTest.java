@@ -104,35 +104,30 @@ class SimulationClockServiceTest {
     }
 
     @Test
-    void jumpToSafePreset_afterCloseWithReadyCycle_movesToNextMarketOpen() {
+    void jumpToSafePreset_afterCloseWithReadyCycle_requiresNextDayBoundaryFirst() {
         JdbcTemplate jdbcTemplate = createJdbcTemplate();
         insertPausedClock(jdbcTemplate, 5_700L);
         insertEnabledOrderBookInstrument(jdbcTemplate);
         insertPostCloseCycle(jdbcTemplate, LocalDate.of(2026, 1, 1), "READY_TO_OPEN", 1L, 1L, 0L);
         SimulationClockService service = service(jdbcTemplate);
 
-        SimulationClockResponse response = service.jumpToSafePreset(SimulationClockJumpAction.NEXT_MARKET_OPEN);
-
-        assertThat(response.simulationDateTime()).isEqualTo(LocalDateTime.of(2026, 1, 2, 6, 0));
-        assertThat(response.marketSession()).isEqualTo(SimulationMarketSession.REGULAR);
-        assertThat(response.accumulatedRealSeconds()).isEqualTo(9_000L);
+        assertThatThrownBy(() -> service.jumpToSafePreset(SimulationClockJumpAction.NEXT_MARKET_OPEN))
+                .isInstanceOf(StockException.class)
+                .hasMessageContaining("market-open preparation");
     }
 
     @Test
-    void jumpToSafePreset_afterCloseWithCompletedItems_movesBeforeFormerDelay() {
-        // given
+    void currentResponse_afterCloseWithReadyCycle_exposesOnlyNextDayBoundary() {
         JdbcTemplate jdbcTemplate = createJdbcTemplate();
         insertPausedClock(jdbcTemplate, 5_500L);
         insertEnabledOrderBookInstrument(jdbcTemplate);
         insertPostCloseCycle(jdbcTemplate, LocalDate.of(2026, 1, 1), "READY_TO_OPEN", 0L, 0L, 0L);
         SimulationClockService service = service(jdbcTemplate);
 
-        // when
-        SimulationClockResponse response = service.jumpToSafePreset(SimulationClockJumpAction.NEXT_MARKET_OPEN);
+        SimulationClockResponse response = service.currentResponse();
 
-        // then
-        assertThat(response.simulationDateTime()).isEqualTo(LocalDateTime.of(2026, 1, 2, 6, 0));
-        assertThat(response.marketSession()).isEqualTo(SimulationMarketSession.REGULAR);
+        assertThat(response.availableJumpActions())
+                .containsExactly(SimulationClockJumpAction.NEXT_SIMULATION_DAY_START);
     }
 
     @Test
@@ -263,7 +258,7 @@ class SimulationClockServiceTest {
     @Test
     void jumpToSafePreset_preOpenWithCompletedPreviousPostClose_movesToTodayMarketOpen() {
         JdbcTemplate jdbcTemplate = createJdbcTemplate();
-        insertPausedClock(jdbcTemplate, 8_700L);
+        insertPausedClock(jdbcTemplate, 8_850L);
         insertEnabledOrderBookInstrument(jdbcTemplate);
         insertMarketBusinessState(
                 jdbcTemplate,
@@ -278,6 +273,48 @@ class SimulationClockServiceTest {
 
         assertThat(response.simulationDateTime()).isEqualTo(LocalDateTime.of(2026, 1, 2, 6, 0));
         assertThat(response.marketSession()).isEqualTo(SimulationMarketSession.REGULAR);
+    }
+
+    @Test
+    void jumpToSafePreset_reportsAggregated_movesToPreOpenTransformBoundary() {
+        JdbcTemplate jdbcTemplate = createJdbcTemplate();
+        insertPausedClock(jdbcTemplate, 7_200L);
+        insertEnabledOrderBookInstrument(jdbcTemplate);
+        insertMarketBusinessState(
+                jdbcTemplate,
+                LocalDate.of(2026, 1, 1),
+                LocalDate.of(2026, 1, 2),
+                LocalDate.of(2026, 1, 2)
+        );
+        insertPostCloseCycle(jdbcTemplate, LocalDate.of(2026, 1, 1), "REPORTS_AGGREGATED", 1L, 1L, 0L);
+        SimulationClockService service = service(jdbcTemplate);
+
+        SimulationClockResponse transformBoundary = service.jumpToSafePreset(
+                SimulationClockJumpAction.NEXT_PREOPEN_TRANSFORM_START
+        );
+
+        assertThat(transformBoundary.simulationDateTime()).isEqualTo(LocalDateTime.of(2026, 1, 2, 4, 30));
+    }
+
+    @Test
+    void jumpToSafePreset_marketDataPrepared_movesToAutoMarketBoundary() {
+        JdbcTemplate jdbcTemplate = createJdbcTemplate();
+        insertPausedClock(jdbcTemplate, 8_550L);
+        insertEnabledOrderBookInstrument(jdbcTemplate);
+        insertMarketBusinessState(
+                jdbcTemplate,
+                LocalDate.of(2026, 1, 1),
+                LocalDate.of(2026, 1, 2),
+                LocalDate.of(2026, 1, 2)
+        );
+        insertPostCloseCycle(jdbcTemplate, LocalDate.of(2026, 1, 1), "MARKET_DATA_PREPARED", 1L, 1L, 0L);
+        SimulationClockService service = service(jdbcTemplate);
+
+        SimulationClockResponse autoMarketBoundary = service.jumpToSafePreset(
+                SimulationClockJumpAction.NEXT_AUTO_MARKET_PREPARATION_START
+        );
+
+        assertThat(autoMarketBoundary.simulationDateTime()).isEqualTo(LocalDateTime.of(2026, 1, 2, 5, 30));
     }
 
     @Test
@@ -342,6 +379,8 @@ class SimulationClockServiceTest {
         ReflectionTestUtils.setField(service, "staleAfterSeconds", 30L);
         ReflectionTestUtils.setField(service, "openTimeValue", "06:00");
         ReflectionTestUtils.setField(service, "closeTimeValue", "18:00");
+        ReflectionTestUtils.setField(service, "preOpenTransformTimeValue", "04:30");
+        ReflectionTestUtils.setField(service, "autoMarketPreparationTimeValue", "05:30");
         return service;
     }
 

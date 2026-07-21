@@ -357,7 +357,7 @@ class AdminFlowQueryServiceTest {
     }
 
     @Test
-    void getAdminFlowOverview_investorFlow_groupsCurrentDayByParticipantCategory() {
+    void getAdminFlowOverview_investorFlow_groupsCurrentDayByParticipantRole() {
         JdbcTemplate jdbcTemplate = createJdbcTemplate("admin_flow_query_service_investor_flow_test");
         AdminFlowQueryService service = createService(jdbcTemplate);
         insertAccount(jdbcTemplate, 1L, "manual-user", "ACTIVE", "1000.00");
@@ -403,6 +403,81 @@ class AdminFlowQueryServiceTest {
                         org.assertj.core.groups.Tuple.tuple("AUTO_PARTICIPANT", new BigDecimal("0.0000")),
                         org.assertj.core.groups.Tuple.tuple("LISTING_UNDERWRITER", new BigDecimal("0.0000"))
                 );
+    }
+
+    @Test
+    void getAdminInvestorFlowHistory_returnsSevenSimulationDaysWithBalancedCategoryNetQuantities() {
+        JdbcTemplate jdbcTemplate = createJdbcTemplate("admin_investor_flow_history_test");
+        AdminFlowQueryService service = createService(jdbcTemplate);
+        insertAccount(jdbcTemplate, 1L, "auto-user", "ACTIVE", "1000.00");
+        insertAccount(jdbcTemplate, 2L, "stock-listing-STOCK001", "ACTIVE", "1000.00");
+        jdbcTemplate.update("insert into stock_auto_participant(user_key) values ('auto-user')");
+        insertExecutionDaySummary(
+                jdbcTemplate,
+                SIMULATION_DAY_START.toLocalDate(),
+                1L,
+                100L,
+                120L,
+                "10000.00",
+                "12000.00",
+                SIMULATION_NOW.minusSeconds(5)
+        );
+        insertExecutionDaySummary(
+                jdbcTemplate,
+                SIMULATION_DAY_START.toLocalDate(),
+                2L,
+                20L,
+                0L,
+                "2000.00",
+                "0.00",
+                SIMULATION_NOW.minusSeconds(3)
+        );
+        insertExecutionDaySummary(
+                jdbcTemplate,
+                SIMULATION_DAY_START.minusDays(1).toLocalDate(),
+                1L,
+                70L,
+                50L,
+                "7000.00",
+                "5000.00",
+                SIMULATION_NOW.minusDays(1)
+        );
+        insertExecutionDaySummary(
+                jdbcTemplate,
+                SIMULATION_DAY_START.minusDays(1).toLocalDate(),
+                2L,
+                0L,
+                20L,
+                "0.00",
+                "2000.00",
+                SIMULATION_NOW.minusDays(1)
+        );
+
+        var history = service.getAdminInvestorFlowHistory(7);
+
+        assertThat(history.rangeStart()).isEqualTo(SIMULATION_DAY_START.minusDays(6).toLocalDate());
+        assertThat(history.rangeEnd()).isEqualTo(SIMULATION_DAY_START.toLocalDate());
+        assertThat(history.dailyFlows()).hasSize(7);
+        assertThat(history.dailyFlows()).extracting("simulationTradeDate")
+                .containsExactly(
+                        SIMULATION_DAY_START.toLocalDate(),
+                        SIMULATION_DAY_START.minusDays(1).toLocalDate(),
+                        SIMULATION_DAY_START.minusDays(2).toLocalDate(),
+                        SIMULATION_DAY_START.minusDays(3).toLocalDate(),
+                        SIMULATION_DAY_START.minusDays(4).toLocalDate(),
+                        SIMULATION_DAY_START.minusDays(5).toLocalDate(),
+                        SIMULATION_DAY_START.minusDays(6).toLocalDate()
+                );
+        var currentFlow = history.dailyFlows().getFirst();
+        assertThat(currentFlow.totalBuyQuantity()).isEqualTo(120L);
+        assertThat(currentFlow.totalSellQuantity()).isEqualTo(120L);
+        assertThat(currentFlow.categories()).extracting("category", "netQuantity")
+                .containsExactly(
+                        org.assertj.core.groups.Tuple.tuple("MANUAL_PARTICIPANT", 0L),
+                        org.assertj.core.groups.Tuple.tuple("AUTO_PARTICIPANT", -20L),
+                        org.assertj.core.groups.Tuple.tuple("LISTING_UNDERWRITER", 20L)
+                );
+        assertThat(history.dailyFlows().get(2).totalParticipationQuantity()).isZero();
     }
 
     private AdminFlowQueryService createService(JdbcTemplate jdbcTemplate) {
@@ -693,6 +768,28 @@ class AdminFlowQueryServiceTest {
             String sellAmount,
             LocalDateTime updatedAt
     ) {
+        insertExecutionDaySummary(
+                jdbcTemplate,
+                SIMULATION_DAY_START.toLocalDate(),
+                accountId,
+                buyQuantity,
+                sellQuantity,
+                buyAmount,
+                sellAmount,
+                updatedAt
+        );
+    }
+
+    private void insertExecutionDaySummary(
+            JdbcTemplate jdbcTemplate,
+            LocalDate simulationTradeDate,
+            long accountId,
+            long buyQuantity,
+            long sellQuantity,
+            String buyAmount,
+            String sellAmount,
+            LocalDateTime updatedAt
+    ) {
         BigDecimal buyGrossAmount = new BigDecimal(buyAmount);
         BigDecimal sellGrossAmount = new BigDecimal(sellAmount);
         jdbcTemplate.update(
@@ -707,7 +804,7 @@ class AdminFlowQueryServiceTest {
                 )
                 values (?, ?, 1, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, ?, ?)
                 """,
-                SIMULATION_DAY_START.toLocalDate(),
+                simulationTradeDate,
                 accountId,
                 buyQuantity,
                 sellQuantity,

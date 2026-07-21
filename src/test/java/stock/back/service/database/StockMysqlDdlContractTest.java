@@ -517,6 +517,30 @@ class StockMysqlDdlContractTest {
     }
 
     @Test
+    void investorTypeCleanupAlterDdl_isIdempotentAndAvoidsHotLedgers() throws IOException {
+        String ddl = Files.readString(
+                Path.of("src/main/resources/db/ddl/stock_investor_type_cleanup_alter.sql"),
+                StandardCharsets.UTF_8
+        );
+
+        assertThat(ddl)
+                .contains(
+                        "USE STOCK_SERVICE;",
+                        "information_schema.table_constraints",
+                        "information_schema.columns",
+                        "DROP COLUMN `investor_type`",
+                        "stock_execution_account_day_summary",
+                        "stock_execution_daily_account_snapshot"
+                )
+                .doesNotContain(
+                        "ALTER TABLE stock_order ",
+                        "ALTER TABLE stock_execution ",
+                        "FROM stock_order ",
+                        "FROM stock_execution "
+                );
+    }
+
+    @Test
     void eodVolumeIndexesAlterDdl_isIdempotentAvoidsHotLedgersAndMatchesBatchCopy() throws IOException {
         String backDdl = Files.readString(
                 Path.of("src/main/resources/db/ddl/stock_eod_volume_indexes_alter.sql"),

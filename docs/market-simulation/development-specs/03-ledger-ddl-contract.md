@@ -38,6 +38,7 @@ stock 원장은 주문, 체결, 계좌, 보유, 가격, 주문장 종목, 시장
 - `stock-back-service/src/main/resources/db/ddl/stock_auto_market_pressure_distribution_alter.sql`
 - `stock-back-service/src/main/resources/db/ddl/stock_market_turnover_normalization_alter.sql`
 - `stock-back-service/src/main/resources/db/ddl/stock_portfolio_snapshot_holding_metrics_alter.sql`
+- `stock-back-service/src/main/resources/db/ddl/stock_investor_type_cleanup_alter.sql`
 - `stock-back-service/src/main/resources/db/maintenance/stock_clear_data.sql`
 - `stock-back-service/src/main/resources/db/maintenance/stock_clear_runtime_history_keep_participants.sql`
 - `stock-batch-service/src/main/resources/db/ddl/stock_h2.sql`
@@ -57,6 +58,7 @@ stock 원장은 주문, 체결, 계좌, 보유, 가격, 주문장 종목, 시장
 - 기존 DB 적용 시 안전한 `ANNOUNCED`/`LISTED` legacy 유상증자만 subscription 일정으로 보정한다. 이미 진행된 상태나 일정 간격이 부족한 row, 배정수량보다 청약수량이 큰 row는 의도적인 `stock_migration_required_*` missing-table marker 조회로 alter를 중단해 수동 migration을 요구한다.
 - `stock-back-service/src/main/resources/db/ddl/stock_all.sql`만 MySQL business schema를 소유하며, batch에는 중복 MySQL full DDL을 두지 않는다.
 - batch H2 test DDL의 공유 원장 컬럼/제약은 canonical MySQL DDL과 맞춘다.
+- 모의시장 수급 분류는 `MANUAL_PARTICIPANT`, `AUTO_PARTICIPANT`, `LISTING_UNDERWRITER` 계정 역할을 사용한다. 실제시장형 개인·외국인·기관·기타법인 분류를 계좌나 체결 요약에 저장하지 않는다.
 - `portfolio_snapshot`의 `holding_quantity`, `reserved_sell_quantity`, `holding_position_count`는 세 컬럼이 모두 NULL이거나 모두 0 이상이어야 하고, 예약 매도수량은 총 보유수량을 초과할 수 없다. 기존 row를 0으로 backfill하지 않아 “과거 기록 없음”과 실제 0주를 구분한다.
 - 기존 DB와 canonical DDL의 기본값·CHECK 표현 차이는 `stock_schema_contract_alignment_alter.sql`로 정렬한다. 이 alter는 스냅샷 음수 값, 잘못된 레짐 값, 발행 필수값 누락이 있으면 `stock_migration_required_schema_contract_alignment` marker로 중단한다.
 - `stock_price_tick`의 시점별 최신가 조회는 전체 이력 윈도우 정렬 대신 `(symbol, price_time, id)` 인덱스 역방향 탐색을 사용한다.
@@ -87,6 +89,7 @@ stock 원장은 주문, 체결, 계좌, 보유, 가격, 주문장 종목, 시장
 - 기존 주문·체결 원장에 계좌별 최신 활동 및 캔들 전용 인덱스가 없으면 `stock_activity_latest_lookup_alter.sql`을 적용한다.
 - 기존 `stock_order_book_daily_snapshot`이 BUY·SELL 양쪽 행을 합산한 체결수·거래량·거래대금을 보유하면 `stock_market_turnover_normalization_alter.sql`을 적용한다. 이미 정규화된 스냅샷에는 재적용되지 않는다.
 - 기존 `portfolio_snapshot`에 보유량 계열 컬럼이 없으면 batch/back 배포 전에 `stock_portfolio_snapshot_holding_metrics_alter.sql`을 적용한다. 이 alter는 기존 row를 그대로 NULL로 보존하며, 부분 적용·타입/NULL 계약 불일치·동일 이름의 잘못된 CHECK가 있으면 `stock_migration_required_portfolio_snapshot_holding_metrics_schema` marker로 중단한다.
+- 잘못 배포된 실제시장형 `investor_type` 컬럼이 남은 DB는 백엔드·배치를 종료한 유지보수 창에서 `stock_investor_type_cleanup_alter.sql`을 적용한다. 이 정방향 정리 ALTER는 5개 소형 계좌·요약·스냅샷 테이블만 변경하고 `stock_order`·`stock_execution`을 읽거나 변경하지 않으며 재실행할 수 있다.
 - MySQL 8.0은 `ADD COLUMN`과 enforced `CHECK` 추가를 한 문장에서 `INSTANT`로 처리하지 못한다. 이 alter는 원자적 계약 적용을 위해 `ALGORITHM=COPY, LOCK=SHARED`를 명시하므로 읽기는 허용하지만 쓰기는 잠시 막힌다. `portfolio-settlement` writer를 중지하고 장마감 후처리가 없는 유지보수 구간에 적용하며, 15초 안에 metadata lock을 얻지 못하면 실패하도록 해 장시간 대기를 피한다.
 - `stock_schema_contract_alignment_alter.sql`은 migration용 임시 기본값을 제거하고, 기존 테이블 생성 시 빠질 수 있던 스냅샷·레짐 CHECK와 기업 이벤트 발행 필수 CHECK를 canonical 정의로 재생성한다.
 

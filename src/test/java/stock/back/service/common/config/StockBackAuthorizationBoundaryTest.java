@@ -1040,6 +1040,44 @@ class StockBackAuthorizationBoundaryTest {
     }
 
     @Test
+    void getAdminInvestorFlowSummary_adminPrincipalHeaders_isAllowed() throws Exception {
+        mockMvc.perform(get("/api/stock/v1/markets/admin/investor-flow-summary")
+                        .header("X-User-Key", "stock-admin-key")
+                        .header("X-User-Role", "ROLE_ADMIN"))
+                .andExpect(status().isOk())
+                .andExpect(content().string(containsString("\"simulationTradeDate\"")))
+                .andExpect(content().string(containsString("\"categories\"")));
+    }
+
+    @Test
+    void getAdminInvestorFlowSummary_userPrincipalHeaders_returnsForbidden() throws Exception {
+        mockMvc.perform(get("/api/stock/v1/markets/admin/investor-flow-summary")
+                        .header("X-User-Key", "stock-user-key")
+                        .header("X-User-Role", "ROLE_USER"))
+                .andExpect(status().isForbidden())
+                .andExpect(content().string(containsString("Required role: ADMIN")));
+    }
+
+    @Test
+    void getAdminInvestorFlowHistory_adminPrincipalHeaders_isAllowed() throws Exception {
+        mockMvc.perform(get("/api/stock/v1/markets/admin/investor-flow-history?days=7")
+                        .header("X-User-Key", "stock-admin-key")
+                        .header("X-User-Role", "ROLE_ADMIN"))
+                .andExpect(status().isOk())
+                .andExpect(content().string(containsString("\"rangeStart\"")))
+                .andExpect(content().string(containsString("\"dailyFlows\"")));
+    }
+
+    @Test
+    void getAdminInvestorFlowHistory_userPrincipalHeaders_returnsForbidden() throws Exception {
+        mockMvc.perform(get("/api/stock/v1/markets/admin/investor-flow-history")
+                        .header("X-User-Key", "stock-user-key")
+                        .header("X-User-Role", "ROLE_USER"))
+                .andExpect(status().isForbidden())
+                .andExpect(content().string(containsString("Required role: ADMIN")));
+    }
+
+    @Test
     void getAdminTotalAssetHistory_adminPrincipalHeaders_isAllowed() throws Exception {
         mockMvc.perform(get("/api/stock/v1/markets/admin/total-asset-history?page=0")
                         .header("X-User-Key", "stock-admin-key")

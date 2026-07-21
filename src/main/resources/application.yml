@@ -73,6 +73,8 @@ stock:
   market-session:
     open-time: ${STOCK_MARKET_SESSION_OPEN_TIME:06:00}
     close-time: ${STOCK_MARKET_SESSION_CLOSE_TIME:18:00}
+    preopen-transform-time: ${STOCK_BATCH_POST_CLOSE_PREOPEN_TRANSFORM_TIME:04:30}
+    auto-market-preparation-time: ${STOCK_BATCH_POST_CLOSE_AUTO_MARKET_PREPARATION_TIME:05:30}
   market:
     price-stream:
       redis-listener-enabled: ${STOCK_PRICE_STREAM_REDIS_LISTENER_ENABLED:true}
