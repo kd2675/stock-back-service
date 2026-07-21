@@ -14,6 +14,8 @@ import stock.back.service.market.vo.AutoParticipantResponse;
 import stock.back.service.market.vo.AutoParticipantSymbolConfigResponse;
 import stock.back.service.market.vo.ListingAutoAccountResponse;
 
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.LocalDateTime;
@@ -139,13 +141,25 @@ final class AutoMarketStatusResponseMapper {
             ListingAutoAccountLedger ledger,
             long issuedShares
     ) {
+        BigDecimal initialInventoryCost = config.getInitialIssuePrice()
+                .multiply(BigDecimal.valueOf(config.getInitialInventoryQuantity()));
+        BigDecimal totalEquity = ledger.cashBalance().add(ledger.reservedBuyCash()).add(ledger.marketValue());
+        BigDecimal netProfit = totalEquity.subtract(initialInventoryCost);
+        BigDecimal returnRate = initialInventoryCost.signum() == 0
+                ? BigDecimal.ZERO
+                : netProfit.multiply(BigDecimal.valueOf(100)).divide(initialInventoryCost, 4, RoundingMode.HALF_UP);
         return new ListingAutoAccountResponse(
                 config.getSymbol(),
                 config.getUserKey(),
                 config.getDisplayName(),
                 Boolean.TRUE.equals(config.getEnabled()),
                 config.getPositionSide(),
+                config.getOperationMode(),
+                config.getStrategyProfile(),
                 issuedShares,
+                config.getInitialInventoryQuantity(),
+                config.getInitialIssuePrice(),
+                initialInventoryCost,
                 ledger.accountId(),
                 ledger.cashBalance(),
                 ledger.holdingQuantity(),
@@ -154,17 +168,24 @@ final class AutoMarketStatusResponseMapper {
                 ledger.averagePrice(),
                 ledger.currentPrice(),
                 ledger.marketValue(),
+                ledger.reservedBuyCash(),
+                totalEquity,
+                netProfit,
+                returnRate,
                 config.getMaxOrderQuantity(),
                 config.getOrderTtlSeconds(),
                 config.getPriceOffsetTicks(),
+                config.getTargetSpreadTicks(),
+                config.getInventorySkewTicks(),
+                config.getMinimumProfitRate(),
+                config.getAggressiveUnwindThreshold(),
+                config.getAggressiveOrderRatio(),
                 config.getTargetBuyQuantity(),
                 config.getTargetSellQuantity(),
                 config.getTargetHoldingQuantity(),
                 config.getInventoryBandQuantity(),
                 ledger.openBuyQuantity(),
                 ledger.openSellQuantity(),
-                config.getBuyPriceOffsetDirection(),
-                config.getSellPriceOffsetDirection(),
                 config.getCreatedAt(),
                 config.getUpdatedAt()
         );

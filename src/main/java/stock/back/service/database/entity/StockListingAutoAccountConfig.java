@@ -10,6 +10,7 @@ import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 @Getter
@@ -35,6 +36,20 @@ public class StockListingAutoAccountConfig {
     @Column(name = "position_side", nullable = false, length = 20)
     private ListingAutoPosition positionSide;
 
+    @Enumerated(EnumType.STRING)
+    @Column(name = "operation_mode", nullable = false, length = 30)
+    private ListingAutoOperationMode operationMode;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "strategy_profile", nullable = false, length = 30)
+    private ListingAutoStrategyProfile strategyProfile;
+
+    @Column(name = "initial_inventory_quantity", nullable = false)
+    private Long initialInventoryQuantity;
+
+    @Column(name = "initial_issue_price", nullable = false, precision = 19, scale = 2)
+    private BigDecimal initialIssuePrice;
+
     @Column(name = "max_order_quantity", nullable = false)
     private Integer maxOrderQuantity;
 
@@ -43,6 +58,21 @@ public class StockListingAutoAccountConfig {
 
     @Column(name = "price_offset_ticks", nullable = false)
     private Integer priceOffsetTicks;
+
+    @Column(name = "target_spread_ticks", nullable = false)
+    private Integer targetSpreadTicks;
+
+    @Column(name = "inventory_skew_ticks", nullable = false)
+    private Integer inventorySkewTicks;
+
+    @Column(name = "minimum_profit_rate", nullable = false, precision = 8, scale = 4)
+    private BigDecimal minimumProfitRate;
+
+    @Column(name = "aggressive_unwind_threshold", nullable = false, precision = 8, scale = 4)
+    private BigDecimal aggressiveUnwindThreshold;
+
+    @Column(name = "aggressive_order_ratio", nullable = false, precision = 8, scale = 4)
+    private BigDecimal aggressiveOrderRatio;
 
     @Column(name = "target_buy_quantity", nullable = false)
     private Long targetBuyQuantity;
@@ -55,14 +85,6 @@ public class StockListingAutoAccountConfig {
 
     @Column(name = "inventory_band_quantity", nullable = false)
     private Long inventoryBandQuantity;
-
-    @Enumerated(EnumType.STRING)
-    @Column(name = "buy_price_offset_direction", nullable = false, length = 10)
-    private ListingAutoPriceDirection buyPriceOffsetDirection;
-
-    @Enumerated(EnumType.STRING)
-    @Column(name = "sell_price_offset_direction", nullable = false, length = 10)
-    private ListingAutoPriceDirection sellPriceOffsetDirection;
 
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
@@ -89,47 +111,69 @@ public class StockListingAutoAccountConfig {
         config.displayName = displayName;
         config.enabled = true;
         config.positionSide = ListingAutoPosition.SELL_ONLY;
+        config.operationMode = ListingAutoOperationMode.UNDERWRITER_RETURN;
+        config.strategyProfile = ListingAutoStrategyProfile.RETURN_FIRST;
+        config.initialInventoryQuantity = Math.max(0L, issuedShares);
+        config.initialIssuePrice = BigDecimal.ZERO;
         config.maxOrderQuantity = maxOrderQuantity;
         config.orderTtlSeconds = 90;
         config.priceOffsetTicks = 3;
+        config.targetSpreadTicks = 8;
+        config.inventorySkewTicks = 3;
+        config.minimumProfitRate = BigDecimal.ONE;
+        config.aggressiveUnwindThreshold = BigDecimal.ONE;
+        config.aggressiveOrderRatio = BigDecimal.ZERO;
         config.targetBuyQuantity = 0L;
         config.targetSellQuantity = (long) maxOrderQuantity;
         config.targetHoldingQuantity = 0L;
         config.inventoryBandQuantity = 0L;
-        config.buyPriceOffsetDirection = ListingAutoPriceDirection.DOWN;
-        config.sellPriceOffsetDirection = ListingAutoPriceDirection.UP;
         config.createdAt = now;
         config.updatedAt = now;
         return config;
+    }
+
+    public void initializeIssueBasis(long initialInventoryQuantity, BigDecimal initialIssuePrice) {
+        this.initialInventoryQuantity = Math.max(0L, initialInventoryQuantity);
+        this.initialIssuePrice = initialIssuePrice == null ? BigDecimal.ZERO : initialIssuePrice.max(BigDecimal.ZERO);
     }
 
     public void update(
             String displayName,
             Boolean enabled,
             ListingAutoPosition positionSide,
+            ListingAutoOperationMode operationMode,
+            ListingAutoStrategyProfile strategyProfile,
             Integer maxOrderQuantity,
             Integer orderTtlSeconds,
             Integer priceOffsetTicks,
+            Integer targetSpreadTicks,
+            Integer inventorySkewTicks,
+            BigDecimal minimumProfitRate,
+            BigDecimal aggressiveUnwindThreshold,
+            BigDecimal aggressiveOrderRatio,
             Long targetBuyQuantity,
             Long targetSellQuantity,
             Long targetHoldingQuantity,
-            Long inventoryBandQuantity,
-            ListingAutoPriceDirection buyPriceOffsetDirection,
-            ListingAutoPriceDirection sellPriceOffsetDirection
+            Long inventoryBandQuantity
     ) {
         update(
                 displayName,
                 enabled,
                 positionSide,
+                operationMode,
+                strategyProfile,
                 maxOrderQuantity,
                 orderTtlSeconds,
                 priceOffsetTicks,
+                targetSpreadTicks,
+                inventorySkewTicks,
+                minimumProfitRate,
+                aggressiveUnwindThreshold,
+                aggressiveOrderRatio,
                 targetBuyQuantity,
                 targetSellQuantity,
                 targetHoldingQuantity,
                 inventoryBandQuantity,
-                buyPriceOffsetDirection,
-                sellPriceOffsetDirection,
                 LocalDateTime.now()
         );
     }
@@ -138,15 +182,20 @@ public class StockListingAutoAccountConfig {
             String displayName,
             Boolean enabled,
             ListingAutoPosition positionSide,
+            ListingAutoOperationMode operationMode,
+            ListingAutoStrategyProfile strategyProfile,
             Integer maxOrderQuantity,
             Integer orderTtlSeconds,
             Integer priceOffsetTicks,
+            Integer targetSpreadTicks,
+            Integer inventorySkewTicks,
+            BigDecimal minimumProfitRate,
+            BigDecimal aggressiveUnwindThreshold,
+            BigDecimal aggressiveOrderRatio,
             Long targetBuyQuantity,
             Long targetSellQuantity,
             Long targetHoldingQuantity,
             Long inventoryBandQuantity,
-            ListingAutoPriceDirection buyPriceOffsetDirection,
-            ListingAutoPriceDirection sellPriceOffsetDirection,
             LocalDateTime updatedAt
     ) {
         if (displayName != null && !displayName.isBlank()) {
@@ -158,6 +207,12 @@ public class StockListingAutoAccountConfig {
         if (positionSide != null) {
             this.positionSide = positionSide;
         }
+        if (operationMode != null) {
+            this.operationMode = operationMode;
+        }
+        if (strategyProfile != null) {
+            this.strategyProfile = strategyProfile;
+        }
         if (maxOrderQuantity != null) {
             this.maxOrderQuantity = maxOrderQuantity;
         }
@@ -166,6 +221,21 @@ public class StockListingAutoAccountConfig {
         }
         if (priceOffsetTicks != null) {
             this.priceOffsetTicks = priceOffsetTicks;
+        }
+        if (targetSpreadTicks != null) {
+            this.targetSpreadTicks = targetSpreadTicks;
+        }
+        if (inventorySkewTicks != null) {
+            this.inventorySkewTicks = inventorySkewTicks;
+        }
+        if (minimumProfitRate != null) {
+            this.minimumProfitRate = minimumProfitRate;
+        }
+        if (aggressiveUnwindThreshold != null) {
+            this.aggressiveUnwindThreshold = aggressiveUnwindThreshold;
+        }
+        if (aggressiveOrderRatio != null) {
+            this.aggressiveOrderRatio = aggressiveOrderRatio;
         }
         if (targetBuyQuantity != null) {
             this.targetBuyQuantity = targetBuyQuantity;
@@ -178,12 +248,6 @@ public class StockListingAutoAccountConfig {
         }
         if (inventoryBandQuantity != null) {
             this.inventoryBandQuantity = inventoryBandQuantity;
-        }
-        if (buyPriceOffsetDirection != null) {
-            this.buyPriceOffsetDirection = buyPriceOffsetDirection;
-        }
-        if (sellPriceOffsetDirection != null) {
-            this.sellPriceOffsetDirection = sellPriceOffsetDirection;
         }
         initializeTargetForNewPosition(positionSide, targetBuyQuantity, targetSellQuantity);
         this.updatedAt = updatedAt == null ? LocalDateTime.now() : updatedAt;

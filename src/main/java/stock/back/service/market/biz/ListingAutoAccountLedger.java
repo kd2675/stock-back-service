@@ -11,6 +11,7 @@ record ListingAutoAccountLedger(
         BigDecimal averagePrice,
         BigDecimal currentPrice,
         BigDecimal marketValue,
+        BigDecimal reservedBuyCash,
         long openBuyQuantity,
         long openSellQuantity
 ) {
@@ -22,6 +23,7 @@ record ListingAutoAccountLedger(
                 0L,
                 0L,
                 0L,
+                BigDecimal.ZERO,
                 BigDecimal.ZERO,
                 BigDecimal.ZERO,
                 BigDecimal.ZERO,
@@ -38,7 +40,7 @@ record ListingAutoAccountLedger(
             BigDecimal averagePrice,
             BigDecimal currentPrice
     ) {
-        return of(accountId, cashBalance, holdingQuantity, reservedQuantity, averagePrice, currentPrice, 0L, 0L);
+        return of(accountId, cashBalance, holdingQuantity, reservedQuantity, averagePrice, currentPrice, BigDecimal.ZERO, 0L, 0L);
     }
 
     static ListingAutoAccountLedger of(
@@ -48,6 +50,7 @@ record ListingAutoAccountLedger(
             long reservedQuantity,
             BigDecimal averagePrice,
             BigDecimal currentPrice,
+            BigDecimal reservedBuyCash,
             long openBuyQuantity,
             long openSellQuantity
     ) {
@@ -62,6 +65,7 @@ record ListingAutoAccountLedger(
                 averagePrice,
                 currentPrice,
                 marketValue,
+                reservedBuyCash == null ? BigDecimal.ZERO : reservedBuyCash.max(BigDecimal.ZERO),
                 Math.max(0L, openBuyQuantity),
                 Math.max(0L, openSellQuantity)
         );

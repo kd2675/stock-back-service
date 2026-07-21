@@ -1,9 +1,11 @@
 package stock.back.service.market.biz;
 
 import stock.back.service.common.exception.StockException;
+import stock.back.service.database.entity.ListingAutoOperationMode;
 import stock.back.service.database.entity.ListingAutoPosition;
-import stock.back.service.database.entity.ListingAutoPriceDirection;
 import stock.back.service.database.entity.StockListingAutoAccountConfig;
+
+import java.math.BigDecimal;
 
 final class ListingAutoAccountConfigValidator {
 
@@ -21,6 +23,18 @@ final class ListingAutoAccountConfigValidator {
                 && config.getPositionSide() != ListingAutoPosition.TWO_SIDED) {
             throw StockException.badRequest("Listing auto account position side must be SELL_ONLY, BUY_ONLY, or TWO_SIDED");
         }
+        if (config.getOperationMode() == null || config.getStrategyProfile() == null) {
+            throw StockException.badRequest("Listing auto account operation mode and strategy profile are required");
+        }
+        if ((config.getOperationMode() == ListingAutoOperationMode.LIQUIDITY_PROVIDER
+                || config.getOperationMode() == ListingAutoOperationMode.HYBRID)
+                && config.getPositionSide() != ListingAutoPosition.TWO_SIDED) {
+            throw StockException.badRequest("Liquidity-provider and hybrid operation require a two-sided position");
+        }
+        if (config.getInitialInventoryQuantity() == null || config.getInitialInventoryQuantity() <= 0
+                || config.getInitialIssuePrice() == null || config.getInitialIssuePrice().compareTo(BigDecimal.ZERO) <= 0) {
+            throw StockException.badRequest("Listing auto account initial issue basis must be positive");
+        }
         if (config.getMaxOrderQuantity() == null || config.getMaxOrderQuantity() <= 0) {
             throw StockException.badRequest("Listing auto account max order quantity must be positive");
         }
@@ -30,6 +44,15 @@ final class ListingAutoAccountConfigValidator {
         if (config.getPriceOffsetTicks() == null || config.getPriceOffsetTicks() < 0) {
             throw StockException.badRequest("Listing auto account price offset ticks must be zero or positive");
         }
+        if (config.getTargetSpreadTicks() == null || config.getTargetSpreadTicks() <= 0 || config.getTargetSpreadTicks() > 50) {
+            throw StockException.badRequest("Listing auto account target spread ticks must be between 1 and 50");
+        }
+        if (config.getInventorySkewTicks() == null || config.getInventorySkewTicks() < 0 || config.getInventorySkewTicks() > 50) {
+            throw StockException.badRequest("Listing auto account inventory skew ticks must be between 0 and 50");
+        }
+        validateRate(config.getMinimumProfitRate(), BigDecimal.valueOf(100), "minimum profit rate");
+        validateRate(config.getAggressiveUnwindThreshold(), BigDecimal.ONE, "aggressive unwind threshold");
+        validateRate(config.getAggressiveOrderRatio(), BigDecimal.ONE, "aggressive order ratio");
         if (config.getTargetBuyQuantity() == null || config.getTargetBuyQuantity() < 0) {
             throw StockException.badRequest("Listing auto account target buy quantity must be zero or positive");
         }
@@ -67,8 +90,6 @@ final class ListingAutoAccountConfigValidator {
         if (config.getPositionSide() == ListingAutoPosition.TWO_SIDED) {
             validateTwoSidedInventoryPolicy(config);
         }
-        validateDirection(config.getBuyPriceOffsetDirection(), "buy");
-        validateDirection(config.getSellPriceOffsetDirection(), "sell");
     }
 
     static void validate(StockListingAutoAccountConfig config, long issuedShares) {
@@ -113,9 +134,9 @@ final class ListingAutoAccountConfigValidator {
         }
     }
 
-    private static void validateDirection(ListingAutoPriceDirection direction, String side) {
-        if (direction == null) {
-            throw StockException.badRequest("Listing auto account " + side + " price offset direction is required");
+    private static void validateRate(BigDecimal value, BigDecimal upperBound, String name) {
+        if (value == null || value.compareTo(BigDecimal.ZERO) < 0 || value.compareTo(upperBound) > 0) {
+            throw StockException.badRequest("Listing auto account %s must be between 0 and %s".formatted(name, upperBound));
         }
     }
 }

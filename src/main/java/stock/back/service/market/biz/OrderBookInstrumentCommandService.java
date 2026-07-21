@@ -194,20 +194,26 @@ public class OrderBookInstrumentCommandService {
                 now
         );
         StockListingAutoAccountConfig config = StockListingAutoAccountConfig.defaults(symbol, listingUserKey, displayName, tradableShares, now);
+        config.initializeIssueBasis(tradableShares, initialPrice);
         if (request != null) {
             config.update(
                     displayName,
                     request.enabled(),
                     request.positionSide(),
+                    request.operationMode(),
+                    request.strategyProfile(),
                     request.maxOrderQuantity(),
                     request.orderTtlSeconds(),
                     request.priceOffsetTicks(),
+                    request.targetSpreadTicks(),
+                    request.inventorySkewTicks(),
+                    request.minimumProfitRate(),
+                    request.aggressiveUnwindThreshold(),
+                    request.aggressiveOrderRatio(),
                     request.targetBuyQuantity(),
                     request.targetSellQuantity(),
                     request.targetHoldingQuantity(),
                     request.inventoryBandQuantity(),
-                    request.buyPriceOffsetDirection(),
-                    request.sellPriceOffsetDirection(),
                     now
             );
             ListingAutoAccountConfigValidator.validate(config, tradableShares);

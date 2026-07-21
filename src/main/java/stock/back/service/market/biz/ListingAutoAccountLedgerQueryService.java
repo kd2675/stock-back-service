@@ -31,6 +31,11 @@ public class ListingAutoAccountLedgerQueryService {
                        coalesce(h.reserved_quantity, 0) as reserved_quantity,
                        coalesce(h.average_price, 0) as average_price,
                        coalesce(p.current_price, 0) as current_price,
+                       coalesce((select sum(o.reserved_cash)
+                                   from stock_order o
+                                  where o.account_id = a.id and o.symbol = c.symbol and o.side = 'BUY'
+                                    and o.market_type = 'ORDER_BOOK'
+                                    and o.status in ('PENDING', 'PARTIALLY_FILLED')), 0) as reserved_buy_cash,
                        coalesce((select sum(o.quantity - o.filled_quantity)
                                    from stock_order o
                                   where o.account_id = a.id and o.symbol = c.symbol and o.side = 'BUY'
@@ -71,6 +76,11 @@ public class ListingAutoAccountLedgerQueryService {
                        coalesce(h.reserved_quantity, 0) as reserved_quantity,
                        coalesce(h.average_price, 0) as average_price,
                        coalesce(p.current_price, 0) as current_price,
+                       coalesce((select sum(o.reserved_cash)
+                                   from stock_order o
+                                  where o.account_id = a.id and o.symbol = ? and o.side = 'BUY'
+                                    and o.market_type = 'ORDER_BOOK'
+                                    and o.status in ('PENDING', 'PARTIALLY_FILLED')), 0) as reserved_buy_cash,
                        coalesce((select sum(o.quantity - o.filled_quantity)
                                    from stock_order o
                                   where o.account_id = a.id and o.symbol = ? and o.side = 'BUY'
@@ -88,6 +98,7 @@ public class ListingAutoAccountLedgerQueryService {
                 """
         )
                 .params(
+                        config.getSymbol(),
                         config.getSymbol(),
                         config.getSymbol(),
                         config.getSymbol(),
@@ -110,6 +121,7 @@ public class ListingAutoAccountLedgerQueryService {
                 Math.max(0L, rs.getLong("reserved_quantity")),
                 MarketQuerySupport.zeroIfNull(rs.getBigDecimal("average_price")),
                 MarketQuerySupport.zeroIfNull(rs.getBigDecimal("current_price")),
+                MarketQuerySupport.zeroIfNull(rs.getBigDecimal("reserved_buy_cash")),
                 Math.max(0L, rs.getLong("open_buy_quantity")),
                 Math.max(0L, rs.getLong("open_sell_quantity"))
         );
