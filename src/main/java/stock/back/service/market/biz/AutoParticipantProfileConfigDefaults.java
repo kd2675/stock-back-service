@@ -48,7 +48,31 @@ final class AutoParticipantProfileConfigDefaults {
         defaults.put(AutoParticipantProfileType.WHALE, profileDefaults(0.30, 0.35, 0.00, 0.20, 0.25, 0.00, 0.20, 0.10, 0.05, 0.00, 1.20, 0.85, 1.20, 1.80, 0.05, 0.00, 0.30, "0.00"));
         defaults.put(AutoParticipantProfileType.SMALL_DIVERSIFIER, profileDefaults(0.25, 0.20, 0.10, 0.30, 0.10, 0.00, 0.05, 0.10, 0.00, 0.05, 1.20, 0.70, 1.20, 0.45, 0.25, 0.15, 0.25, "0.00"));
         defaults.put(AutoParticipantProfileType.OBSERVER, profileDefaults(0.15, 0.10, 0.00, 0.20, 0.00, 0.00, 0.00, 0.03, 0.00, 0.00, 0.30, 0.40, 2.20, 0.40, 0.10, 0.00, 0.10, "0.00"));
+        defaults.replaceAll((profileType, value) -> value.withPricePressureSensitivity(
+                defaultPricePressureSensitivity(profileType)
+        ));
         return Map.copyOf(defaults);
+    }
+
+    private static double defaultPricePressureSensitivity(AutoParticipantProfileType profileType) {
+        return switch (profileType) {
+            case NEWS_REACTIVE, FOMO_BUYER, PANIC_SELLER -> 1.30;
+            case MOMENTUM_FOLLOWER, HERD_FOLLOWER, STOP_LOSS_TRADER -> 1.20;
+            case OVERCONFIDENT, DAY_TRADER -> 1.10;
+            case SCALPER -> 1.05;
+            case SWING_TRADER, PROFIT_LOCKER -> 1.00;
+            case CONTRARIAN -> 0.95;
+            case DIP_BUYER -> 0.90;
+            case AVERAGE_DOWN_BUYER, WHALE -> 0.85;
+            case LOSS_AVERSE -> 0.80;
+            case VALUE_ANCHOR -> 0.70;
+            case SMALL_DIVERSIFIER -> 0.65;
+            case NOISE_TRADER, PAYDAY_ACCUMULATOR, DIVIDEND_REINVESTOR -> 0.60;
+            case LONG_TERM_HOLDER -> 0.55;
+            case LIQUIDITY_AVOIDANT, CASH_DEFENSIVE -> 0.45;
+            case LIMIT_DOWN_TRAPPED -> 0.40;
+            case MARKET_MAKER, OBSERVER -> 0.30;
+        };
     }
 
     private static ProfileConfigDefaults profileDefaults(
@@ -177,6 +201,7 @@ final class AutoParticipantProfileConfigDefaults {
                 BigDecimal.valueOf(dipBuyWeight),
                 BigDecimal.valueOf(orderMultiplier),
                 BigDecimal.valueOf(aggressionMultiplier),
+                BigDecimal.ONE,
                 BigDecimal.valueOf(orderTtlMultiplier),
                 BigDecimal.valueOf(quantityMultiplier),
                 BigDecimal.valueOf(holdingPatienceWeight),

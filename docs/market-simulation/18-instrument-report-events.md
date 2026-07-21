@@ -25,7 +25,7 @@
   - `InstrumentReportResponse`
 - batch:
   - `AutoMarketReader`
-  - `AutoProfileBehavior.effectiveIntensity`
+  - `AutoProfileBehavior.activityLevel`
   - `stock-batch-service/src/main/java/stock/batch/service/automarket/profile/*Behavior.java`
 - front:
   - `stock-front-service/app/lib/stock.ts`
@@ -63,13 +63,13 @@
 
 ## 자동장 반영
 
-자동장은 참여자별 1~10 성향을 기본으로 한다. 최신 활성 평가 보고서 점수가 있으면 자동 참여자 심리 프로필의 뉴스 민감도에 따라 참여자 성향과 보고서 점수를 섞어 유효 강도를 만든다. 유효 강도 계산은 `AutoProfileBehavior.effectiveIntensity`에서 시작하고, 프로필별 주문 방향과 주문 수 판단은 각 `*Behavior` 클래스가 담당한다.
+자동장은 참여자별 1~10 활동 강도를 주문 후보 우선순위와 기본 주문 건수 기준으로 사용하며 보고서 점수로 바꾸지 않는다. 최신 활성 평가 보고서 점수는 `AutoMarketConfig.reportPricePressure()`에서 -1~1 방향 압력으로 변환하고, 프로필의 뉴스 민감도와 가격 압력 민감도를 거쳐 호가 가격과 교차 확률에 반영한다. 프로필별 주문 방향과 주문 수 판단은 각 `*Behavior` 클래스가 담당한다.
 
 현재 반영 방식:
 
-- `NEWS_REACTIVE`는 보고서 점수를 크게 반영한다.
-- `NOISE_TRADER`, `SCALPER`, `HERD_FOLLOWER` 등은 보고서 점수를 일부만 반영한다.
-- `OBSERVER`, `MARKET_MAKER`, `VALUE_ANCHOR` 등은 보고서 점수보다 기존 전략과 호가/가격 흐름을 더 크게 본다.
+- `NEWS_REACTIVE`는 보고서 방향을 첫 주문에 직접 반영하고 가격 압력 민감도도 높다.
+- `NOISE_TRADER`, `SCALPER`, `HERD_FOLLOWER` 등은 뉴스 민감도와 프로필 가격 민감도에 따라 보고서 방향을 일부 반영한다.
+- `OBSERVER`, `MARKET_MAKER`, `VALUE_ANCHOR` 등은 낮은 가격 압력 민감도로 시장·보고서 방향에 덜 휩쓸린다.
 
 이 방식을 둔 이유:
 
@@ -89,7 +89,7 @@
 2. `stock_instrument_report_event` MySQL DDL과 H2 DDL을 함께 바꾼다.
 3. `StockInstrumentReportEvent`, request/response DTO를 바꾼다.
 4. `MarketService` validation과 최신 보고서 조회 규칙을 바꾼다.
-5. 자동장 영향이 있으면 `AutoMarketReader`, `AutoProfileBehavior.effectiveIntensity`, 관련 `*Behavior` 클래스를 함께 바꾼다.
+5. 자동장 영향이 있으면 `AutoMarketReader`, `AutoMarketConfig.reportPricePressure`, `AutoParticipantOrderPricing`, 관련 `*Behavior` 클래스를 함께 바꾼다.
 6. `stock-front-service` type, API client, admin 화면을 바꾼다.
 7. back, batch, front 계약 검증을 실행한다.
 

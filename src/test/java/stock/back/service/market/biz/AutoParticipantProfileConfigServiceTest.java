@@ -17,6 +17,7 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -53,6 +54,20 @@ class AutoParticipantProfileConfigServiceTest {
     }
 
     @Test
+    void updateAutoParticipantProfileConfig_dividendReinvestorKeepsLegacyDayConstraintValid() {
+        when(stockAutoParticipantProfileConfigRepository.findById(AutoParticipantProfileType.DIVIDEND_REINVESTOR))
+                .thenReturn(Optional.empty());
+        when(stockAutoParticipantProfileConfigRepository.save(any(StockAutoParticipantProfileConfig.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        service.updateAutoParticipantProfileConfig("DIVIDEND_REINVESTOR", validRequest());
+
+        var configCaptor = org.mockito.ArgumentCaptor.forClass(StockAutoParticipantProfileConfig.class);
+        verify(stockAutoParticipantProfileConfigRepository, atLeastOnce()).save(configCaptor.capture());
+        assertThat(configCaptor.getValue().getRecurringDepositIntervalDays()).isEqualTo(1);
+    }
+
+    @Test
     void updateAutoParticipantProfileConfig_nullRequest_throwsBadRequestBeforeLookup() {
         assertThatThrownBy(() -> service.updateAutoParticipantProfileConfig("NEWS_REACTIVE", null))
                 .isInstanceOf(StockException.class)
@@ -75,6 +90,7 @@ class AutoParticipantProfileConfigServiceTest {
                 new BigDecimal("0.05"),
                 new BigDecimal("0.35"),
                 new BigDecimal("1.10"),
+                BigDecimal.ONE,
                 BigDecimal.ONE,
                 BigDecimal.ONE,
                 BigDecimal.ONE,

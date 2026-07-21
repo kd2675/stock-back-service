@@ -40,6 +40,7 @@ class AutoParticipantProfileConfigCommandTest {
                 new BigDecimal("0.35"),
                 new BigDecimal("1.10"),
                 BigDecimal.ONE,
+                BigDecimal.ONE,
                 new BigDecimal("0.09"),
                 BigDecimal.ONE,
                 new BigDecimal("0.60"),
@@ -56,7 +57,20 @@ class AutoParticipantProfileConfigCommandTest {
                 .hasMessageContaining("Order TTL multiplier must be between 0.1 and 10");
     }
 
+    @Test
+    void from_pricePressureSensitivityAboveMaximum_throwsBadRequest() {
+        AutoParticipantProfileConfigRequest request = validRequestWithPricePressureSensitivity(new BigDecimal("2.01"));
+
+        assertThatThrownBy(() -> AutoParticipantProfileConfigCommand.from(AutoParticipantProfileType.NEWS_REACTIVE, request))
+                .isInstanceOf(StockException.class)
+                .hasMessageContaining("Price pressure sensitivity must be between 0 and 2");
+    }
+
     private AutoParticipantProfileConfigRequest validRequest() {
+        return validRequestWithPricePressureSensitivity(BigDecimal.ONE);
+    }
+
+    private AutoParticipantProfileConfigRequest validRequestWithPricePressureSensitivity(BigDecimal pricePressureSensitivity) {
         return new AutoParticipantProfileConfigRequest(
                 new BigDecimal("0.70"),
                 new BigDecimal("0.45"),
@@ -70,6 +84,7 @@ class AutoParticipantProfileConfigCommandTest {
                 new BigDecimal("0.35"),
                 new BigDecimal("1.10"),
                 BigDecimal.ONE,
+                pricePressureSensitivity,
                 BigDecimal.ONE,
                 BigDecimal.ONE,
                 new BigDecimal("0.60"),

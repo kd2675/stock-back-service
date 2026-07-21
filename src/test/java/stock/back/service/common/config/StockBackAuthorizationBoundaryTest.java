@@ -277,6 +277,7 @@ class StockBackAuthorizationBoundaryTest {
                   "dipBuyWeight": 0.2,
                   "orderMultiplier": 1.2,
                   "aggressionMultiplier": 1.1,
+                  "pricePressureSensitivity": 1.2,
                   "orderTtlMultiplier": 0.9,
                   "quantityMultiplier": 1.3,
                   "holdingPatienceWeight": 0.2,

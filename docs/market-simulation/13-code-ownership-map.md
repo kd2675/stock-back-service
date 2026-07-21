@@ -122,7 +122,7 @@
 - `automarket/biz/AutoMarketService.java`
   - 자동 참여자 주문을 실제 `stock_order`에 생성한다.
   - 참여자별-종목별 `stock_auto_participant_symbol_config`가 있으면 해당 강도를 우선 사용한다.
-  - 최신 활성 평가 보고서 점수가 있으면 참여자 강도와 섞어 유효 강도를 만든다.
+  - 참여자 활동 강도는 보고서와 분리해 유지하고, 최신 활성 평가 보고서 점수는 프로필별 가격 방향 압력에 반영한다.
   - 자동 참여자 보유수량은 초기 지급하지 않고 실제 주문장 매수 체결 결과만 사용한다.
   - 프론트 전용 fake 주문 상태를 만들지 않는다.
 - `marketclose/biz/MarketCloseRolloverService.java`

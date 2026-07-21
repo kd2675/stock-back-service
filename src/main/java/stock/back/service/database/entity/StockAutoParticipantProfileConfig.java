@@ -60,6 +60,9 @@ public class StockAutoParticipantProfileConfig {
     @Column(name = "aggression_multiplier", nullable = false, precision = 8, scale = 4)
     private BigDecimal aggressionMultiplier;
 
+    @Column(name = "price_pressure_sensitivity", nullable = false, precision = 8, scale = 4)
+    private BigDecimal pricePressureSensitivity;
+
     @Column(name = "order_ttl_multiplier", nullable = false, precision = 8, scale = 4)
     private BigDecimal orderTtlMultiplier;
 
@@ -105,6 +108,7 @@ public class StockAutoParticipantProfileConfig {
             BigDecimal dipBuyWeight,
             BigDecimal orderMultiplier,
             BigDecimal aggressionMultiplier,
+            BigDecimal pricePressureSensitivity,
             BigDecimal orderTtlMultiplier,
             BigDecimal quantityMultiplier,
             BigDecimal holdingPatienceWeight,
@@ -127,6 +131,7 @@ public class StockAutoParticipantProfileConfig {
                 dipBuyWeight,
                 orderMultiplier,
                 aggressionMultiplier,
+                pricePressureSensitivity,
                 orderTtlMultiplier,
                 quantityMultiplier,
                 holdingPatienceWeight,
@@ -152,6 +157,7 @@ public class StockAutoParticipantProfileConfig {
             BigDecimal dipBuyWeight,
             BigDecimal orderMultiplier,
             BigDecimal aggressionMultiplier,
+            BigDecimal pricePressureSensitivity,
             BigDecimal orderTtlMultiplier,
             BigDecimal quantityMultiplier,
             BigDecimal holdingPatienceWeight,
@@ -176,6 +182,7 @@ public class StockAutoParticipantProfileConfig {
                 dipBuyWeight,
                 orderMultiplier,
                 aggressionMultiplier,
+                pricePressureSensitivity,
                 orderTtlMultiplier,
                 quantityMultiplier,
                 holdingPatienceWeight,
@@ -201,6 +208,7 @@ public class StockAutoParticipantProfileConfig {
             BigDecimal dipBuyWeight,
             BigDecimal orderMultiplier,
             BigDecimal aggressionMultiplier,
+            BigDecimal pricePressureSensitivity,
             BigDecimal orderTtlMultiplier,
             BigDecimal quantityMultiplier,
             BigDecimal holdingPatienceWeight,
@@ -222,6 +230,7 @@ public class StockAutoParticipantProfileConfig {
                 dipBuyWeight,
                 orderMultiplier,
                 aggressionMultiplier,
+                pricePressureSensitivity,
                 orderTtlMultiplier,
                 quantityMultiplier,
                 holdingPatienceWeight,
@@ -246,6 +255,7 @@ public class StockAutoParticipantProfileConfig {
             BigDecimal dipBuyWeight,
             BigDecimal orderMultiplier,
             BigDecimal aggressionMultiplier,
+            BigDecimal pricePressureSensitivity,
             BigDecimal orderTtlMultiplier,
             BigDecimal quantityMultiplier,
             BigDecimal holdingPatienceWeight,
@@ -267,6 +277,7 @@ public class StockAutoParticipantProfileConfig {
         this.dipBuyWeight = dipBuyWeight;
         this.orderMultiplier = orderMultiplier;
         this.aggressionMultiplier = aggressionMultiplier;
+        this.pricePressureSensitivity = pricePressureSensitivity;
         this.orderTtlMultiplier = orderTtlMultiplier;
         this.quantityMultiplier = quantityMultiplier;
         this.holdingPatienceWeight = holdingPatienceWeight;
@@ -276,7 +287,7 @@ public class StockAutoParticipantProfileConfig {
         this.recurringDepositIntervalValue = recurringDepositIntervalValue;
         this.recurringDepositIntervalUnit = recurringDepositIntervalUnit;
         this.recurringDepositIntervalDays = RecurringCashIntervalUnit.DAY.equals(recurringDepositIntervalUnit)
-                ? recurringDepositIntervalValue.setScale(0, java.math.RoundingMode.CEILING).intValue()
+                ? Math.max(1, recurringDepositIntervalValue.setScale(0, java.math.RoundingMode.CEILING).intValue())
                 : 1;
         this.updatedAt = LocalDateTime.now();
     }
