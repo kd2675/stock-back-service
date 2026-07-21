@@ -7,6 +7,7 @@ public record AdminFlowOverviewResponse(
         AdminFundFlowSummaryResponse fundFlow,
         AdminOrderFlowSummaryResponse orderFlow,
         AdminCorporateActionFlowSummaryResponse corporateActionFlow,
+        AdminInvestorFlowSummaryResponse investorFlow,
         long symbolFlowTotalCount,
         List<AdminSymbolFlowResponse> symbolFlows,
         List<AdminRecentCashFlowResponse> recentCashFlows,

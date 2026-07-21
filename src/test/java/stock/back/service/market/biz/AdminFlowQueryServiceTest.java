@@ -356,6 +356,55 @@ class AdminFlowQueryServiceTest {
         assertThat(overview.generatedAt()).isEqualTo(SIMULATION_NOW);
     }
 
+    @Test
+    void getAdminFlowOverview_investorFlow_groupsCurrentDayByParticipantCategory() {
+        JdbcTemplate jdbcTemplate = createJdbcTemplate("admin_flow_query_service_investor_flow_test");
+        AdminFlowQueryService service = createService(jdbcTemplate);
+        insertAccount(jdbcTemplate, 1L, "manual-user", "ACTIVE", "1000.00");
+        insertAccount(jdbcTemplate, 2L, "auto-user", "ACTIVE", "1000.00");
+        insertAccount(jdbcTemplate, 3L, "stock-listing-STOCK001", "ACTIVE", "1000.00");
+        jdbcTemplate.update("insert into stock_auto_participant(user_key) values ('auto-user')");
+        insertExecutionDaySummary(jdbcTemplate, 1L, 100L, 20L, "10000.00", "2000.00", SIMULATION_NOW.minusSeconds(7));
+        insertExecutionDaySummary(jdbcTemplate, 2L, 30L, 60L, "3000.00", "6000.00", SIMULATION_NOW.minusSeconds(5));
+        insertExecutionDaySummary(jdbcTemplate, 3L, 10L, 40L, "1000.00", "4000.00", SIMULATION_NOW.minusSeconds(3));
+
+        var investorFlow = service.getAdminFlowOverview(0, false, false).investorFlow();
+
+        assertThat(investorFlow.simulationTradeDate()).isEqualTo(SIMULATION_DAY_START.toLocalDate());
+        assertThat(investorFlow.totalBuyQuantity()).isEqualTo(140L);
+        assertThat(investorFlow.totalSellQuantity()).isEqualTo(120L);
+        assertThat(investorFlow.totalParticipationQuantity()).isEqualTo(260L);
+        assertThat(investorFlow.sourceUpdatedAt()).isEqualTo(SIMULATION_NOW.minusSeconds(3));
+        assertThat(investorFlow.categories())
+                .extracting("category", "buyQuantity", "sellQuantity", "netQuantity", "participationQuantity")
+                .containsExactly(
+                        org.assertj.core.groups.Tuple.tuple("MANUAL_PARTICIPANT", 100L, 20L, 80L, 120L),
+                        org.assertj.core.groups.Tuple.tuple("AUTO_PARTICIPANT", 30L, 60L, -30L, 90L),
+                        org.assertj.core.groups.Tuple.tuple("LISTING_UNDERWRITER", 10L, 40L, -30L, 50L)
+                );
+        assertThat(investorFlow.categories().getFirst().buyShareRate()).isEqualByComparingTo("71.4286");
+        assertThat(investorFlow.categories().getFirst().executionShareRate()).isEqualByComparingTo("46.1538");
+        assertThat(investorFlow.categories().get(1).netCashFlow()).isEqualByComparingTo("2997.00");
+    }
+
+    @Test
+    void getAdminFlowOverview_investorFlow_withoutExecutions_returnsAllCategoriesWithZeroRates() {
+        JdbcTemplate jdbcTemplate = createJdbcTemplate("admin_flow_query_service_empty_investor_flow_test");
+        AdminFlowQueryService service = createService(jdbcTemplate);
+
+        var investorFlow = service.getAdminFlowOverview(0, false, false).investorFlow();
+
+        assertThat(investorFlow.totalParticipationQuantity()).isZero();
+        assertThat(investorFlow.sourceUpdatedAt()).isNull();
+        assertThat(investorFlow.categories())
+                .extracting("category", "executionShareRate")
+                .containsExactly(
+                        org.assertj.core.groups.Tuple.tuple("MANUAL_PARTICIPANT", new BigDecimal("0.0000")),
+                        org.assertj.core.groups.Tuple.tuple("AUTO_PARTICIPANT", new BigDecimal("0.0000")),
+                        org.assertj.core.groups.Tuple.tuple("LISTING_UNDERWRITER", new BigDecimal("0.0000"))
+                );
+    }
+
     private AdminFlowQueryService createService(JdbcTemplate jdbcTemplate) {
         StockOrderBookInstrumentRepository stockOrderBookInstrumentRepository = mock(StockOrderBookInstrumentRepository.class);
         SimulationClockService simulationClockService = mock(SimulationClockService.class);
@@ -380,6 +429,11 @@ class AdminFlowQueryServiceTest {
                     user_key varchar(100) not null,
                     status varchar(30) not null,
                     cash_balance decimal(19, 2) not null
+                )
+                """);
+        jdbcTemplate.execute("""
+                create table stock_auto_participant (
+                    user_key varchar(100) primary key
                 )
                 """);
         jdbcTemplate.execute("""
@@ -627,6 +681,43 @@ class AdminFlowQueryServiceTest {
                 userKey,
                 status,
                 new BigDecimal(cashBalance)
+        );
+    }
+
+    private void insertExecutionDaySummary(
+            JdbcTemplate jdbcTemplate,
+            long accountId,
+            long buyQuantity,
+            long sellQuantity,
+            String buyAmount,
+            String sellAmount,
+            LocalDateTime updatedAt
+    ) {
+        BigDecimal buyGrossAmount = new BigDecimal(buyAmount);
+        BigDecimal sellGrossAmount = new BigDecimal(sellAmount);
+        jdbcTemplate.update(
+                """
+                insert into stock_execution_account_day_summary(
+                    simulation_trade_date, account_id, execution_count,
+                    buy_quantity, sell_quantity, gross_amount,
+                    buy_gross_amount, sell_gross_amount,
+                    buy_net_amount, sell_net_amount,
+                    fee_amount, tax_amount, realized_profit,
+                    last_executed_at, updated_at
+                )
+                values (?, ?, 1, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, ?, ?)
+                """,
+                SIMULATION_DAY_START.toLocalDate(),
+                accountId,
+                buyQuantity,
+                sellQuantity,
+                buyGrossAmount.add(sellGrossAmount),
+                buyGrossAmount,
+                sellGrossAmount,
+                buyGrossAmount.add(BigDecimal.ONE),
+                sellGrossAmount.subtract(BigDecimal.valueOf(2)),
+                updatedAt,
+                updatedAt
         );
     }
 

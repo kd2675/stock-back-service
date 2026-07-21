@@ -9,6 +9,8 @@ import stock.back.service.market.vo.AdminCorporateActionFlowSummaryResponse;
 import stock.back.service.market.vo.AdminFlowOverviewResponse;
 import stock.back.service.market.vo.AdminFundFlowScope;
 import stock.back.service.market.vo.AdminFundFlowSummaryResponse;
+import stock.back.service.market.vo.AdminInvestorCategoryFlowResponse;
+import stock.back.service.market.vo.AdminInvestorFlowSummaryResponse;
 import stock.back.service.market.vo.AdminOrderFlowSummaryResponse;
 import stock.back.service.market.vo.AdminRecentCashFlowResponse;
 import stock.back.service.market.vo.AdminSymbolFlowListResponse;
@@ -21,12 +23,44 @@ import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 
 @Service
 public class AdminFlowQueryService {
 
     private static final int TOTAL_ASSET_HISTORY_PAGE_SIZE = 7;
+    private static final List<String> INVESTOR_CATEGORIES = List.of(
+            "MANUAL_PARTICIPANT",
+            "AUTO_PARTICIPANT",
+            "LISTING_UNDERWRITER"
+    );
+
+    static final String INVESTOR_FLOW_SUMMARY_SQL = """
+            select case
+                     when a.user_key like 'stock-listing-%' then 'LISTING_UNDERWRITER'
+                     when auto_participant.user_key is not null then 'AUTO_PARTICIPANT'
+                     else 'MANUAL_PARTICIPANT'
+                   end as participant_category,
+                   sum(summary.buy_quantity) as buy_quantity,
+                   sum(summary.sell_quantity) as sell_quantity,
+                   sum(summary.buy_gross_amount) as buy_amount,
+                   sum(summary.sell_gross_amount) as sell_amount,
+                   sum(summary.buy_net_amount) as buy_net_amount,
+                   sum(summary.sell_net_amount) as sell_net_amount,
+                   max(summary.updated_at) as source_updated_at
+              from stock_execution_account_day_summary summary
+              join stock_account a on a.id = summary.account_id
+              left join stock_auto_participant auto_participant on auto_participant.user_key = a.user_key
+             where summary.simulation_trade_date = ?
+             group by case
+                        when a.user_key like 'stock-listing-%' then 'LISTING_UNDERWRITER'
+                        when auto_participant.user_key is not null then 'AUTO_PARTICIPANT'
+                        else 'MANUAL_PARTICIPANT'
+                      end
+            """;
 
     static final String FUND_FLOW_SUMMARY_SQL = fundFlowSummarySql("", "");
 
@@ -263,6 +297,7 @@ public class AdminFlowQueryService {
                 includeFundFlow ? loadAdminFundFlowSummary(normalizeFlowScope(fundFlowScope)) : null,
                 loadAdminOrderFlowSummary(todayStart, todayEnd),
                 loadAdminCorporateActionFlowSummary(todayStart, todayEnd),
+                loadAdminInvestorFlowSummary(todayStart.toLocalDate()),
                 symbolFlowList.totalCount(),
                 symbolFlowList.symbolFlows(),
                 loadAdminRecentCashFlows(),
@@ -545,6 +580,85 @@ public class AdminFlowQueryService {
                 .single();
     }
 
+    private AdminInvestorFlowSummaryResponse loadAdminInvestorFlowSummary(LocalDate simulationTradeDate) {
+        Map<String, InvestorCategoryAggregate> aggregatesByCategory = new LinkedHashMap<>();
+        jdbcClient.sql(INVESTOR_FLOW_SUMMARY_SQL)
+                .param(simulationTradeDate)
+                .query((rs, rowNum) -> new InvestorCategoryAggregate(
+                        rs.getString("participant_category"),
+                        rs.getLong("buy_quantity"),
+                        rs.getLong("sell_quantity"),
+                        MarketQuerySupport.zeroIfNull(rs.getBigDecimal("buy_amount")),
+                        MarketQuerySupport.zeroIfNull(rs.getBigDecimal("sell_amount")),
+                        MarketQuerySupport.zeroIfNull(rs.getBigDecimal("buy_net_amount")),
+                        MarketQuerySupport.zeroIfNull(rs.getBigDecimal("sell_net_amount")),
+                        MarketQuerySupport.toDateTime(rs.getTimestamp("source_updated_at"))
+                ))
+                .list()
+                .forEach(aggregate -> aggregatesByCategory.put(aggregate.category(), aggregate));
+
+        long totalBuyQuantity = aggregatesByCategory.values().stream()
+                .mapToLong(InvestorCategoryAggregate::buyQuantity)
+                .sum();
+        long totalSellQuantity = aggregatesByCategory.values().stream()
+                .mapToLong(InvestorCategoryAggregate::sellQuantity)
+                .sum();
+        long totalParticipationQuantity = totalBuyQuantity + totalSellQuantity;
+        LocalDateTime sourceUpdatedAt = aggregatesByCategory.values().stream()
+                .map(InvestorCategoryAggregate::sourceUpdatedAt)
+                .filter(Objects::nonNull)
+                .max(LocalDateTime::compareTo)
+                .orElse(null);
+
+        List<AdminInvestorCategoryFlowResponse> categories = INVESTOR_CATEGORIES.stream()
+                .map(category -> toInvestorCategoryFlow(
+                        aggregatesByCategory.getOrDefault(category, InvestorCategoryAggregate.empty(category)),
+                        totalBuyQuantity,
+                        totalSellQuantity,
+                        totalParticipationQuantity
+                ))
+                .toList();
+        return new AdminInvestorFlowSummaryResponse(
+                simulationTradeDate,
+                totalBuyQuantity,
+                totalSellQuantity,
+                totalParticipationQuantity,
+                categories,
+                sourceUpdatedAt
+        );
+    }
+
+    private AdminInvestorCategoryFlowResponse toInvestorCategoryFlow(
+            InvestorCategoryAggregate aggregate,
+            long totalBuyQuantity,
+            long totalSellQuantity,
+            long totalParticipationQuantity
+    ) {
+        long participationQuantity = aggregate.buyQuantity() + aggregate.sellQuantity();
+        return new AdminInvestorCategoryFlowResponse(
+                aggregate.category(),
+                aggregate.buyQuantity(),
+                aggregate.sellQuantity(),
+                aggregate.buyQuantity() - aggregate.sellQuantity(),
+                participationQuantity,
+                aggregate.buyAmount(),
+                aggregate.sellAmount(),
+                aggregate.sellNetAmount().subtract(aggregate.buyNetAmount()),
+                percentageOf(aggregate.buyQuantity(), totalBuyQuantity),
+                percentageOf(aggregate.sellQuantity(), totalSellQuantity),
+                percentageOf(participationQuantity, totalParticipationQuantity)
+        );
+    }
+
+    private BigDecimal percentageOf(long value, long total) {
+        if (total <= 0) {
+            return BigDecimal.ZERO.setScale(4);
+        }
+        return BigDecimal.valueOf(value)
+                .multiply(BigDecimal.valueOf(100))
+                .divide(BigDecimal.valueOf(total), 4, RoundingMode.HALF_UP);
+    }
+
     private List<AdminRecentCashFlowResponse> loadAdminRecentCashFlows() {
         return jdbcClient.sql(CASH_FLOW_SELECT_SQL + " limit 20")
                 .query((rs, rowNum) -> AdminFlowResponseMapper.toRecentCashFlow(rs))
@@ -570,5 +684,29 @@ public class AdminFlowQueryService {
             Long reservedSellQuantity,
             Long holdingPositionCount
     ) {
+    }
+
+    private record InvestorCategoryAggregate(
+            String category,
+            long buyQuantity,
+            long sellQuantity,
+            BigDecimal buyAmount,
+            BigDecimal sellAmount,
+            BigDecimal buyNetAmount,
+            BigDecimal sellNetAmount,
+            LocalDateTime sourceUpdatedAt
+    ) {
+        private static InvestorCategoryAggregate empty(String category) {
+            return new InvestorCategoryAggregate(
+                    category,
+                    0,
+                    0,
+                    BigDecimal.ZERO,
+                    BigDecimal.ZERO,
+                    BigDecimal.ZERO,
+                    BigDecimal.ZERO,
+                    null
+            );
+        }
     }
 }
