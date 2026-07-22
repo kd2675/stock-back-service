@@ -10,6 +10,8 @@ public record AdminInvestorFlowSummaryResponse(
         long totalSellQuantity,
         long totalParticipationQuantity,
         List<AdminInvestorCategoryFlowResponse> categories,
-        LocalDateTime sourceUpdatedAt
+        LocalDateTime sourceUpdatedAt,
+        AdminInvestorFlowSourceStatus sourceStatus,
+        Long closeRunId
 ) {
 }

@@ -27,6 +27,7 @@ import stock.back.service.market.biz.AutoParticipantProfileConfigService;
 import stock.back.service.market.biz.AutoParticipantSymbolConfigService;
 import stock.back.service.market.vo.AutoMarketConfigResponse;
 import stock.back.service.market.vo.AutoMarketConfigUpdateRequest;
+import stock.back.service.market.vo.AutoMarketRegimeHistoryRangeResponse;
 import stock.back.service.market.vo.AutoMarketRegimeHistoryResponse;
 import stock.back.service.market.vo.AutoParticipantActivityScope;
 import stock.back.service.market.vo.AutoParticipantCashAdjustmentRequest;
@@ -129,6 +130,15 @@ public class AutoMarketAdminController {
             @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate tradeDate
     ) {
         return ResponseDataDTO.of(autoMarketRegimeHistoryQueryService.getHistory(symbol, tradeDate));
+    }
+
+    @GetMapping("/auto-market/configs/{symbol}/regime-history/range")
+    public ResponseDataDTO<AutoMarketRegimeHistoryRangeResponse> getAutoMarketRegimeHistoryRange(
+            @PathVariable String symbol,
+            @RequestParam(required = false)
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate
+    ) {
+        return ResponseDataDTO.of(autoMarketRegimeHistoryQueryService.getHistoryRange(symbol, endDate));
     }
 
     @PatchMapping("/auto-market/participants/{userKey}")

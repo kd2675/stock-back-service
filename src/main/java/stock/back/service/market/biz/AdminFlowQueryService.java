@@ -11,6 +11,7 @@ import stock.back.service.market.vo.AdminFundFlowScope;
 import stock.back.service.market.vo.AdminFundFlowSummaryResponse;
 import stock.back.service.market.vo.AdminInvestorCategoryFlowResponse;
 import stock.back.service.market.vo.AdminInvestorFlowHistoryResponse;
+import stock.back.service.market.vo.AdminInvestorFlowSourceStatus;
 import stock.back.service.market.vo.AdminInvestorFlowSummaryResponse;
 import stock.back.service.market.vo.AdminOrderFlowSummaryResponse;
 import stock.back.service.market.vo.AdminRecentCashFlowResponse;
@@ -28,6 +29,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 
 @Service
 public class AdminFlowQueryService {
@@ -37,6 +39,14 @@ public class AdminFlowQueryService {
             "MANUAL_PARTICIPANT",
             "AUTO_PARTICIPANT",
             "LISTING_UNDERWRITER"
+    );
+    private static final Set<String> REPORT_READY_PHASES = Set.of(
+            "REPORTS_AGGREGATED",
+            "PREOPEN_SECURITY_TRANSFORMS_APPLIED",
+            "MARKET_DATA_PREPARED",
+            "AUTO_MARKET_PREPARED",
+            "READY_TO_OPEN",
+            "COMPLETED"
     );
 
     static final String INVESTOR_FLOW_SUMMARY_SQL = """
@@ -49,8 +59,7 @@ public class AdminFlowQueryService {
                    sum(summary.sell_quantity) as sell_quantity,
                    sum(summary.buy_gross_amount) as buy_amount,
                    sum(summary.sell_gross_amount) as sell_amount,
-                   sum(summary.buy_net_amount) as buy_net_amount,
-                   sum(summary.sell_net_amount) as sell_net_amount,
+                   sum(summary.sell_net_amount) - sum(summary.buy_net_amount) as net_cash_flow,
                    max(summary.updated_at) as source_updated_at
               from stock_execution_account_day_summary summary
               join stock_account account on account.id = summary.account_id
@@ -63,32 +72,54 @@ public class AdminFlowQueryService {
                       end
             """;
 
-    static final String INVESTOR_FLOW_HISTORY_SQL = """
-            select summary.simulation_trade_date,
-                   case
-                       when account.user_key like 'stock-listing-%' then 'LISTING_UNDERWRITER'
-                       when participant.user_key is not null then 'AUTO_PARTICIPANT'
-                       else 'MANUAL_PARTICIPANT'
-                   end as participant_category,
-                   sum(summary.buy_quantity) as buy_quantity,
-                   sum(summary.sell_quantity) as sell_quantity,
-                   sum(summary.buy_gross_amount) as buy_amount,
-                   sum(summary.sell_gross_amount) as sell_amount,
-                   sum(summary.buy_net_amount) as buy_net_amount,
-                   sum(summary.sell_net_amount) as sell_net_amount,
-                   max(summary.updated_at) as source_updated_at
-              from stock_execution_account_day_summary summary
-              join stock_account account on account.id = summary.account_id
-              left join stock_auto_participant participant on participant.user_key = account.user_key
-             where summary.simulation_trade_date >= ?
-               and summary.simulation_trade_date <= ?
-             group by summary.simulation_trade_date,
-                      case
-                        when account.user_key like 'stock-listing-%' then 'LISTING_UNDERWRITER'
-                        when participant.user_key is not null then 'AUTO_PARTICIPANT'
-                        else 'MANUAL_PARTICIPANT'
-                      end
-             order by summary.simulation_trade_date desc
+    static final String INVESTOR_FLOW_HISTORY_CYCLE_SQL = """
+            select cycle.business_date,
+                   cycle.cycle_kind,
+                   cycle.phase,
+                   cycle.status,
+                   cycle.close_run_id,
+                   cycle.updated_at,
+                   close_run.status as close_run_status
+              from stock_post_close_cycle cycle
+              left join stock_market_close_run close_run
+                on close_run.id = cycle.close_run_id
+               and close_run.symbol is null
+             where cycle.business_date >= ?
+               and cycle.business_date <= ?
+               and cycle.scope_type = 'FULL_MARKET'
+               and cycle.scope_key = 'ALL'
+             order by cycle.business_date desc
+            """;
+
+    static final String INVESTOR_FLOW_HISTORY_SNAPSHOT_SQL = """
+            select snapshot.simulation_trade_date,
+                   snapshot.participant_category,
+                   sum(snapshot.buy_quantity) as buy_quantity,
+                   sum(snapshot.sell_quantity) as sell_quantity,
+                   sum(snapshot.buy_amount) as buy_amount,
+                   sum(snapshot.sell_amount) as sell_amount,
+                   sum(snapshot.net_cash_flow) as net_cash_flow,
+                   max(snapshot.created_at) as source_updated_at
+              from stock_execution_daily_account_snapshot snapshot
+              join stock_post_close_cycle cycle
+                on cycle.close_run_id = snapshot.close_run_id
+               and cycle.business_date = snapshot.simulation_trade_date
+               and cycle.scope_type = 'FULL_MARKET'
+               and cycle.scope_key = 'ALL'
+               and cycle.cycle_kind = 'TRADING'
+               and cycle.phase in (
+                   'REPORTS_AGGREGATED', 'PREOPEN_SECURITY_TRANSFORMS_APPLIED',
+                   'MARKET_DATA_PREPARED', 'AUTO_MARKET_PREPARED',
+                   'READY_TO_OPEN', 'COMPLETED'
+               )
+              join stock_market_close_run close_run
+                on close_run.id = cycle.close_run_id
+               and close_run.symbol is null
+               and close_run.status = 'COMPLETED'
+             where snapshot.simulation_trade_date >= ?
+               and snapshot.simulation_trade_date <= ?
+             group by snapshot.simulation_trade_date, snapshot.participant_category
+             order by snapshot.simulation_trade_date desc
             """;
 
     static final String FUND_FLOW_SUMMARY_SQL = fundFlowSummarySql("", "");
@@ -355,32 +386,40 @@ public class AdminFlowQueryService {
         LocalDate rangeEnd = todayStart().toLocalDate();
         LocalDate rangeStart = rangeEnd.minusDays(normalizedDays - 1L);
         Map<LocalDate, Map<String, InvestorCategoryAggregate>> aggregatesByDate = new LinkedHashMap<>();
-        jdbcClient.sql(INVESTOR_FLOW_HISTORY_SQL)
-                .params(rangeStart, rangeEnd)
-                .query((rs, rowNum) -> new DatedInvestorCategoryAggregate(
-                        rs.getObject("simulation_trade_date", LocalDate.class),
-                        new InvestorCategoryAggregate(
-                                rs.getString("participant_category"),
-                                rs.getLong("buy_quantity"),
-                                rs.getLong("sell_quantity"),
-                                MarketQuerySupport.zeroIfNull(rs.getBigDecimal("buy_amount")),
-                                MarketQuerySupport.zeroIfNull(rs.getBigDecimal("sell_amount")),
-                                MarketQuerySupport.zeroIfNull(rs.getBigDecimal("buy_net_amount")),
-                                MarketQuerySupport.zeroIfNull(rs.getBigDecimal("sell_net_amount")),
-                                MarketQuerySupport.toDateTime(rs.getTimestamp("source_updated_at"))
-                        )
-                ))
-                .list()
-                .forEach(datedAggregate -> aggregatesByDate
-                        .computeIfAbsent(datedAggregate.simulationTradeDate(), ignored -> new LinkedHashMap<>())
-                        .put(datedAggregate.aggregate().category(), datedAggregate.aggregate()));
+        Map<LocalDate, InvestorFlowCycleSource> cycleSourcesByDate = new LinkedHashMap<>();
+        aggregatesByDate.put(rangeEnd, loadLiveInvestorFlowAggregates(rangeEnd));
+
+        LocalDate lastClosedDate = rangeEnd.minusDays(1);
+        if (!lastClosedDate.isBefore(rangeStart)) {
+            loadInvestorFlowCycleSources(rangeStart, lastClosedDate).forEach(source ->
+                    cycleSourcesByDate.put(source.businessDate(), source));
+            loadClosedInvestorFlowAggregates(rangeStart, lastClosedDate).forEach(datedAggregate ->
+                    aggregatesByDate
+                            .computeIfAbsent(datedAggregate.simulationTradeDate(), ignored -> new LinkedHashMap<>())
+                            .put(datedAggregate.aggregate().category(), datedAggregate.aggregate()));
+        }
 
         List<AdminInvestorFlowSummaryResponse> dailyFlows = new ArrayList<>(normalizedDays);
         for (int dayOffset = 0; dayOffset < normalizedDays; dayOffset++) {
             LocalDate simulationTradeDate = rangeEnd.minusDays(dayOffset);
+            if (simulationTradeDate.equals(rangeEnd)) {
+                dailyFlows.add(toInvestorFlowSummary(
+                        simulationTradeDate,
+                        aggregatesByDate.getOrDefault(simulationTradeDate, Map.of()),
+                        AdminInvestorFlowSourceStatus.LIVE_ASYNC,
+                        null,
+                        null
+                ));
+                continue;
+            }
+            InvestorFlowCycleSource cycleSource = cycleSourcesByDate.get(simulationTradeDate);
+            AdminInvestorFlowSourceStatus sourceStatus = resolveInvestorFlowSourceStatus(cycleSource);
             dailyFlows.add(toInvestorFlowSummary(
                     simulationTradeDate,
-                    aggregatesByDate.getOrDefault(simulationTradeDate, Map.of())
+                    aggregatesByDate.getOrDefault(simulationTradeDate, Map.of()),
+                    sourceStatus,
+                    cycleSource == null ? null : cycleSource.closeRunId(),
+                    cycleSource == null ? null : cycleSource.updatedAt()
             ));
         }
         return new AdminInvestorFlowHistoryResponse(rangeStart, rangeEnd, dailyFlows);
@@ -652,6 +691,16 @@ public class AdminFlowQueryService {
     }
 
     private AdminInvestorFlowSummaryResponse loadAdminInvestorFlowSummary(LocalDate simulationTradeDate) {
+        return toInvestorFlowSummary(
+                simulationTradeDate,
+                loadLiveInvestorFlowAggregates(simulationTradeDate),
+                AdminInvestorFlowSourceStatus.LIVE_ASYNC,
+                null,
+                null
+        );
+    }
+
+    private Map<String, InvestorCategoryAggregate> loadLiveInvestorFlowAggregates(LocalDate simulationTradeDate) {
         Map<String, InvestorCategoryAggregate> aggregatesByCategory = new LinkedHashMap<>();
         jdbcClient.sql(INVESTOR_FLOW_SUMMARY_SQL)
                 .param(simulationTradeDate)
@@ -661,19 +710,74 @@ public class AdminFlowQueryService {
                         rs.getLong("sell_quantity"),
                         MarketQuerySupport.zeroIfNull(rs.getBigDecimal("buy_amount")),
                         MarketQuerySupport.zeroIfNull(rs.getBigDecimal("sell_amount")),
-                        MarketQuerySupport.zeroIfNull(rs.getBigDecimal("buy_net_amount")),
-                        MarketQuerySupport.zeroIfNull(rs.getBigDecimal("sell_net_amount")),
+                        MarketQuerySupport.zeroIfNull(rs.getBigDecimal("net_cash_flow")),
                         MarketQuerySupport.toDateTime(rs.getTimestamp("source_updated_at"))
                 ))
                 .list()
                 .forEach(aggregate -> aggregatesByCategory.put(aggregate.category(), aggregate));
+        return aggregatesByCategory;
+    }
 
-        return toInvestorFlowSummary(simulationTradeDate, aggregatesByCategory);
+    private List<InvestorFlowCycleSource> loadInvestorFlowCycleSources(LocalDate rangeStart, LocalDate rangeEnd) {
+        return jdbcClient.sql(INVESTOR_FLOW_HISTORY_CYCLE_SQL)
+                .params(rangeStart, rangeEnd)
+                .query((rs, rowNum) -> new InvestorFlowCycleSource(
+                        rs.getObject("business_date", LocalDate.class),
+                        rs.getString("cycle_kind"),
+                        rs.getString("phase"),
+                        rs.getString("status"),
+                        rs.getObject("close_run_id", Long.class),
+                        rs.getString("close_run_status"),
+                        rs.getObject("updated_at", LocalDateTime.class)
+                ))
+                .list();
+    }
+
+    private List<DatedInvestorCategoryAggregate> loadClosedInvestorFlowAggregates(
+            LocalDate rangeStart,
+            LocalDate rangeEnd
+    ) {
+        return jdbcClient.sql(INVESTOR_FLOW_HISTORY_SNAPSHOT_SQL)
+                .params(rangeStart, rangeEnd)
+                .query((rs, rowNum) -> new DatedInvestorCategoryAggregate(
+                        rs.getObject("simulation_trade_date", LocalDate.class),
+                        new InvestorCategoryAggregate(
+                                rs.getString("participant_category"),
+                                rs.getLong("buy_quantity"),
+                                rs.getLong("sell_quantity"),
+                                MarketQuerySupport.zeroIfNull(rs.getBigDecimal("buy_amount")),
+                                MarketQuerySupport.zeroIfNull(rs.getBigDecimal("sell_amount")),
+                                MarketQuerySupport.zeroIfNull(rs.getBigDecimal("net_cash_flow")),
+                                rs.getObject("source_updated_at", LocalDateTime.class)
+                        )
+                ))
+                .list();
+    }
+
+    private AdminInvestorFlowSourceStatus resolveInvestorFlowSourceStatus(InvestorFlowCycleSource source) {
+        if (source == null) {
+            return AdminInvestorFlowSourceStatus.MISSING;
+        }
+        if ("SKIPPED".equals(source.cycleKind())) {
+            return AdminInvestorFlowSourceStatus.NO_TRADING;
+        }
+        if (REPORT_READY_PHASES.contains(source.phase())
+                && source.closeRunId() != null
+                && "COMPLETED".equals(source.closeRunStatus())) {
+            return AdminInvestorFlowSourceStatus.CLOSED_SNAPSHOT;
+        }
+        if ("FAILED".equals(source.status())) {
+            return AdminInvestorFlowSourceStatus.EOD_FAILED;
+        }
+        return AdminInvestorFlowSourceStatus.EOD_PENDING;
     }
 
     private AdminInvestorFlowSummaryResponse toInvestorFlowSummary(
             LocalDate simulationTradeDate,
-            Map<String, InvestorCategoryAggregate> aggregatesByCategory
+            Map<String, InvestorCategoryAggregate> aggregatesByCategory,
+            AdminInvestorFlowSourceStatus sourceStatus,
+            Long closeRunId,
+            LocalDateTime sourceUpdatedAtFallback
     ) {
         long totalBuyQuantity = aggregatesByCategory.values().stream()
                 .mapToLong(InvestorCategoryAggregate::buyQuantity)
@@ -686,7 +790,7 @@ public class AdminFlowQueryService {
                 .map(InvestorCategoryAggregate::sourceUpdatedAt)
                 .filter(Objects::nonNull)
                 .max(LocalDateTime::compareTo)
-                .orElse(null);
+                .orElse(sourceUpdatedAtFallback);
 
         List<AdminInvestorCategoryFlowResponse> categories = PARTICIPANT_CATEGORIES.stream()
                 .map(category -> toInvestorCategoryFlow(
@@ -702,7 +806,9 @@ public class AdminFlowQueryService {
                 totalSellQuantity,
                 totalParticipationQuantity,
                 categories,
-                sourceUpdatedAt
+                sourceUpdatedAt,
+                sourceStatus,
+                closeRunId
         );
     }
 
@@ -721,7 +827,7 @@ public class AdminFlowQueryService {
                 participationQuantity,
                 aggregate.buyAmount(),
                 aggregate.sellAmount(),
-                aggregate.sellNetAmount().subtract(aggregate.buyNetAmount()),
+                aggregate.netCashFlow(),
                 percentageOf(aggregate.buyQuantity(), totalBuyQuantity),
                 percentageOf(aggregate.sellQuantity(), totalSellQuantity),
                 percentageOf(participationQuantity, totalParticipationQuantity)
@@ -770,8 +876,7 @@ public class AdminFlowQueryService {
             long sellQuantity,
             BigDecimal buyAmount,
             BigDecimal sellAmount,
-            BigDecimal buyNetAmount,
-            BigDecimal sellNetAmount,
+            BigDecimal netCashFlow,
             LocalDateTime sourceUpdatedAt
     ) {
         private static InvestorCategoryAggregate empty(String category) {
@@ -779,7 +884,6 @@ public class AdminFlowQueryService {
                     category,
                     0,
                     0,
-                    BigDecimal.ZERO,
                     BigDecimal.ZERO,
                     BigDecimal.ZERO,
                     BigDecimal.ZERO,
@@ -791,6 +895,17 @@ public class AdminFlowQueryService {
     private record DatedInvestorCategoryAggregate(
             LocalDate simulationTradeDate,
             InvestorCategoryAggregate aggregate
+    ) {
+    }
+
+    private record InvestorFlowCycleSource(
+            LocalDate businessDate,
+            String cycleKind,
+            String phase,
+            String status,
+            Long closeRunId,
+            String closeRunStatus,
+            LocalDateTime updatedAt
     ) {
     }
 }

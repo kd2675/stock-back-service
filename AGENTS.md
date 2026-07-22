@@ -25,7 +25,7 @@
 - `/api/stock/v1/markets/order-book-market`
 - `/api/stock/v1/markets/auto-market`
 - `GET /api/stock/v1/markets/admin/investor-flow-summary` (`ADMIN`, 유저·자동 참여자·상장주관사 기준 현재 거래일 비동기 요약)
-- `GET /api/stock/v1/markets/admin/investor-flow-history` (`ADMIN`, 동일 역할 기준 최근 시뮬레이션 거래일별 요약)
+- `GET /api/stock/v1/markets/admin/investor-flow-history` (`ADMIN`, 오늘은 비동기 요약, 과거 거래일은 권위 있는 full-market cycle의 역할 동결 스냅샷과 집계 상태를 반환)
 - `GET /api/stock/v1/markets/batch-jobs/eod/overview` (`ADMIN`)
 - `POST /api/stock/v1/markets/batch-jobs/eod/cycles/{cycleId}/retry` (`ADMIN`, `FAILED` 현재 phase만)
 - `/api/stock/v1/users/me`

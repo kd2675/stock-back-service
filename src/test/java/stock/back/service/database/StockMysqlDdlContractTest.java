@@ -517,7 +517,7 @@ class StockMysqlDdlContractTest {
     }
 
     @Test
-    void investorTypeCleanupAlterDdl_isIdempotentAndAvoidsHotLedgers() throws IOException {
+    void investorTypeCleanupAlterDdl_containsExpectedGuardsAndAvoidsHotLedgers() throws IOException {
         String ddl = Files.readString(
                 Path.of("src/main/resources/db/ddl/stock_investor_type_cleanup_alter.sql"),
                 StandardCharsets.UTF_8
@@ -529,8 +529,12 @@ class StockMysqlDdlContractTest {
                         "information_schema.table_constraints",
                         "information_schema.columns",
                         "DROP COLUMN `investor_type`",
+                        "CALL stock_drop_obsolete_investor_type('stock_account', 'chk_stock_account_investor_type')",
+                        "CALL stock_drop_obsolete_investor_type('stock_auto_participant', 'chk_stock_auto_participant_investor_type')",
+                        "CALL stock_drop_obsolete_investor_type('stock_close_account_snapshot', 'chk_stock_close_account_snapshot_investor_type')",
                         "stock_execution_account_day_summary",
-                        "stock_execution_daily_account_snapshot"
+                        "stock_execution_daily_account_snapshot",
+                        "DROP PROCEDURE stock_drop_obsolete_investor_type"
                 )
                 .doesNotContain(
                         "ALTER TABLE stock_order ",

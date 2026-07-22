@@ -1046,7 +1046,8 @@ class StockBackAuthorizationBoundaryTest {
                         .header("X-User-Role", "ROLE_ADMIN"))
                 .andExpect(status().isOk())
                 .andExpect(content().string(containsString("\"simulationTradeDate\"")))
-                .andExpect(content().string(containsString("\"categories\"")));
+                .andExpect(content().string(containsString("\"categories\"")))
+                .andExpect(content().string(containsString("\"sourceStatus\":\"LIVE_ASYNC\"")));
     }
 
     @Test
@@ -1065,7 +1066,8 @@ class StockBackAuthorizationBoundaryTest {
                         .header("X-User-Role", "ROLE_ADMIN"))
                 .andExpect(status().isOk())
                 .andExpect(content().string(containsString("\"rangeStart\"")))
-                .andExpect(content().string(containsString("\"dailyFlows\"")));
+                .andExpect(content().string(containsString("\"dailyFlows\"")))
+                .andExpect(content().string(containsString("\"sourceStatus\":\"LIVE_ASYNC\"")));
     }
 
     @Test

@@ -5,6 +5,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import stock.back.service.database.repository.StockOrderBookInstrumentRepository;
 import stock.back.service.market.vo.AdminFundFlowScope;
+import stock.back.service.market.vo.AdminInvestorFlowSourceStatus;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -375,6 +376,8 @@ class AdminFlowQueryServiceTest {
         assertThat(investorFlow.totalSellQuantity()).isEqualTo(120L);
         assertThat(investorFlow.totalParticipationQuantity()).isEqualTo(260L);
         assertThat(investorFlow.sourceUpdatedAt()).isEqualTo(SIMULATION_NOW.minusSeconds(3));
+        assertThat(investorFlow.sourceStatus()).isEqualTo(AdminInvestorFlowSourceStatus.LIVE_ASYNC);
+        assertThat(investorFlow.closeRunId()).isNull();
         assertThat(investorFlow.categories())
                 .extracting("category", "buyQuantity", "sellQuantity", "netQuantity", "participationQuantity")
                 .containsExactly(
@@ -432,26 +435,11 @@ class AdminFlowQueryServiceTest {
                 "0.00",
                 SIMULATION_NOW.minusSeconds(3)
         );
-        insertExecutionDaySummary(
-                jdbcTemplate,
-                SIMULATION_DAY_START.minusDays(1).toLocalDate(),
-                1L,
-                70L,
-                50L,
-                "7000.00",
-                "5000.00",
-                SIMULATION_NOW.minusDays(1)
-        );
-        insertExecutionDaySummary(
-                jdbcTemplate,
-                SIMULATION_DAY_START.minusDays(1).toLocalDate(),
-                2L,
-                0L,
-                20L,
-                "0.00",
-                "2000.00",
-                SIMULATION_NOW.minusDays(1)
-        );
+        LocalDate closedDate = SIMULATION_DAY_START.minusDays(1).toLocalDate();
+        insertInvestorFlowCycle(jdbcTemplate, 100L, closedDate, "TRADING", "REPORTS_AGGREGATED", "PENDING", "COMPLETED");
+        insertInvestorFlowSnapshot(jdbcTemplate, 1L, 100L, "STOCK001", closedDate, 1L, "AUTO_PARTICIPANT", 40L, 30L, "4000.00", "3000.00", "-997.00");
+        insertInvestorFlowSnapshot(jdbcTemplate, 2L, 100L, "STOCK002", closedDate, 1L, "AUTO_PARTICIPANT", 30L, 20L, "3000.00", "2000.00", "-998.00");
+        insertInvestorFlowSnapshot(jdbcTemplate, 3L, 100L, "STOCK001", closedDate, 2L, "LISTING_UNDERWRITER", 0L, 20L, "0.00", "2000.00", "1998.00");
 
         var history = service.getAdminInvestorFlowHistory(7);
 
@@ -469,6 +457,7 @@ class AdminFlowQueryServiceTest {
                         SIMULATION_DAY_START.minusDays(6).toLocalDate()
                 );
         var currentFlow = history.dailyFlows().getFirst();
+        assertThat(currentFlow.sourceStatus()).isEqualTo(AdminInvestorFlowSourceStatus.LIVE_ASYNC);
         assertThat(currentFlow.totalBuyQuantity()).isEqualTo(120L);
         assertThat(currentFlow.totalSellQuantity()).isEqualTo(120L);
         assertThat(currentFlow.categories()).extracting("category", "netQuantity")
@@ -477,7 +466,61 @@ class AdminFlowQueryServiceTest {
                         org.assertj.core.groups.Tuple.tuple("AUTO_PARTICIPANT", -20L),
                         org.assertj.core.groups.Tuple.tuple("LISTING_UNDERWRITER", 20L)
                 );
+        var closedFlow = history.dailyFlows().get(1);
+        assertThat(closedFlow.sourceStatus()).isEqualTo(AdminInvestorFlowSourceStatus.CLOSED_SNAPSHOT);
+        assertThat(closedFlow.closeRunId()).isEqualTo(100L);
+        assertThat(closedFlow.totalBuyQuantity()).isEqualTo(70L);
+        assertThat(closedFlow.totalSellQuantity()).isEqualTo(70L);
+        assertThat(closedFlow.categories().get(1).netCashFlow()).isEqualByComparingTo("-1995.00");
+        assertThat(history.dailyFlows().get(2).sourceStatus()).isEqualTo(AdminInvestorFlowSourceStatus.MISSING);
         assertThat(history.dailyFlows().get(2).totalParticipationQuantity()).isZero();
+    }
+
+    @Test
+    void getAdminInvestorFlowHistory_closedSnapshot_keepsFrozenRoleAfterCurrentAccountDeletion() {
+        JdbcTemplate jdbcTemplate = createJdbcTemplate("admin_investor_flow_frozen_role_test");
+        AdminFlowQueryService service = createService(jdbcTemplate);
+        LocalDate closedDate = SIMULATION_DAY_START.minusDays(1).toLocalDate();
+        insertAccount(jdbcTemplate, 99L, "removed-auto-user", "ACTIVE", "1000.00");
+        jdbcTemplate.update("insert into stock_auto_participant(user_key) values ('removed-auto-user')");
+        insertInvestorFlowCycle(jdbcTemplate, 110L, closedDate, "TRADING", "REPORTS_AGGREGATED", "PENDING", "COMPLETED");
+        insertInvestorFlowSnapshot(jdbcTemplate, 11L, 110L, "STOCK001", closedDate, 99L, "AUTO_PARTICIPANT", 25L, 10L, "2500.00", "1000.00", "-1497.00");
+        jdbcTemplate.update(
+                "insert into stock_market_close_run(id, symbol, business_date, status, completed_at) values (111, null, ?, 'COMPLETED', ?)",
+                closedDate,
+                SIMULATION_NOW
+        );
+        insertInvestorFlowSnapshot(jdbcTemplate, 12L, 111L, "STOCK001", closedDate, 100L, "MANUAL_PARTICIPANT", 999L, 999L, "99900.00", "99900.00", "0.00");
+        jdbcTemplate.update("delete from stock_auto_participant where user_key = 'removed-auto-user'");
+        jdbcTemplate.update("delete from stock_account where id = 99");
+
+        var history = service.getAdminInvestorFlowHistory(2);
+
+        assertThat(history.dailyFlows().get(1).categories().get(1).buyQuantity()).isEqualTo(25L);
+        assertThat(history.dailyFlows().get(1).categories().getFirst().buyQuantity()).isZero();
+        assertThat(history.dailyFlows().get(1).sourceStatus()).isEqualTo(AdminInvestorFlowSourceStatus.CLOSED_SNAPSHOT);
+    }
+
+    @Test
+    void getAdminInvestorFlowHistory_distinguishesPendingFailedSkippedAndMissingDays() {
+        JdbcTemplate jdbcTemplate = createJdbcTemplate("admin_investor_flow_source_status_test");
+        AdminFlowQueryService service = createService(jdbcTemplate);
+        insertInvestorFlowCycle(jdbcTemplate, 201L, SIMULATION_DAY_START.minusDays(1).toLocalDate(), "TRADING", "LEDGER_FROZEN", "PENDING", "COMPLETED");
+        insertInvestorFlowCycle(jdbcTemplate, 202L, SIMULATION_DAY_START.minusDays(2).toLocalDate(), "TRADING", "LEDGER_FROZEN", "FAILED", "COMPLETED");
+        insertInvestorFlowCycle(jdbcTemplate, 203L, SIMULATION_DAY_START.minusDays(3).toLocalDate(), "SKIPPED", "COMPLETED", "COMPLETED", null);
+        insertInvestorFlowCycle(jdbcTemplate, 204L, SIMULATION_DAY_START.minusDays(4).toLocalDate(), "TRADING", "REPORTS_AGGREGATED", "PENDING", "COMPLETED");
+
+        var history = service.getAdminInvestorFlowHistory(6);
+
+        assertThat(history.dailyFlows()).extracting("sourceStatus").containsExactly(
+                AdminInvestorFlowSourceStatus.LIVE_ASYNC,
+                AdminInvestorFlowSourceStatus.EOD_PENDING,
+                AdminInvestorFlowSourceStatus.EOD_FAILED,
+                AdminInvestorFlowSourceStatus.NO_TRADING,
+                AdminInvestorFlowSourceStatus.CLOSED_SNAPSHOT,
+                AdminInvestorFlowSourceStatus.MISSING
+        );
+        assertThat(history.dailyFlows().get(4).totalParticipationQuantity()).isZero();
     }
 
     private AdminFlowQueryService createService(JdbcTemplate jdbcTemplate) {
@@ -501,7 +544,7 @@ class AdminFlowQueryServiceTest {
         jdbcTemplate.execute("""
                 create table stock_account (
                     id bigint primary key,
-                    user_key varchar(100) not null,
+                    user_key varchar(100),
                     status varchar(30) not null,
                     cash_balance decimal(19, 2) not null
                 )
@@ -593,10 +636,14 @@ class AdminFlowQueryServiceTest {
         jdbcTemplate.execute("""
                 create table stock_post_close_cycle (
                     id bigint primary key,
+                    business_date date not null,
                     close_run_id bigint,
                     scope_type varchar(20) not null,
                     scope_key varchar(120) not null,
-                    phase varchar(60) not null
+                    cycle_kind varchar(20) not null default 'TRADING',
+                    phase varchar(60) not null,
+                    status varchar(20) not null default 'PENDING',
+                    updated_at timestamp not null
                 )
                 """);
         jdbcTemplate.execute("""
@@ -675,6 +722,26 @@ class AdminFlowQueryServiceTest {
                     last_executed_at timestamp,
                     updated_at timestamp not null,
                     primary key (simulation_trade_date, account_id)
+                )
+                """);
+        jdbcTemplate.execute("""
+                create table stock_execution_daily_account_snapshot (
+                    id bigint primary key,
+                    close_run_id bigint not null,
+                    symbol varchar(20) not null,
+                    simulation_trade_date date not null,
+                    account_id bigint not null,
+                    participant_category varchar(30) not null,
+                    execution_count bigint not null default 0,
+                    buy_quantity bigint not null default 0,
+                    sell_quantity bigint not null default 0,
+                    buy_amount decimal(19, 2) not null default 0,
+                    sell_amount decimal(19, 2) not null default 0,
+                    net_cash_flow decimal(19, 2) not null default 0,
+                    execution_amount decimal(19, 2) not null default 0,
+                    last_executed_at timestamp,
+                    created_at timestamp not null,
+                    unique (close_run_id, symbol, account_id)
                 )
                 """);
         jdbcTemplate.execute("""
@@ -850,9 +917,97 @@ class AdminFlowQueryServiceTest {
 
     private void insertPostCloseCycle(JdbcTemplate jdbcTemplate, long cycleId, String phase) {
         jdbcTemplate.update(
-                "insert into stock_post_close_cycle(id, scope_type, scope_key, phase) values (?, 'FULL_MARKET', 'ALL', ?)",
+                """
+                insert into stock_post_close_cycle(
+                    id, business_date, scope_type, scope_key, cycle_kind, phase, status, updated_at
+                )
+                values (?, ?, 'FULL_MARKET', 'ALL', 'TRADING', ?, 'PENDING', ?)
+                """,
                 cycleId,
-                phase
+                SIMULATION_DAY_START.toLocalDate(),
+                phase,
+                SIMULATION_NOW
+        );
+    }
+
+    private void insertInvestorFlowCycle(
+            JdbcTemplate jdbcTemplate,
+            long cycleId,
+            LocalDate businessDate,
+            String cycleKind,
+            String phase,
+            String status,
+            String closeRunStatus
+    ) {
+        Long closeRunId = closeRunStatus == null ? null : cycleId;
+        if (closeRunId != null) {
+            jdbcTemplate.update(
+                    """
+                    insert into stock_market_close_run(id, symbol, business_date, status, completed_at)
+                    values (?, null, ?, ?, ?)
+                    """,
+                    closeRunId,
+                    businessDate,
+                    closeRunStatus,
+                    SIMULATION_NOW
+            );
+        }
+        jdbcTemplate.update(
+                """
+                insert into stock_post_close_cycle(
+                    id, business_date, close_run_id, scope_type, scope_key,
+                    cycle_kind, phase, status, updated_at
+                )
+                values (?, ?, ?, 'FULL_MARKET', 'ALL', ?, ?, ?, ?)
+                """,
+                cycleId,
+                businessDate,
+                closeRunId,
+                cycleKind,
+                phase,
+                status,
+                SIMULATION_NOW
+        );
+    }
+
+    private void insertInvestorFlowSnapshot(
+            JdbcTemplate jdbcTemplate,
+            long id,
+            long closeRunId,
+            String symbol,
+            LocalDate simulationTradeDate,
+            long accountId,
+            String participantCategory,
+            long buyQuantity,
+            long sellQuantity,
+            String buyAmount,
+            String sellAmount,
+            String netCashFlow
+    ) {
+        jdbcTemplate.update(
+                """
+                insert into stock_execution_daily_account_snapshot(
+                    id, close_run_id, symbol, simulation_trade_date, account_id,
+                    participant_category, execution_count, buy_quantity, sell_quantity,
+                    buy_amount, sell_amount, net_cash_flow, execution_amount,
+                    last_executed_at, created_at
+                )
+                values (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                id,
+                closeRunId,
+                symbol,
+                simulationTradeDate,
+                accountId,
+                participantCategory,
+                buyQuantity,
+                sellQuantity,
+                new BigDecimal(buyAmount),
+                new BigDecimal(sellAmount),
+                new BigDecimal(netCashFlow),
+                new BigDecimal(buyAmount).add(new BigDecimal(sellAmount)),
+                SIMULATION_NOW,
+                SIMULATION_NOW
         );
     }
 
@@ -1231,11 +1386,16 @@ class AdminFlowQueryServiceTest {
         );
         jdbcTemplate.update(
                 """
-                insert into stock_post_close_cycle(id, close_run_id, scope_type, scope_key, phase)
-                values (?, ?, 'FULL_MARKET', 'ALL', 'REPORTS_AGGREGATED')
+                insert into stock_post_close_cycle(
+                    id, business_date, close_run_id, scope_type, scope_key,
+                    cycle_kind, phase, status, updated_at
+                )
+                values (?, ?, ?, 'FULL_MARKET', 'ALL', 'TRADING', 'REPORTS_AGGREGATED', 'PENDING', ?)
                 """,
                 closeRunId,
-                closeRunId
+                simulationTradeDate,
+                closeRunId,
+                SIMULATION_NOW
         );
         jdbcTemplate.update(
                 """

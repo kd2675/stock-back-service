@@ -127,5 +127,49 @@ class StockTestEodSchemaInitializer implements ApplicationRunner {
                     on stock_post_close_cycle(scope_type, scope_key, business_date, status, id)
                 """
         );
+        jdbcTemplate.execute(
+                """
+                create table if not exists stock_market_close_run (
+                    id bigint auto_increment primary key,
+                    symbol varchar(20),
+                    business_date date not null,
+                    closed_at timestamp,
+                    status varchar(20) not null,
+                    cancelled_order_count int not null default 0,
+                    holding_snapshot_count int not null default 0,
+                    price_rollover_count int not null default 0,
+                    created_at timestamp,
+                    completed_at timestamp
+                )
+                """
+        );
+        jdbcTemplate.execute(
+                """
+                create table if not exists stock_execution_daily_account_snapshot (
+                    id bigint auto_increment primary key,
+                    close_run_id bigint not null,
+                    symbol varchar(20) not null,
+                    simulation_trade_date date not null,
+                    account_id bigint not null,
+                    participant_category varchar(30) not null,
+                    execution_count bigint not null default 0,
+                    buy_quantity bigint not null default 0,
+                    sell_quantity bigint not null default 0,
+                    buy_amount decimal(19, 2) not null default 0,
+                    sell_amount decimal(19, 2) not null default 0,
+                    net_cash_flow decimal(19, 2) not null default 0,
+                    execution_amount decimal(19, 2) not null default 0,
+                    last_executed_at timestamp,
+                    created_at timestamp not null,
+                    unique (close_run_id, symbol, account_id)
+                )
+                """
+        );
+        jdbcTemplate.execute(
+                """
+                create index if not exists idx_stock_execution_daily_account_account_date
+                    on stock_execution_daily_account_snapshot(account_id, simulation_trade_date, close_run_id)
+                """
+        );
     }
 }
