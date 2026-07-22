@@ -14,6 +14,7 @@ public record CorporateActionRequest(
         Integer splitFrom,
         Integer splitTo,
         LocalDate exRightsDate,
+        LocalDate recordDate,
         LocalDate paymentDate,
         LocalDate listingDate,
         LocalDate delistingDate,
@@ -23,6 +24,41 @@ public record CorporateActionRequest(
         LocalDate subscriptionEndDate,
         String description
 ) {
+    public CorporateActionRequest(
+            StockCorporateActionType actionType,
+            Long shareQuantity,
+            BigDecimal issuePrice,
+            Integer splitFrom,
+            Integer splitTo,
+            LocalDate exRightsDate,
+            LocalDate paymentDate,
+            LocalDate listingDate,
+            LocalDate delistingDate,
+            BigDecimal dividendAmount,
+            StockCapitalIncreaseOfferingType offeringType,
+            LocalDate subscriptionStartDate,
+            LocalDate subscriptionEndDate,
+            String description
+    ) {
+        this(
+                actionType,
+                shareQuantity,
+                issuePrice,
+                splitFrom,
+                splitTo,
+                exRightsDate,
+                null,
+                paymentDate,
+                listingDate,
+                delistingDate,
+                dividendAmount,
+                offeringType,
+                subscriptionStartDate,
+                subscriptionEndDate,
+                description
+        );
+    }
+
     public CorporateActionRequest(
             StockCorporateActionType actionType,
             Long shareQuantity,
@@ -42,6 +78,7 @@ public record CorporateActionRequest(
                 splitFrom,
                 splitTo,
                 exRightsDate,
+                null,
                 paymentDate,
                 listingDate,
                 null,
@@ -73,6 +110,7 @@ public record CorporateActionRequest(
                 splitFrom,
                 splitTo,
                 exRightsDate,
+                null,
                 paymentDate,
                 listingDate,
                 delistingDate,

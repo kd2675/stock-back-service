@@ -35,11 +35,11 @@ public interface StockCorporateActionEntitlementRepository extends JpaRepository
             select coalesce(sum(e.subscribedCashAmount), 0)
               from StockCorporateActionEntitlement e
              where e.accountId = :accountId
-               and e.status = :status
+               and e.status in :statuses
             """)
-    BigDecimal sumSubscribedCashAmountByAccountIdAndStatus(
+    BigDecimal sumSubscribedCashAmountByAccountIdAndStatusIn(
             @Param("accountId") Long accountId,
-            @Param("status") StockCorporateActionEntitlementStatus status
+            @Param("statuses") Collection<StockCorporateActionEntitlementStatus> statuses
     );
 
     @Query("""

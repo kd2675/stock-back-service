@@ -7,6 +7,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.info.BuildProperties;
 import org.springframework.core.io.FileSystemResource;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.init.ResourceDatabasePopulator;
 
@@ -20,7 +21,7 @@ class StockSchemaReadinessValidatorTest {
     @Test
     void run_completeCanonicalH2Schema_passesAllEodRequirements() {
         DriverManagerDataSource dataSource = new DriverManagerDataSource(
-                "jdbc:h2:mem:back_schema_readiness_complete;MODE=MySQL;DB_CLOSE_DELAY=-1",
+                "jdbc:h2:mem:back_schema_readiness_complete;MODE=MySQL;DB_CLOSE_DELAY=-1;DATABASE_TO_UPPER=false",
                 "sa",
                 ""
         );
@@ -57,6 +58,40 @@ class StockSchemaReadinessValidatorTest {
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("Stock EOD schema is not ready")
                 .hasMessageContaining("stock_market_session_fence");
+    }
+
+    @Test
+    void run_legacyEntitlementStatusCheck_failsBeforeApiAcceptsRequests() {
+        DriverManagerDataSource dataSource = new DriverManagerDataSource(
+                "jdbc:h2:mem:back_schema_readiness_legacy_entitlement_check;MODE=MySQL;DB_CLOSE_DELAY=-1",
+                "sa",
+                ""
+        );
+        dataSource.setDriverClassName("org.h2.Driver");
+        new ResourceDatabasePopulator(new FileSystemResource(batchH2Ddl())).execute(dataSource);
+        JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSource);
+        jdbcTemplate.execute(
+                "alter table stock_corporate_action_entitlement drop constraint chk_stock_corporate_action_entitlement_status"
+        );
+        jdbcTemplate.execute(
+                """
+                alter table stock_corporate_action_entitlement
+                  add constraint chk_stock_corporate_action_entitlement_status check (
+                    status in ('ANNOUNCED', 'SUBSCRIBED', 'EXPIRED', 'PAID')
+                  )
+                """
+        );
+        @SuppressWarnings("unchecked")
+        ObjectProvider<BuildProperties> buildPropertiesProvider = mock(ObjectProvider.class);
+        StockSchemaReadinessValidator validator = new StockSchemaReadinessValidator(
+                dataSource,
+                buildPropertiesProvider,
+                "2026-07-19-eod-v2"
+        );
+
+        assertThatThrownBy(() -> validator.run(null))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("chk_stock_corporate_action_entitlement_status CHECK token partially_subscribed");
     }
 
     private Path batchH2Ddl() {

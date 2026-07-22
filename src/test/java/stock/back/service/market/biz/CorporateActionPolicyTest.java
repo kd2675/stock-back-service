@@ -30,6 +30,50 @@ class CorporateActionPolicyTest {
     }
 
     @Test
+    void requirePaidInCapitalIncreaseDates_shareholderRecordDateNotAfterExRights_throwsBadRequest() {
+        LocalDate exRightsDate = CURRENT_SIMULATION_DATE.plusDays(1);
+
+        assertThatThrownBy(() -> CorporateActionPolicy.requirePaidInCapitalIncreaseDates(
+                StockCapitalIncreaseOfferingType.SHAREHOLDER_ALLOCATION,
+                exRightsDate,
+                exRightsDate,
+                exRightsDate.plusDays(1),
+                exRightsDate.plusDays(2),
+                exRightsDate.plusDays(3),
+                exRightsDate.plusDays(4),
+                CURRENT_SIMULATION_DATE
+        ))
+                .isInstanceOf(StockException.class)
+                .hasMessageContaining("ex-rights, record, subscription");
+    }
+
+    @Test
+    void requirePaidInCapitalIncreaseDates_publicOfferingWithRecordDate_throwsBadRequest() {
+        assertThatThrownBy(() -> CorporateActionPolicy.requirePaidInCapitalIncreaseDates(
+                StockCapitalIncreaseOfferingType.PUBLIC_OFFERING,
+                null,
+                CURRENT_SIMULATION_DATE.plusDays(1),
+                CURRENT_SIMULATION_DATE.plusDays(2),
+                CURRENT_SIMULATION_DATE.plusDays(3),
+                CURRENT_SIMULATION_DATE.plusDays(4),
+                CURRENT_SIMULATION_DATE.plusDays(5),
+                CURRENT_SIMULATION_DATE
+        ))
+                .isInstanceOf(StockException.class)
+                .hasMessageContaining("does not use ex-rights or record dates");
+    }
+
+    @Test
+    void defaultPaidInRecordDate_shareholderAllocation_returnsDayAfterExRights() {
+        LocalDate exRightsDate = CURRENT_SIMULATION_DATE.plusDays(2);
+
+        assertThat(CorporateActionPolicy.defaultPaidInRecordDate(
+                StockCapitalIncreaseOfferingType.SHAREHOLDER_ALLOCATION,
+                exRightsDate
+        )).isEqualTo(exRightsDate.plusDays(1));
+    }
+
+    @Test
     void requireCashDividendDates_sameDayExDividend_throwsBadRequest() {
         assertThatThrownBy(() -> CorporateActionPolicy.requireCashDividendDates(
                 CURRENT_SIMULATION_DATE,
@@ -73,6 +117,29 @@ class CorporateActionPolicyTest {
         );
 
         assertThat(price).isEqualByComparingTo(new BigDecimal("40000.00"));
+    }
+
+    @Test
+    void calculateTheoreticalExRightsPrice_shareSumExceedsLongRange_doesNotOverflow() {
+        BigDecimal price = CorporateActionPolicy.calculateTheoreticalExRightsPrice(
+                Long.MAX_VALUE,
+                new BigDecimal("100.00"),
+                1L,
+                new BigDecimal("50.00")
+        );
+
+        assertThat(price).isEqualByComparingTo(new BigDecimal("99"));
+    }
+
+    @Test
+    void calculateTheoreticalFreeSharePrice_shareSumExceedsLongRange_doesNotOverflow() {
+        BigDecimal price = CorporateActionPolicy.calculateTheoreticalFreeSharePrice(
+                Long.MAX_VALUE,
+                new BigDecimal("100.00"),
+                1L
+        );
+
+        assertThat(price).isEqualByComparingTo(new BigDecimal("99"));
     }
 
     @Test

@@ -32,6 +32,7 @@ stock 원장은 주문, 체결, 계좌, 보유, 가격, 주문장 종목, 시장
 - `stock-back-service/src/main/resources/db/ddl/stock_all.sql`
 - `stock-back-service/src/main/resources/db/ddl/stock_capital_increase_subscription_alter.sql`
 - `stock-back-service/src/main/resources/db/ddl/stock_capital_increase_contract_hardening_alter.sql`
+- `stock-back-service/src/main/resources/db/ddl/stock_capital_increase_lifecycle_hardening_alter.sql`
 - `stock-back-service/src/main/resources/db/ddl/stock_schema_contract_alignment_alter.sql`
 - `stock-back-service/src/main/resources/db/ddl/stock_price_tick_latest_lookup_alter.sql`
 - `stock-back-service/src/main/resources/db/ddl/stock_activity_latest_lookup_alter.sql`
@@ -52,9 +53,10 @@ stock 원장은 주문, 체결, 계좌, 보유, 가격, 주문장 종목, 시장
 - 시장 상태는 `OPEN`, `CLOSED`, `HALTED`만 허용한다.
 - 기업 이벤트 타입은 초기 필수 7개만 허용한다.
 - `INITIAL_ISSUE`는 주문장 종목 생성 시 자동 기록되며 admin 이벤트 적용 API에서 직접 받을 수 없다.
-- 유상증자는 `subscription_start_date <= subscription_end_date < payment_date < listing_date`를 지키고, 주주배정은 `ex_rights_date < subscription_start_date`도 지켜야 한다.
-- 유상증자 entitlement의 `subscribed_share_quantity`는 배정 `share_quantity`를 초과할 수 없다.
-- 유상증자 청약 현금 흐름은 내부 자산 이동이므로 외부 순입출금에서 제외하고, `SUBSCRIBED` 금액은 상장 전 총자산의 예약 자산에 포함한다.
+- 유상증자는 `subscription_start_date <= subscription_end_date < payment_date < listing_date`를 지키고, 주주배정은 `ex_rights_date < record_date <= subscription_start_date`도 지켜야 한다.
+- 보유자 권리는 종목 단독 마감이 아닌 권리락 직전의 최신 완료 `FULL_MARKET` close cycle/run으로 한 번 고정한다. 재시도는 action에 저장한 같은 `entitlement_close_cycle_id`/`entitlement_close_run_id`만 사용한다.
+- 유상증자 entitlement의 누적 `subscribed_share_quantity`는 배정 `share_quantity`를 초과할 수 없다. 부분 청약은 `PARTIALLY_SUBSCRIBED`로 유지하고 납입일에 남은 수량을 `forfeited_share_quantity`로 확정한다.
+- 유상증자 청약 현금 흐름은 내부 자산 이동이므로 외부 순입출금에서 제외하고, `PARTIALLY_SUBSCRIBED`/`SUBSCRIBED` 금액은 상장 전 총자산의 예약 자산에 포함한다. 기업 이벤트 현금흐름은 action/entitlement/효력 거래일을 함께 기록한다.
 - 기존 DB 적용 시 안전한 `ANNOUNCED`/`LISTED` legacy 유상증자만 subscription 일정으로 보정한다. 이미 진행된 상태나 일정 간격이 부족한 row, 배정수량보다 청약수량이 큰 row는 의도적인 `stock_migration_required_*` missing-table marker 조회로 alter를 중단해 수동 migration을 요구한다.
 - `stock-back-service/src/main/resources/db/ddl/stock_all.sql`만 MySQL business schema를 소유하며, batch에는 중복 MySQL full DDL을 두지 않는다.
 - batch H2 test DDL의 공유 원장 컬럼/제약은 canonical MySQL DDL과 맞춘다.
@@ -76,8 +78,10 @@ stock 원장은 주문, 체결, 계좌, 보유, 가격, 주문장 종목, 시장
 
 ## 유상증자 DDL 적용 순서
 
-- 신규 DB 또는 유상증자 청약 feature가 아직 적용되지 않은 DB: `stock_capital_increase_subscription_alter.sql` -> `stock_auto_participant_event_profile_config_alter.sql` -> `stock_capital_increase_contract_hardening_alter.sql` 순서로 적용한다.
-- 기존 청약 feature 적용 DB: `stock_capital_increase_contract_hardening_alter.sql`만 적용한다.
+- 신규 DB는 alter를 겹쳐 적용하지 않고 canonical `stock_all.sql`로 생성한다.
+- 기존 DB에 유상증자 청약 feature가 아직 없다면 `stock_capital_increase_subscription_alter.sql` -> `stock_auto_participant_event_profile_config_alter.sql` -> `stock_capital_increase_contract_hardening_alter.sql` -> `stock_capital_increase_lifecycle_hardening_alter.sql` 순서로 적용한다.
+- 기존 청약 feature 적용 DB는 기존 hardening 적용 여부를 확인한 뒤 `stock_capital_increase_lifecycle_hardening_alter.sql`을 마지막에 적용한다.
+- lifecycle alter는 legacy 유상증자 action, 부분 적용 후 계약이 맞지 않는 action/entitlement, 또는 완료되지 않은 `FULL_MARKET/ALL` EOD cycle이 있으면 각각 `stock_migration_required_capital_increase_lifecycle`, `stock_migration_required_capital_increase_lifecycle_data`, `stock_migration_required_post_close_cash_order` marker로 중단한다. 새 스키마 버전 런타임이 구버전 미완료 cycle을 이어받지 않도록 모든 EOD cycle 완료를 확인하고, 백엔드·배치 쓰기를 멈춘 유지보수 창에서 적용한다.
 - alter가 `stock_migration_required_legacy_paid_in_entitlements`, `stock_migration_required_paid_in_schedule`, `stock_migration_required_entitlement_share_limit`, `stock_migration_required_event_profile_type` 같은 descriptive missing-table 오류로 중단되면 legacy 진행 유상증자, 잘못된 profile, 배정한도 초과 entitlement를 수동 정리한 뒤 같은 alter를 다시 실행한다.
 
 ## 실제 DB canonical 정렬

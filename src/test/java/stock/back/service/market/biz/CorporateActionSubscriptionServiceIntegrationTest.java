@@ -65,7 +65,7 @@ class CorporateActionSubscriptionServiceIntegrationTest {
     }
 
     @Test
-    void subscribe_shareholderAllocation_returnsSubscribedStateAndKeepsEscrowInTotalAssets() {
+    void subscribe_shareholderAllocation_returnsPartialStateAndKeepsEscrowInTotalAssets() {
         StockAccount account = createFundedAccount("sub-shareholder", "1000.00");
         StockCorporateAction action = createShareholderAllocation("ZQSUB01", 100L, "10.00");
         createShareholderEntitlement(action.getId(), account.getId(), action.getSymbol(), 20L);
@@ -90,7 +90,7 @@ class CorporateActionSubscriptionServiceIntegrationTest {
                 fundFlow.externalWithdrawAmount(),
                 fundFlow.netExternalCashFlow()
         )).isEqualTo(tuple(
-                StockCorporateActionEntitlementStatus.SUBSCRIBED,
+                StockCorporateActionEntitlementStatus.PARTIALLY_SUBSCRIBED,
                 10L,
                 new BigDecimal("100.00"),
                 new BigDecimal("900.00"),
@@ -100,6 +100,38 @@ class CorporateActionSubscriptionServiceIntegrationTest {
                 new BigDecimal("0.0000"),
                 BigDecimal.ZERO,
                 new BigDecimal("1000.00")
+        ));
+    }
+
+    @Test
+    void subscribe_shareholderAllocationTwice_accumulatesUntilAllocatedRightsAreFilled() {
+        StockAccount account = createFundedAccount("sub-shareholder-cumulative", "1000.00");
+        StockCorporateAction action = createShareholderAllocation("ZQSUB06", 100L, "10.00");
+        createShareholderEntitlement(action.getId(), account.getId(), action.getSymbol(), 20L);
+
+        corporateActionSubscriptionService.subscribe(
+                action.getId(),
+                new CorporateActionSubscriptionRequest(7L),
+                account.getUserKey()
+        );
+        var response = corporateActionSubscriptionService.subscribe(
+                action.getId(),
+                new CorporateActionSubscriptionRequest(13L),
+                account.getUserKey()
+        );
+
+        assertThat(tuple(
+                response.status(),
+                response.subscribedShareQuantity(),
+                response.subscribedCashAmount(),
+                cashBalance(account.getUserKey()),
+                subscriptionCashFlowCount(account.getId())
+        )).isEqualTo(tuple(
+                StockCorporateActionEntitlementStatus.SUBSCRIBED,
+                20L,
+                new BigDecimal("200.00"),
+                new BigDecimal("800.00"),
+                2L
         ));
     }
 
@@ -227,6 +259,43 @@ class CorporateActionSubscriptionServiceIntegrationTest {
         ));
     }
 
+    @Test
+    void subscribe_rawClockAhead_usesLockedActiveBusinessDateForWindowAndCashFlow() {
+        LocalDate activeBusinessDate = SIMULATION_DATE.minusDays(1);
+        StockAccount account = createFundedAccount("sub-active-business-date", "1000.00");
+        StockCorporateAction action = createPublicOffering("ZQSUB07", 10L, "10.00");
+        jdbcTemplate.update(
+                "update stock_market_business_state set active_business_date = ? where state_id = 'DEFAULT'",
+                activeBusinessDate
+        );
+        jdbcTemplate.update(
+                "update stock_corporate_action set subscription_start_date = ?, subscription_end_date = ? where id = ?",
+                activeBusinessDate,
+                activeBusinessDate,
+                action.getId()
+        );
+
+        var response = corporateActionSubscriptionService.subscribe(
+                action.getId(),
+                new CorporateActionSubscriptionRequest(1L),
+                account.getUserKey()
+        );
+
+        assertThat(tuple(
+                response.status(),
+                cashBalance(account.getUserKey()),
+                subscriptionCashFlowActionId(account.getId()),
+                subscriptionCashFlowEntitlementId(account.getId()),
+                subscriptionCashFlowEffectiveBusinessDate(account.getId())
+        )).isEqualTo(tuple(
+                StockCorporateActionEntitlementStatus.SUBSCRIBED,
+                new BigDecimal("990.00"),
+                action.getId(),
+                response.id(),
+                activeBusinessDate
+        ));
+    }
+
     private boolean subscribeAfterStart(long actionId, String userKey, CountDownLatch start) throws Exception {
         start.await(5, TimeUnit.SECONDS);
         try {
@@ -333,6 +402,19 @@ class CorporateActionSubscriptionServiceIntegrationTest {
                 now,
                 now
         );
+        jdbcTemplate.update(
+                """
+                merge into stock_market_business_state(
+                    state_id, active_business_date, preparing_business_date, raw_simulation_date,
+                    version, created_at, updated_at
+                ) key(state_id)
+                values ('DEFAULT', ?, null, ?, 0, ?, ?)
+                """,
+                SIMULATION_DATE,
+                SIMULATION_DATE,
+                now,
+                now
+        );
     }
 
     private BigDecimal cashBalance(String userKey) {
@@ -352,6 +434,45 @@ class CorporateActionSubscriptionServiceIntegrationTest {
                    and reason = 'CAPITAL_INCREASE_SUBSCRIPTION'
                 """,
                 BigDecimal.class,
+                accountId
+        );
+    }
+
+    private LocalDate subscriptionCashFlowEffectiveBusinessDate(long accountId) {
+        return jdbcTemplate.queryForObject(
+                """
+                select effective_business_date
+                  from stock_account_cash_flow
+                 where account_id = ?
+                   and reason = 'CAPITAL_INCREASE_SUBSCRIPTION'
+                """,
+                LocalDate.class,
+                accountId
+        );
+    }
+
+    private long subscriptionCashFlowActionId(long accountId) {
+        return jdbcTemplate.queryForObject(
+                """
+                select corporate_action_id
+                  from stock_account_cash_flow
+                 where account_id = ?
+                   and reason = 'CAPITAL_INCREASE_SUBSCRIPTION'
+                """,
+                Long.class,
+                accountId
+        );
+    }
+
+    private long subscriptionCashFlowEntitlementId(long accountId) {
+        return jdbcTemplate.queryForObject(
+                """
+                select corporate_action_entitlement_id
+                  from stock_account_cash_flow
+                 where account_id = ?
+                   and reason = 'CAPITAL_INCREASE_SUBSCRIPTION'
+                """,
+                Long.class,
                 accountId
         );
     }

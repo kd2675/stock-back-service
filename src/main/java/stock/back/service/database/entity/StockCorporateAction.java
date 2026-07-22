@@ -55,6 +55,15 @@ public class StockCorporateAction {
     @Column(name = "ex_rights_date")
     private LocalDate exRightsDate;
 
+    @Column(name = "record_date")
+    private LocalDate recordDate;
+
+    @Column(name = "entitlement_close_cycle_id")
+    private Long entitlementCloseCycleId;
+
+    @Column(name = "entitlement_close_run_id")
+    private Long entitlementCloseRunId;
+
     @Column(name = "payment_date")
     private LocalDate paymentDate;
 
@@ -168,12 +177,51 @@ public class StockCorporateAction {
             String description,
             LocalDateTime createdAt
     ) {
+        LocalDate defaultRecordDate = offeringType == StockCapitalIncreaseOfferingType.PUBLIC_OFFERING
+                || exRightsDate == null
+                ? null
+                : exRightsDate.plusDays(1);
+        return paidInCapitalIncrease(
+                symbol,
+                offeringType,
+                shares,
+                issuePrice,
+                basePrice,
+                theoreticalExRightsPrice,
+                exRightsDate,
+                defaultRecordDate,
+                subscriptionStartDate,
+                subscriptionEndDate,
+                paymentDate,
+                listingDate,
+                description,
+                createdAt
+        );
+    }
+
+    public static StockCorporateAction paidInCapitalIncrease(
+            String symbol,
+            StockCapitalIncreaseOfferingType offeringType,
+            long shares,
+            BigDecimal issuePrice,
+            BigDecimal basePrice,
+            BigDecimal theoreticalExRightsPrice,
+            LocalDate exRightsDate,
+            LocalDate recordDate,
+            LocalDate subscriptionStartDate,
+            LocalDate subscriptionEndDate,
+            LocalDate paymentDate,
+            LocalDate listingDate,
+            String description,
+            LocalDateTime createdAt
+    ) {
         StockCorporateAction action = create(symbol, StockCorporateActionType.PAID_IN_CAPITAL_INCREASE, shares, issuePrice, null, null, description, createdAt);
         action.status = StockCorporateActionStatus.ANNOUNCED;
         action.offeringType = offeringType == null ? StockCapitalIncreaseOfferingType.defaultType() : offeringType;
         action.basePrice = basePrice;
         action.theoreticalExRightsPrice = theoreticalExRightsPrice;
         action.exRightsDate = exRightsDate;
+        action.recordDate = recordDate;
         action.subscriptionStartDate = subscriptionStartDate;
         action.subscriptionEndDate = subscriptionEndDate;
         action.paymentDate = paymentDate;

@@ -199,6 +199,47 @@ class CorporateActionCommandServiceTest {
     }
 
     @Test
+    void applyCorporateAction_shareholderAllocationWithoutSubscriptionStart_defaultsToExplicitRecordDate() {
+        StockOrderBookInstrument instrument = StockOrderBookInstrument.listed(
+                "ZQ001",
+                "테스트",
+                "ORDERBOOK",
+                new BigDecimal("70000.00"),
+                100000L,
+                new BigDecimal("100.00"),
+                new BigDecimal("30.00")
+        );
+        when(stockOrderBookInstrumentRepository.findById("ZQ001")).thenReturn(Optional.of(instrument));
+        when(stockPriceRepository.findById("ZQ001"))
+                .thenReturn(Optional.of(StockPrice.initial("ZQ001", new BigDecimal("70000.00"))));
+
+        service.applyCorporateAction(
+                "ZQ001",
+                new CorporateActionRequest(
+                        StockCorporateActionType.PAID_IN_CAPITAL_INCREASE,
+                        10000L,
+                        new BigDecimal("50000.00"),
+                        null,
+                        null,
+                        LocalDate.of(2026, 7, 2),
+                        LocalDate.of(2026, 7, 4),
+                        LocalDate.of(2026, 7, 7),
+                        LocalDate.of(2026, 7, 10),
+                        null,
+                        null,
+                        StockCapitalIncreaseOfferingType.SHAREHOLDER_ALLOCATION,
+                        null,
+                        LocalDate.of(2026, 7, 6),
+                        "유상증자"
+                )
+        );
+
+        ArgumentCaptor<StockCorporateAction> actionCaptor = ArgumentCaptor.forClass(StockCorporateAction.class);
+        verify(stockCorporateActionRepository).save(actionCaptor.capture());
+        assertThat(actionCaptor.getValue().getSubscriptionStartDate()).isEqualTo(LocalDate.of(2026, 7, 4));
+    }
+
+    @Test
     void applyCorporateAction_activePaidInCapitalIncrease_throwsConflictBeforePriceRead() {
         StockOrderBookInstrument instrument = StockOrderBookInstrument.listed(
                 "ZQ001",
@@ -352,7 +393,7 @@ class CorporateActionCommandServiceTest {
     }
 
     @Test
-    void applyCorporateAction_openOrderBookOrders_throwsConflictBeforeSave() {
+    void applyCorporateAction_openOrderBookOrders_allowsFutureAnnouncement() {
         StockOrderBookInstrument instrument = StockOrderBookInstrument.listed(
                 "ZQ001",
                 "테스트",
@@ -363,6 +404,11 @@ class CorporateActionCommandServiceTest {
                 new BigDecimal("30.00")
         );
         when(stockOrderBookInstrumentRepository.findById("ZQ001")).thenReturn(Optional.of(instrument));
+        when(stockPriceRepository.findById("ZQ001")).thenReturn(Optional.of(StockPrice.initial(
+                "ZQ001",
+                new BigDecimal("70000.00"),
+                simulationNow
+        )));
         jdbcTemplate.update(
                 "insert into stock_order(symbol, market_type, status) values (?, 'ORDER_BOOK', 'PENDING')",
                 "ZQ001"
@@ -376,7 +422,7 @@ class CorporateActionCommandServiceTest {
                 "ZQ001"
         );
 
-        assertThatThrownBy(() -> service.applyCorporateAction(
+        service.applyCorporateAction(
                 "ZQ001",
                 new CorporateActionRequest(
                         StockCorporateActionType.CASH_DIVIDEND,
@@ -384,18 +430,16 @@ class CorporateActionCommandServiceTest {
                         null,
                         null,
                         null,
-                        LocalDate.of(2026, 7, 1),
+                        LocalDate.of(2026, 7, 2),
                         LocalDate.of(2026, 7, 3),
                         null,
                         null,
                         new BigDecimal("1000.00"),
                         null
                 )
-        ))
-                .isInstanceOf(StockException.class)
-                .hasMessageContaining("Corporate action requires no open order book orders: ZQ001");
+        );
 
-        verify(stockCorporateActionRepository, never()).save(any());
+        verify(stockCorporateActionRepository).save(any());
     }
 
     @Test

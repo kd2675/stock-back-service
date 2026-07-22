@@ -13,6 +13,7 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 
 @Getter
@@ -45,6 +46,15 @@ public class StockAccountCashFlow {
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
 
+    @Column(name = "corporate_action_id")
+    private Long corporateActionId;
+
+    @Column(name = "corporate_action_entitlement_id")
+    private Long corporateActionEntitlementId;
+
+    @Column(name = "effective_business_date")
+    private LocalDate effectiveBusinessDate;
+
     public static StockAccountCashFlow openingGrant(Long accountId, BigDecimal amount) {
         return create(accountId, StockAccountCashFlowType.DEPOSIT, amount, StockAccountCashFlowReason.OPENING_GRANT, "SYSTEM");
     }
@@ -73,8 +83,26 @@ public class StockAccountCashFlow {
         return create(accountId, StockAccountCashFlowType.DEPOSIT, amount, StockAccountCashFlowReason.DIVIDEND_PAYMENT, "CORPORATE_ACTION");
     }
 
-    public static StockAccountCashFlow capitalIncreaseSubscription(Long accountId, BigDecimal amount, LocalDateTime createdAt) {
-        return create(accountId, StockAccountCashFlowType.WITHDRAW, amount, StockAccountCashFlowReason.CAPITAL_INCREASE_SUBSCRIPTION, "CORPORATE_ACTION", createdAt);
+    public static StockAccountCashFlow capitalIncreaseSubscription(
+            Long accountId,
+            BigDecimal amount,
+            Long corporateActionId,
+            Long entitlementId,
+            LocalDate effectiveBusinessDate,
+            LocalDateTime createdAt
+    ) {
+        StockAccountCashFlow cashFlow = create(
+                accountId,
+                StockAccountCashFlowType.WITHDRAW,
+                amount,
+                StockAccountCashFlowReason.CAPITAL_INCREASE_SUBSCRIPTION,
+                "CORPORATE_ACTION",
+                createdAt
+        );
+        cashFlow.corporateActionId = corporateActionId;
+        cashFlow.corporateActionEntitlementId = entitlementId;
+        cashFlow.effectiveBusinessDate = effectiveBusinessDate;
+        return cashFlow;
     }
 
     private static StockAccountCashFlow create(

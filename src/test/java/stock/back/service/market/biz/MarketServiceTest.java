@@ -1670,7 +1670,7 @@ class MarketServiceTest {
     }
 
     @Test
-    void applyCorporateAction_openOrderBookOrders_throwsConflict() {
+    void applyCorporateAction_openOrderBookOrders_recordsFutureAnnouncement() {
         StockOrderBookInstrument instrument = StockOrderBookInstrument.listed(
                 "ZQ001",
                 "제로큐 주문장",
@@ -1679,9 +1679,11 @@ class MarketServiceTest {
                 100000L
         );
         when(stockOrderBookInstrumentRepository.findById("ZQ001")).thenReturn(Optional.of(instrument));
+        when(stockPriceRepository.findById("ZQ001"))
+                .thenReturn(Optional.of(StockPrice.initial("ZQ001", new BigDecimal("70000.00"))));
         insertOpenOrderBookOrder("ZQ001");
 
-        assertThatThrownBy(() -> marketService.applyCorporateAction(
+        marketService.applyCorporateAction(
                 "ZQ001",
                 new CorporateActionRequest(
                         StockCorporateActionType.CASH_DIVIDEND,
@@ -1695,10 +1697,9 @@ class MarketServiceTest {
                         new BigDecimal("1000.00"),
                         "현금배당"
                 )
-        ))
-                .isInstanceOf(StockException.class)
-                .hasMessageContaining("Corporate action requires no open order book orders: ZQ001");
-        verify(stockCorporateActionRepository, never()).save(any());
+        );
+
+        verify(stockCorporateActionRepository).save(any());
     }
 
     @Test

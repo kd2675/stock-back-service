@@ -134,6 +134,9 @@ CREATE TABLE IF NOT EXISTS stock_account_cash_flow (
   amount DECIMAL(19,2) NOT NULL,
   reason VARCHAR(40) NOT NULL,
   created_by VARCHAR(64) NULL,
+  corporate_action_id BIGINT NULL,
+  corporate_action_entitlement_id BIGINT NULL,
+  effective_business_date DATE NULL,
   created_at DATETIME NOT NULL,
   PRIMARY KEY (id),
   KEY idx_stock_account_cash_flow_account_id (account_id, id),
@@ -141,6 +144,7 @@ CREATE TABLE IF NOT EXISTS stock_account_cash_flow (
   KEY idx_stock_account_cash_flow_account_reason_creator_time (account_id, reason, created_by, created_at, id),
   KEY idx_stock_account_cash_flow_account_type_reason_time (account_id, flow_type, reason, created_at, id),
   KEY idx_stock_account_cash_flow_time (created_at, id),
+  KEY idx_stock_account_cash_flow_corporate_action (corporate_action_id, effective_business_date, account_id, id),
   CONSTRAINT chk_stock_account_cash_flow_type CHECK (CASE `flow_type` WHEN 'DEPOSIT' THEN 1 WHEN 'WITHDRAW' THEN 1 ELSE 0 END = 1),
   CONSTRAINT chk_stock_account_cash_flow_amount CHECK (amount > 0),
   CONSTRAINT chk_stock_account_cash_flow_reason CHECK (
@@ -215,6 +219,9 @@ CREATE TABLE IF NOT EXISTS stock_corporate_action (
   base_price DECIMAL(19,2) NULL,
   theoretical_ex_rights_price DECIMAL(19,2) NULL,
   ex_rights_date DATE NULL,
+  record_date DATE NULL,
+  entitlement_close_cycle_id BIGINT NULL,
+  entitlement_close_run_id BIGINT NULL,
   payment_date DATE NULL,
   listing_date DATE NULL,
   delisting_date DATE NULL,
@@ -235,6 +242,7 @@ CREATE TABLE IF NOT EXISTS stock_corporate_action (
   KEY idx_stock_corporate_action_type_created (action_type, created_at, id),
   KEY idx_stock_corporate_action_status_dates (status, ex_rights_date, payment_date, listing_date, delisting_date),
   KEY idx_stock_corporate_action_status_symbol (status, symbol),
+  KEY idx_stock_corporate_action_entitlement_close (entitlement_close_cycle_id, entitlement_close_run_id),
   CONSTRAINT chk_stock_corporate_action_type_valid CHECK (CASE `action_type` WHEN 'INITIAL_ISSUE' THEN 1 WHEN 'PAID_IN_CAPITAL_INCREASE' THEN 1 WHEN 'STOCK_SPLIT' THEN 1 WHEN 'CASH_DIVIDEND' THEN 1 WHEN 'BONUS_ISSUE' THEN 1 WHEN 'STOCK_DIVIDEND' THEN 1 WHEN 'DELISTING' THEN 1 ELSE 0 END = 1),
   CONSTRAINT chk_stock_corporate_action_status_valid CHECK (CASE `status` WHEN 'ANNOUNCED' THEN 1 WHEN 'EX_RIGHTS_APPLIED' THEN 1 WHEN 'PAID' THEN 1 WHEN 'LISTED' THEN 1 WHEN 'DELISTED' THEN 1 ELSE 0 END = 1),
   CONSTRAINT chk_stock_corporate_action_delisting_treatment CHECK (delisting_treatment IS NULL OR delisting_treatment = 'ZERO_VALUE'),
@@ -253,7 +261,13 @@ CREATE TABLE IF NOT EXISTS stock_corporate_action (
       subscription_end_date >= subscription_start_date
       AND payment_date > subscription_end_date
       AND listing_date > payment_date
-      AND (offering_type <> 'SHAREHOLDER_ALLOCATION' OR subscription_start_date > ex_rights_date)
+      AND (
+        offering_type <> 'SHAREHOLDER_ALLOCATION'
+        OR (
+          record_date > ex_rights_date
+          AND subscription_start_date >= record_date
+        )
+      )
     )
   ),
   CONSTRAINT chk_stock_corporate_action_split_from CHECK (split_from IS NULL OR split_from > 0),
@@ -276,10 +290,12 @@ CREATE TABLE IF NOT EXISTS stock_corporate_action (
           AND base_price IS NOT NULL
           AND theoretical_ex_rights_price IS NOT NULL
           AND ex_rights_date IS NOT NULL
+          AND record_date IS NOT NULL
         )
         OR (
           offering_type = 'PUBLIC_OFFERING'
           AND ex_rights_date IS NULL
+          AND record_date IS NULL
           AND theoretical_ex_rights_price IS NULL
         )
       )
@@ -331,11 +347,18 @@ CREATE TABLE IF NOT EXISTS stock_corporate_action (
     AND (action_type IN ('PAID_IN_CAPITAL_INCREASE', 'CASH_DIVIDEND', 'BONUS_ISSUE', 'STOCK_DIVIDEND') OR base_price IS NULL)
     AND (action_type IN ('PAID_IN_CAPITAL_INCREASE', 'CASH_DIVIDEND', 'BONUS_ISSUE', 'STOCK_DIVIDEND') OR theoretical_ex_rights_price IS NULL)
     AND (action_type IN ('PAID_IN_CAPITAL_INCREASE', 'CASH_DIVIDEND', 'BONUS_ISSUE', 'STOCK_DIVIDEND') OR ex_rights_date IS NULL)
+    AND (action_type = 'PAID_IN_CAPITAL_INCREASE' OR record_date IS NULL)
+    AND (action_type IN ('PAID_IN_CAPITAL_INCREASE', 'CASH_DIVIDEND', 'BONUS_ISSUE', 'STOCK_DIVIDEND') OR entitlement_close_cycle_id IS NULL)
+    AND (action_type IN ('PAID_IN_CAPITAL_INCREASE', 'CASH_DIVIDEND', 'BONUS_ISSUE', 'STOCK_DIVIDEND') OR entitlement_close_run_id IS NULL)
     AND (action_type IN ('PAID_IN_CAPITAL_INCREASE', 'CASH_DIVIDEND') OR payment_date IS NULL)
     AND (action_type IN ('PAID_IN_CAPITAL_INCREASE', 'STOCK_SPLIT', 'BONUS_ISSUE', 'STOCK_DIVIDEND') OR listing_date IS NULL)
     AND (action_type = 'DELISTING' OR delisting_date IS NULL)
     AND (action_type = 'DELISTING' OR delisting_treatment IS NULL)
     AND (action_type = 'STOCK_SPLIT' OR (split_from IS NULL AND split_to IS NULL))
+  ),
+  CONSTRAINT chk_stock_corporate_action_entitlement_close_pair CHECK (
+    (entitlement_close_cycle_id IS NULL AND entitlement_close_run_id IS NULL)
+    OR (entitlement_close_cycle_id IS NOT NULL AND entitlement_close_run_id IS NOT NULL)
   ),
   CONSTRAINT chk_stock_corporate_action_initial_listed CHECK (
     action_type <> 'INITIAL_ISSUE'
@@ -358,6 +381,7 @@ CREATE TABLE IF NOT EXISTS stock_corporate_action_entitlement (
   cash_amount DECIMAL(19,2) NULL,
   subscribed_share_quantity BIGINT NULL,
   subscribed_cash_amount DECIMAL(19,2) NULL,
+  forfeited_share_quantity BIGINT NOT NULL DEFAULT 0,
   status VARCHAR(20) NOT NULL DEFAULT 'ANNOUNCED',
   holding_snapshot_run_id BIGINT NULL,
   created_at DATETIME NOT NULL,
@@ -380,12 +404,30 @@ CREATE TABLE IF NOT EXISTS stock_corporate_action_entitlement (
     OR subscribed_share_quantity <= share_quantity
   ),
   CONSTRAINT chk_stock_corporate_action_entitlement_subscribed_cash CHECK (subscribed_cash_amount IS NULL OR subscribed_cash_amount > 0),
+  CONSTRAINT chk_stock_corporate_action_entitlement_forfeited_share CHECK (forfeited_share_quantity >= 0),
+  CONSTRAINT chk_stock_corporate_action_entitlement_finalized_share_limit CHECK (
+    (
+      share_quantity IS NULL
+      OR coalesce(subscribed_share_quantity, 0) + forfeited_share_quantity <= share_quantity
+    )
+    AND (
+      status NOT IN ('SUBSCRIBED', 'PAID')
+      OR subscribed_at IS NULL
+      OR share_quantity IS NULL
+      OR coalesce(subscribed_share_quantity, 0) + forfeited_share_quantity = share_quantity
+    )
+    AND (
+      status <> 'EXPIRED'
+      OR share_quantity IS NULL
+      OR coalesce(subscribed_share_quantity, 0) + forfeited_share_quantity = share_quantity
+    )
+  ),
   CONSTRAINT chk_stock_corporate_action_entitlement_subscription_complete CHECK (
-    status <> 'SUBSCRIBED'
+    status NOT IN ('PARTIALLY_SUBSCRIBED', 'SUBSCRIBED')
     OR (subscribed_share_quantity IS NOT NULL AND subscribed_cash_amount IS NOT NULL AND subscribed_at IS NOT NULL)
   ),
   CONSTRAINT chk_stock_corporate_action_entitlement_value CHECK (cash_amount IS NOT NULL OR share_quantity IS NOT NULL),
-  CONSTRAINT chk_stock_corporate_action_entitlement_status CHECK (CASE `status` WHEN 'ANNOUNCED' THEN 1 WHEN 'SUBSCRIBED' THEN 1 WHEN 'EXPIRED' THEN 1 WHEN 'PAID' THEN 1 ELSE 0 END = 1)
+  CONSTRAINT chk_stock_corporate_action_entitlement_status CHECK (CASE `status` WHEN 'ANNOUNCED' THEN 1 WHEN 'PARTIALLY_SUBSCRIBED' THEN 1 WHEN 'SUBSCRIBED' THEN 1 WHEN 'EXPIRED' THEN 1 WHEN 'PAID' THEN 1 ELSE 0 END = 1)
 );
 
 CREATE TABLE IF NOT EXISTS stock_corporate_action_processing (

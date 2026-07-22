@@ -31,6 +31,7 @@ import java.time.LocalDateTime;
 public class CorporateActionSubscriptionService {
 
     private static final String SUBSCRIBED = StockCorporateActionEntitlementStatus.SUBSCRIBED.name();
+    private static final String PARTIALLY_SUBSCRIBED = StockCorporateActionEntitlementStatus.PARTIALLY_SUBSCRIBED.name();
     private static final String PAID = StockCorporateActionEntitlementStatus.PAID.name();
 
     private final StockCorporateActionRepository stockCorporateActionRepository;
@@ -47,11 +48,11 @@ public class CorporateActionSubscriptionService {
         validateUserKey(userKey);
         long requestedShares = requirePositiveShares(request == null ? null : request.shareQuantity());
         validateAfterCloseSubscriptionSession();
-        marketLedgerFreezeGuard.acquireMutationPermit("capital-increase subscription");
+        LocalDate activeBusinessDate = marketLedgerFreezeGuard.acquireMutationPermit("capital-increase subscription");
         StockCorporateAction action = stockCorporateActionRepository.findByIdForUpdate(actionId)
                 .orElseThrow(() -> StockException.notFound("Corporate action not found: " + actionId));
         validateSubscribableAction(action);
-        validateSubscriptionWindow(action, simulationClockService.currentDate());
+        validateSubscriptionWindow(action, activeBusinessDate);
 
         StockAccount account = stockAccountRepository.findByUserKeyAndStatusForUpdate(userKey, StockAccountStatus.ACTIVE)
                 .orElseThrow(() -> StockException.notFound("User account is not opened yet"));
@@ -61,7 +62,6 @@ public class CorporateActionSubscriptionService {
         StockCorporateActionEntitlement entitlement;
         if (action.getOfferingType() == StockCapitalIncreaseOfferingType.PUBLIC_OFFERING) {
             validatePublicOfferingSubscription(action, account.getId(), requestedShares);
-            withdrawSubscriptionCash(account, subscribedCashAmount, now);
             entitlement = createPublicOfferingSubscription(
                     action,
                     account.getId(),
@@ -69,9 +69,10 @@ public class CorporateActionSubscriptionService {
                     subscribedCashAmount,
                     now
             );
+            withdrawSubscriptionCash(account, action, entitlement, subscribedCashAmount, activeBusinessDate, now);
         } else {
             entitlement = requireShareholderAllocationEntitlement(action, account.getId(), requestedShares);
-            withdrawSubscriptionCash(account, subscribedCashAmount, now);
+            withdrawSubscriptionCash(account, action, entitlement, subscribedCashAmount, activeBusinessDate, now);
             entitlement.subscribe(requestedShares, subscribedCashAmount, now);
         }
         return toResponse(entitlement, action);
@@ -85,7 +86,10 @@ public class CorporateActionSubscriptionService {
 
     private void withdrawSubscriptionCash(
             StockAccount account,
+            StockCorporateAction action,
+            StockCorporateActionEntitlement entitlement,
             BigDecimal subscribedCashAmount,
+            LocalDate activeBusinessDate,
             LocalDateTime now
     ) {
         if (!account.withdrawCash(subscribedCashAmount, now)) {
@@ -94,6 +98,9 @@ public class CorporateActionSubscriptionService {
         stockAccountCashFlowRepository.save(StockAccountCashFlow.capitalIncreaseSubscription(
                 account.getId(),
                 subscribedCashAmount,
+                action.getId(),
+                entitlement.getId(),
+                activeBusinessDate,
                 now
         ));
     }
@@ -172,30 +179,16 @@ public class CorporateActionSubscriptionService {
             BigDecimal subscribedCashAmount,
             LocalDateTime now
     ) {
-        jdbcClient.sql(
-                        """
-                        insert into stock_corporate_action_entitlement(
-                          action_id, account_id, symbol, quantity, share_quantity, cash_amount,
-                          subscribed_share_quantity, subscribed_cash_amount, status,
-                          holding_snapshot_run_id, created_at, subscribed_at, paid_at
-                        )
-                        values (?, ?, ?, ?, ?, ?, ?, ?, ?, null, ?, ?, null)
-                        """
+        return stockCorporateActionEntitlementRepository.saveAndFlush(
+                StockCorporateActionEntitlement.publicOfferingSubscription(
+                        action.getId(),
+                        accountId,
+                        action.getSymbol(),
+                        requestedShares,
+                        subscribedCashAmount,
+                        now
                 )
-                .param(action.getId())
-                .param(accountId)
-                .param(action.getSymbol())
-                .param(requestedShares)
-                .param(requestedShares)
-                .param(subscribedCashAmount)
-                .param(requestedShares)
-                .param(subscribedCashAmount)
-                .param(SUBSCRIBED)
-                .param(now)
-                .param(now)
-                .update();
-        return stockCorporateActionEntitlementRepository.findByActionIdAndAccountId(action.getId(), accountId)
-                .orElseThrow(() -> StockException.conflict("Capital increase subscription was not recorded"));
+        );
     }
 
     private StockCorporateActionEntitlement requireShareholderAllocationEntitlement(
@@ -206,10 +199,15 @@ public class CorporateActionSubscriptionService {
         StockCorporateActionEntitlement entitlement = stockCorporateActionEntitlementRepository
                 .findByActionIdAndAccountIdForUpdate(action.getId(), accountId)
                 .orElseThrow(() -> StockException.conflict("Shareholder allocation right was not granted"));
-        if (entitlement.getStatus() != StockCorporateActionEntitlementStatus.ANNOUNCED) {
+        if (entitlement.getStatus() != StockCorporateActionEntitlementStatus.ANNOUNCED
+                && entitlement.getStatus() != StockCorporateActionEntitlementStatus.PARTIALLY_SUBSCRIBED) {
             throw StockException.conflict("Shareholder allocation right is not subscribable");
         }
-        long availableShares = entitlement.getShareQuantity() == null ? 0L : entitlement.getShareQuantity();
+        long allocatedShares = entitlement.getShareQuantity() == null ? 0L : entitlement.getShareQuantity();
+        long alreadySubscribedShares = entitlement.getSubscribedShareQuantity() == null
+                ? 0L
+                : entitlement.getSubscribedShareQuantity();
+        long availableShares = Math.max(0L, allocatedShares - alreadySubscribedShares);
         if (requestedShares > availableShares) {
             throw StockException.badRequest("Subscription share quantity exceeds allocated shareholder rights");
         }
@@ -222,10 +220,11 @@ public class CorporateActionSubscriptionService {
                         select coalesce(sum(subscribed_share_quantity), 0)
                           from stock_corporate_action_entitlement
                          where action_id = ?
-                           and status in (?, ?)
+                           and status in (?, ?, ?)
                         """
                 )
                 .param(action.getId())
+                .param(PARTIALLY_SUBSCRIBED)
                 .param(SUBSCRIBED)
                 .param(PAID)
                 .query(Long.class)
@@ -252,6 +251,7 @@ public class CorporateActionSubscriptionService {
                 entitlement.getCashAmount(),
                 entitlement.getSubscribedShareQuantity(),
                 entitlement.getSubscribedCashAmount(),
+                entitlement.getForfeitedShareQuantity(),
                 entitlement.getStatus(),
                 entitlement.getCreatedAt(),
                 entitlement.getSubscribedAt(),

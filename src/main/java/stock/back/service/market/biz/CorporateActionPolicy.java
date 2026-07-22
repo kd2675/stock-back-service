@@ -45,6 +45,7 @@ final class CorporateActionPolicy {
     static void requirePaidInCapitalIncreaseDates(
             StockCapitalIncreaseOfferingType offeringType,
             LocalDate exRightsDate,
+            LocalDate recordDate,
             LocalDate subscriptionStartDate,
             LocalDate subscriptionEndDate,
             LocalDate paymentDate,
@@ -60,8 +61,12 @@ final class CorporateActionPolicy {
         if (normalizedOfferingType == StockCapitalIncreaseOfferingType.SHAREHOLDER_ALLOCATION && exRightsDate == null) {
             throw StockException.badRequest("Shareholder allocation requires an ex-rights date");
         }
-        if (normalizedOfferingType == StockCapitalIncreaseOfferingType.PUBLIC_OFFERING && exRightsDate != null) {
-            throw StockException.badRequest("Public offering does not use an ex-rights date");
+        if (normalizedOfferingType == StockCapitalIncreaseOfferingType.SHAREHOLDER_ALLOCATION && recordDate == null) {
+            throw StockException.badRequest("Shareholder allocation requires a record date");
+        }
+        if (normalizedOfferingType == StockCapitalIncreaseOfferingType.PUBLIC_OFFERING
+                && (exRightsDate != null || recordDate != null)) {
+            throw StockException.badRequest("Public offering does not use ex-rights or record dates");
         }
         if (exRightsDate != null) {
             requireAfterCurrentSimulationDate("Paid-in capital increase ex-rights date", exRightsDate, currentSimulationDate);
@@ -77,23 +82,62 @@ final class CorporateActionPolicy {
                 && !subscriptionStartDate.isAfter(exRightsDate)) {
             throw StockException.badRequest("Shareholder allocation subscription must start after ex-rights date");
         }
+        if (normalizedOfferingType == StockCapitalIncreaseOfferingType.SHAREHOLDER_ALLOCATION
+                && (!recordDate.isAfter(exRightsDate) || subscriptionStartDate.isBefore(recordDate))) {
+            throw StockException.badRequest("Shareholder allocation dates must be ordered by ex-rights, record, subscription");
+        }
         if (!paymentDate.isAfter(subscriptionEndDate) || !listingDate.isAfter(paymentDate)) {
             throw StockException.badRequest("Paid-in capital increase dates must be ordered by subscription, payment, listing");
         }
     }
 
-    static LocalDate defaultPaidInSubscriptionStartDate(
+    static void requirePaidInCapitalIncreaseDates(
             StockCapitalIncreaseOfferingType offeringType,
             LocalDate exRightsDate,
+            LocalDate subscriptionStartDate,
+            LocalDate subscriptionEndDate,
+            LocalDate paymentDate,
+            LocalDate listingDate,
+            LocalDate currentSimulationDate
+    ) {
+        requirePaidInCapitalIncreaseDates(
+                offeringType,
+                exRightsDate,
+                defaultPaidInRecordDate(offeringType, exRightsDate),
+                subscriptionStartDate,
+                subscriptionEndDate,
+                paymentDate,
+                listingDate,
+                currentSimulationDate
+        );
+    }
+
+    static LocalDate defaultPaidInSubscriptionStartDate(
+            StockCapitalIncreaseOfferingType offeringType,
+            LocalDate recordDate,
             LocalDate currentSimulationDate
     ) {
         StockCapitalIncreaseOfferingType normalizedOfferingType = offeringType == null
                 ? StockCapitalIncreaseOfferingType.defaultType()
                 : offeringType;
-        if (normalizedOfferingType == StockCapitalIncreaseOfferingType.SHAREHOLDER_ALLOCATION && exRightsDate != null) {
-            return exRightsDate.plusDays(1);
+        if (normalizedOfferingType == StockCapitalIncreaseOfferingType.SHAREHOLDER_ALLOCATION && recordDate != null) {
+            return recordDate;
         }
         return currentSimulationDate;
+    }
+
+    static LocalDate defaultPaidInRecordDate(
+            StockCapitalIncreaseOfferingType offeringType,
+            LocalDate exRightsDate
+    ) {
+        StockCapitalIncreaseOfferingType normalizedOfferingType = offeringType == null
+                ? StockCapitalIncreaseOfferingType.defaultType()
+                : offeringType;
+        if (normalizedOfferingType != StockCapitalIncreaseOfferingType.SHAREHOLDER_ALLOCATION
+                || exRightsDate == null) {
+            return null;
+        }
+        return exRightsDate.plusDays(1);
     }
 
     static LocalDate defaultPaidInSubscriptionEndDate(LocalDate paymentDate) {
@@ -189,8 +233,9 @@ final class CorporateActionPolicy {
         }
         BigDecimal existingValue = basePrice.multiply(BigDecimal.valueOf(existingShares));
         BigDecimal issueValue = issuePrice.multiply(BigDecimal.valueOf(newShares));
+        BigDecimal totalShares = BigDecimal.valueOf(existingShares).add(BigDecimal.valueOf(newShares));
         return existingValue.add(issueValue)
-                .divide(BigDecimal.valueOf(existingShares + newShares), 0, RoundingMode.DOWN);
+                .divide(totalShares, 0, RoundingMode.DOWN);
     }
 
     static BigDecimal calculateTheoreticalFreeSharePrice(
@@ -199,6 +244,7 @@ final class CorporateActionPolicy {
             long newShares
     ) {
         BigDecimal existingValue = basePrice.multiply(BigDecimal.valueOf(existingShares));
-        return existingValue.divide(BigDecimal.valueOf(existingShares + newShares), 0, RoundingMode.DOWN);
+        BigDecimal totalShares = BigDecimal.valueOf(existingShares).add(BigDecimal.valueOf(newShares));
+        return existingValue.divide(totalShares, 0, RoundingMode.DOWN);
     }
 }

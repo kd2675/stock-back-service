@@ -109,7 +109,11 @@ class CorporateActionQueryServiceTest {
         when(action.getStatus()).thenReturn(StockCorporateActionStatus.ANNOUNCED);
         when(stockCorporateActionEntitlementRepository.sumSubscribedShareQuantityByActionIdInAndStatusIn(
                 List.of(11L),
-                List.of(StockCorporateActionEntitlementStatus.SUBSCRIBED, StockCorporateActionEntitlementStatus.PAID)
+                List.of(
+                        StockCorporateActionEntitlementStatus.PARTIALLY_SUBSCRIBED,
+                        StockCorporateActionEntitlementStatus.SUBSCRIBED,
+                        StockCorporateActionEntitlementStatus.PAID
+                )
         )).thenReturn(List.of(summary));
         when(summary.getActionId()).thenReturn(11L);
         when(summary.getSubscribedShareQuantity()).thenReturn(350L);
@@ -191,7 +195,11 @@ class CorporateActionQueryServiceTest {
         )).thenReturn(List.of(recentPaid, olderPaid, olderExRights, oldestAnnounced));
         when(stockCorporateActionEntitlementRepository.sumSubscribedShareQuantityByActionIdInAndStatusIn(
                 List.of(51L, 41L, 31L, 21L, 11L),
-                List.of(StockCorporateActionEntitlementStatus.SUBSCRIBED, StockCorporateActionEntitlementStatus.PAID)
+                List.of(
+                        StockCorporateActionEntitlementStatus.PARTIALLY_SUBSCRIBED,
+                        StockCorporateActionEntitlementStatus.SUBSCRIBED,
+                        StockCorporateActionEntitlementStatus.PAID
+                )
         )).thenReturn(List.of());
 
         var responses = service.getCorporateActions(StockCorporateActionType.PAID_IN_CAPITAL_INCREASE, 2);
@@ -229,7 +237,11 @@ class CorporateActionQueryServiceTest {
         )).thenReturn(List.of(olderPaidIn));
         when(stockCorporateActionEntitlementRepository.sumSubscribedShareQuantityByActionIdInAndStatusIn(
                 List.of(11L),
-                List.of(StockCorporateActionEntitlementStatus.SUBSCRIBED, StockCorporateActionEntitlementStatus.PAID)
+                List.of(
+                        StockCorporateActionEntitlementStatus.PARTIALLY_SUBSCRIBED,
+                        StockCorporateActionEntitlementStatus.SUBSCRIBED,
+                        StockCorporateActionEntitlementStatus.PAID
+                )
         )).thenReturn(List.of());
 
         var responses = service.getCorporateActions(null, 1);
@@ -316,6 +328,7 @@ class CorporateActionQueryServiceTest {
                 101L,
                 List.of(
                         StockCorporateActionEntitlementStatus.ANNOUNCED,
+                        StockCorporateActionEntitlementStatus.PARTIALLY_SUBSCRIBED,
                         StockCorporateActionEntitlementStatus.SUBSCRIBED
                 )
         )).thenReturn(List.of(activeEntitlement));

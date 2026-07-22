@@ -48,7 +48,7 @@ final class AutoParticipantAggregateQuerySupport {
                                    0 as open_sell_quantity
                               from stock_corporate_action_entitlement
                              where account_id in (:accountIds)
-                               and status = 'SUBSCRIBED'
+                               and status in ('PARTIALLY_SUBSCRIBED', 'SUBSCRIBED')
                              group by account_id
                       ) reserved_assets
                      group by account_id

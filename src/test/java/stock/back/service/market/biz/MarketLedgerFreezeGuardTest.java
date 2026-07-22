@@ -62,10 +62,13 @@ class MarketLedgerFreezeGuardTest {
     }
 
     @Test
-    void acquireMutationPermit_withoutFreeze_allowsMutation() {
-        assertThatCode(() -> transactionTemplate.executeWithoutResult(
+    void acquireMutationPermit_withoutFreeze_returnsLockedActiveBusinessDate() {
+        LocalDate activeBusinessDate = transactionTemplate.execute(
                 status -> guard.acquireMutationPermit("cash adjustment")
-        )).doesNotThrowAnyException();
+        );
+
+        org.assertj.core.api.Assertions.assertThat(activeBusinessDate)
+                .isEqualTo(LocalDate.of(2026, 7, 3));
     }
 
     @Test

@@ -45,7 +45,10 @@ dependencies {
     developmentOnly 'com.h2database:h2'
 
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    testImplementation 'org.testcontainers:testcontainers-junit-jupiter'
+    testImplementation 'org.testcontainers:testcontainers-mysql'
     testRuntimeOnly 'com.h2database:h2'
+    testRuntimeOnly 'com.mysql:mysql-connector-j:8.3.0'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
 
@@ -79,7 +82,20 @@ dependencyManagement {
 }
 
 tasks.named('test') {
-    useJUnitPlatform()
+    useJUnitPlatform {
+        excludeTags 'mysql'
+    }
+}
+
+tasks.register('mysqlTest', Test) {
+    description = 'Runs isolated MySQL 8 subscription locking tests with Testcontainers.'
+    group = 'verification'
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
+    shouldRunAfter tasks.named('test')
+    useJUnitPlatform {
+        includeTags 'mysql'
+    }
 }
 
 springBoot {

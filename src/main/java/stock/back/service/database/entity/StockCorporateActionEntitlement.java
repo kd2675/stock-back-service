@@ -12,6 +12,7 @@ import jakarta.persistence.UniqueConstraint;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
+import org.hibernate.annotations.ColumnDefault;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -56,6 +57,10 @@ public class StockCorporateActionEntitlement {
     @Column(name = "subscribed_cash_amount", precision = 19, scale = 2)
     private BigDecimal subscribedCashAmount;
 
+    @Column(name = "forfeited_share_quantity", nullable = false)
+    @ColumnDefault("0")
+    private Long forfeitedShareQuantity = 0L;
+
     @Column(name = "holding_snapshot_run_id")
     private Long holdingSnapshotRunId;
 
@@ -72,10 +77,42 @@ public class StockCorporateActionEntitlement {
     @Column(name = "paid_at")
     private LocalDateTime paidAt;
 
+    public static StockCorporateActionEntitlement publicOfferingSubscription(
+            long actionId,
+            long accountId,
+            String symbol,
+            long shareQuantity,
+            BigDecimal cashAmount,
+            LocalDateTime subscribedAt
+    ) {
+        StockCorporateActionEntitlement entitlement = new StockCorporateActionEntitlement();
+        entitlement.actionId = actionId;
+        entitlement.accountId = accountId;
+        entitlement.symbol = symbol;
+        entitlement.quantity = shareQuantity;
+        entitlement.shareQuantity = shareQuantity;
+        entitlement.cashAmount = cashAmount;
+        entitlement.subscribedShareQuantity = shareQuantity;
+        entitlement.subscribedCashAmount = cashAmount;
+        entitlement.forfeitedShareQuantity = 0L;
+        entitlement.status = StockCorporateActionEntitlementStatus.SUBSCRIBED;
+        entitlement.createdAt = subscribedAt;
+        entitlement.subscribedAt = subscribedAt;
+        return entitlement;
+    }
+
     public void subscribe(long shareQuantity, BigDecimal cashAmount, LocalDateTime subscribedAt) {
-        this.subscribedShareQuantity = shareQuantity;
-        this.subscribedCashAmount = cashAmount;
-        this.status = StockCorporateActionEntitlementStatus.SUBSCRIBED;
+        long currentSubscribedShares = this.subscribedShareQuantity == null ? 0L : this.subscribedShareQuantity;
+        BigDecimal currentSubscribedCash = this.subscribedCashAmount == null ? BigDecimal.ZERO : this.subscribedCashAmount;
+        long totalSubscribedShares = Math.addExact(currentSubscribedShares, shareQuantity);
+        if (this.shareQuantity == null || totalSubscribedShares > this.shareQuantity) {
+            throw new IllegalArgumentException("Cumulative subscription exceeds allocated shareholder rights");
+        }
+        this.subscribedShareQuantity = totalSubscribedShares;
+        this.subscribedCashAmount = currentSubscribedCash.add(cashAmount);
+        this.status = totalSubscribedShares == this.shareQuantity
+                ? StockCorporateActionEntitlementStatus.SUBSCRIBED
+                : StockCorporateActionEntitlementStatus.PARTIALLY_SUBSCRIBED;
         this.subscribedAt = subscribedAt;
     }
 }

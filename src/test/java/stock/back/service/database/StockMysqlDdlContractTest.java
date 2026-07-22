@@ -822,6 +822,39 @@ class StockMysqlDdlContractTest {
     }
 
     @Test
+    void capitalIncreaseLifecycleAlterDdl_isGuardedAndOwnedByBackService() throws IOException {
+        Path backPath = Path.of(
+                "src/main/resources/db/ddl/stock_capital_increase_lifecycle_hardening_alter.sql"
+        );
+        Path batchPath = Path.of(
+                "../stock-batch-service/src/main/resources/db/ddl/stock_capital_increase_lifecycle_hardening_alter.sql"
+        );
+        String ddl = Files.readString(backPath, StandardCharsets.UTF_8);
+
+        assertThat(firstExecutableSqlLine(ddl)).isEqualTo("USE STOCK_SERVICE;");
+        assertThat(batchPath).doesNotExist();
+        assertThat(ddl).contains(
+                "stock_migration_required_capital_increase_lifecycle",
+                "stock_migration_required_capital_increase_lifecycle_data",
+                "stock_migration_required_post_close_cash_order",
+                "scope_type = 'FULL_MARKET'",
+                "scope_key = 'ALL'",
+                "'PENDING', 'RUNNING', 'DEFERRED', 'FAILED'",
+                "phase <> 'COMPLETED'",
+                "record_date",
+                "entitlement_close_cycle_id",
+                "entitlement_close_run_id",
+                "PARTIALLY_SUBSCRIBED",
+                "status <> 'EXPIRED'",
+                "forfeited_share_quantity",
+                "corporate_action_entitlement_id",
+                "effective_business_date",
+                "chk_stock_corporate_action_entitlement_close_pair",
+                "chk_stock_corporate_action_entitlement_finalized_share_limit"
+        );
+    }
+
+    @Test
     void schemaContractAlignmentAlterDdl_isGuardedAndMatchesBatchCopy() throws IOException {
         String backDdl = Files.readString(
                 Path.of("src/main/resources/db/ddl/stock_schema_contract_alignment_alter.sql"),

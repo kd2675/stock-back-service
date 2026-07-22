@@ -133,6 +133,7 @@ public class CorporateActionQueryService {
                         accountId,
                         List.of(
                                 StockCorporateActionEntitlementStatus.ANNOUNCED,
+                                StockCorporateActionEntitlementStatus.PARTIALLY_SUBSCRIBED,
                                 StockCorporateActionEntitlementStatus.SUBSCRIBED
                         )
                 );
@@ -155,7 +156,11 @@ public class CorporateActionQueryService {
         }
         return stockCorporateActionEntitlementRepository.sumSubscribedShareQuantityByActionIdInAndStatusIn(
                         actionIds,
-                        List.of(StockCorporateActionEntitlementStatus.SUBSCRIBED, StockCorporateActionEntitlementStatus.PAID)
+                        List.of(
+                                StockCorporateActionEntitlementStatus.PARTIALLY_SUBSCRIBED,
+                                StockCorporateActionEntitlementStatus.SUBSCRIBED,
+                                StockCorporateActionEntitlementStatus.PAID
+                        )
                 ).stream()
                 .collect(Collectors.toMap(
                         StockCorporateActionEntitlementRepository.SubscribedShareQuantitySummary::getActionId,
@@ -185,6 +190,9 @@ public class CorporateActionQueryService {
                 action.getBasePrice(),
                 action.getTheoreticalExRightsPrice(),
                 action.getExRightsDate(),
+                action.getRecordDate(),
+                action.getEntitlementCloseCycleId(),
+                action.getEntitlementCloseRunId(),
                 action.getPaymentDate(),
                 action.getListingDate(),
                 action.getDelistingDate(),
@@ -217,6 +225,7 @@ public class CorporateActionQueryService {
                 entitlement.getCashAmount(),
                 entitlement.getSubscribedShareQuantity(),
                 entitlement.getSubscribedCashAmount(),
+                entitlement.getForfeitedShareQuantity(),
                 entitlement.getStatus(),
                 entitlement.getCreatedAt(),
                 entitlement.getSubscribedAt(),

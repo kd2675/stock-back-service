@@ -204,9 +204,12 @@ public class TradingQueryService {
                 ACTIVE_ORDER_STATUSES
         );
         BigDecimal subscriptionCash = stockCorporateActionEntitlementRepository
-                .sumSubscribedCashAmountByAccountIdAndStatus(
+                .sumSubscribedCashAmountByAccountIdAndStatusIn(
                         accountId,
-                        StockCorporateActionEntitlementStatus.SUBSCRIBED
+                        List.of(
+                                StockCorporateActionEntitlementStatus.PARTIALLY_SUBSCRIBED,
+                                StockCorporateActionEntitlementStatus.SUBSCRIBED
+                        )
                 );
         return zeroIfNull(orderCash).add(zeroIfNull(subscriptionCash));
     }

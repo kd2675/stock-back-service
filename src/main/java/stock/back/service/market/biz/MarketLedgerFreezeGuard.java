@@ -35,7 +35,7 @@ public class MarketLedgerFreezeGuard {
     }
 
     @Transactional(propagation = Propagation.MANDATORY)
-    public void acquireMutationPermit(String operation) {
+    public LocalDate acquireMutationPermit(String operation) {
         LocalDate activeBusinessDate = lockActiveBusinessDate();
         Boolean freezePending = jdbcClient.sql(
                         """
@@ -61,6 +61,7 @@ public class MarketLedgerFreezeGuard {
                             + normalizeOperation(operation)
             );
         }
+        return activeBusinessDate;
     }
 
     private LocalDate lockActiveBusinessDate() {

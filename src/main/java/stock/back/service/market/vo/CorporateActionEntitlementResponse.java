@@ -17,6 +17,7 @@ public record CorporateActionEntitlementResponse(
         BigDecimal cashAmount,
         Long subscribedShareQuantity,
         BigDecimal subscribedCashAmount,
+        Long forfeitedShareQuantity,
         StockCorporateActionEntitlementStatus status,
         LocalDateTime createdAt,
         LocalDateTime subscribedAt,

@@ -62,7 +62,7 @@
 
 - `GET /api/stock/v1/markets/corporate-action-entitlements/me`
 - 사용자 인증이 필요하다.
-- `ANNOUNCED`/`SUBSCRIBED`인 진행 중 권리는 생성 시점과 무관하게 전부 포함한다.
+- `ANNOUNCED`/`PARTIALLY_SUBSCRIBED`/`SUBSCRIBED`인 진행 중 권리는 생성 시점과 무관하게 전부 포함한다.
 - 완료/만료 이력은 최근 50건을 더한 뒤 id 기준으로 중복 제거한다.
 - 현금배당은 `cashAmount`, 무상증자/주식배당은 `shareQuantity`로 확인한다.
 - 홈 화면의 기업 이벤트 패널은 이 API로 배정 예정/지급 완료 상태를 보여준다.
@@ -76,6 +76,7 @@
 - 발행가
 - 청약 시작일/종료일
 - 권리락일(주주배정만)
+- 주주확정 기준일(주주배정만)
 - 납입일
 - 신주상장일
 
@@ -85,7 +86,7 @@ back 처리:
 - 일반공모는 권리락일과 이론권리락가격을 사용하지 않는다.
 - 주주배정 권리락일은 이전 장마감 snapshot을 확보할 수 있도록 현재 시뮬레이션 날짜보다 미래여야 한다.
 - `subscriptionStartDate <= subscriptionEndDate < paymentDate < listingDate`를 검증한다.
-- 주주배정은 `exRightsDate < subscriptionStartDate`도 검증한다.
+- 주주배정은 `exRightsDate < recordDate <= subscriptionStartDate`도 검증한다.
 - 같은 종목의 진행 중 주식구조 변경/상장폐지 이벤트와 상호 배타로 등록한다.
 - `stock_corporate_action`에 `ANNOUNCED`로 저장한다.
 
@@ -94,20 +95,20 @@ back 처리:
 - `POST /api/stock/v1/markets/corporate-actions/{actionId}/subscriptions/me`
 - 인증된 본인 활성 계좌만 사용하며 요청 body는 양수 `shareQuantity` 하나다.
 - 장 마감 후(`AFTER_CLOSE`)이면서 청약 시작일과 종료일 사이일 때만 허용한다.
-- 주주배정은 `EX_RIGHTS_APPLIED` 상태와 본인 `ANNOUNCED` entitlement의 배정수량을 확인한다.
+- 주주배정은 `EX_RIGHTS_APPLIED` 상태와 본인 `ANNOUNCED`/`PARTIALLY_SUBSCRIBED` entitlement의 남은 배정수량을 확인한다. 부분 청약은 청약 종료일까지 누적할 수 있다.
 - 일반공모는 `ANNOUNCED` 상태, 계좌별 1회, 전체 잔여 발행수량을 확인한다.
 - lock 순서는 corporate action -> account -> shareholder entitlement다. 일반공모 잔여수량 계산도 action lock 안에서 수행한다.
-- 계좌 현금을 차감하고 `CAPITAL_INCREASE_SUBSCRIPTION` cash-flow와 `SUBSCRIBED` entitlement를 같은 트랜잭션에 기록한다.
-- 청약 대금은 외부 인출이 아니라 상장 대기 예약자산이다. `SUBSCRIBED` 동안 포트폴리오/관리자/자동참여자 총자산에 포함한다.
+- 계좌 현금을 차감하고 action/entitlement/효력 거래일을 포함한 `CAPITAL_INCREASE_SUBSCRIPTION` cash-flow와 청약 상태를 같은 트랜잭션에 기록한다.
+- 청약 대금은 외부 인출이 아니라 상장 대기 예약자산이다. `PARTIALLY_SUBSCRIBED`/`SUBSCRIBED` 동안 포트폴리오/관리자/자동참여자 총자산에 포함한다.
 
 batch 처리:
 
-1. 주주배정은 권리락일 전 마지막 완료 장마감 snapshot의 권리부종가와 증자 전 발행주식수로 가격을 확정하고, action의 base price/이론가격과 가격/tick을 함께 갱신한다. 권리부종가가 발행가보다 높을 때만 `(권리부종가 * 기존주식수 + 발행가 * 신주수) / 증자 후 주식수` 산식을 적용하고 1원 미만은 절사하며, 발행가 이상이 아니면 권리부종가를 유지한다.
+1. 주주배정은 권리락일 전 최신 완료 전체시장 close cycle/run을 action에 고정한다. 그 snapshot의 권리부종가와 증자 전 발행주식수로 가격을 확정하고 한국시장 호가단위로 정규화해 action 가격과 가격/tick을 함께 갱신한다.
 2. 같은 snapshot의 계좌별 보유수량으로 배정수량을 계산한다.
 3. 일반공모는 권리락 처리 없이 `ANNOUNCED` 상태에서 청약한다.
 4. 같은 날 현금배당 지급과 자동청약이 모두 예정돼 있으면 배당을 먼저 지급한 뒤 자동청약이 가용 현금을 계산한다.
 5. 장 마감 후 자동참여자는 이벤트 전용 프로필 정책 범위에서 같은 청약 원장에 참여한다.
-6. 납입일에 미청약 주주배정 entitlement를 `EXPIRED`, action을 `PAID`로 전이한다.
+6. 납입일에 완전 미청약 주주배정 entitlement는 `EXPIRED`, 부분 청약 entitlement는 실제 청약수량과 `forfeitedShareQuantity`를 합쳐 배정수량과 일치하도록 확정하고 action을 `PAID`로 전이한다.
 7. 신주상장일에는 `SUBSCRIBED` 합계만큼만 발행/유통주식수를 늘리고 계좌 보유수량/평균단가를 반영한 뒤 entitlement와 action을 `PAID`/`LISTED`로 전이한다.
 
 ## 액면분할
@@ -167,7 +168,7 @@ back 처리:
 
 batch 처리:
 
-1. 권리락일 전 마지막 완료 장마감 snapshot의 권리부종가와 당시 발행주식수로 `closePrice * existingShares / (existingShares + newShares)`를 계산하고 1원 미만을 절사해 가격을 확정한다.
+1. 권리락일 전 최신 완료 전체시장 snapshot의 권리부종가와 당시 발행주식수로 `closePrice * existingShares / (existingShares + newShares)`를 계산하고 한국시장 호가단위로 정규화해 가격을 확정한다.
 2. 같은 장마감 snapshot의 보유수량으로 share entitlement를 만든다.
 3. 상장일에 `issued_shares`, `tradable_shares`를 증가시킨다.
 4. entitlement별 `share_quantity`를 보유수량에 더한다.

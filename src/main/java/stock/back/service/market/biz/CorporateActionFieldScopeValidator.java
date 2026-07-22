@@ -23,6 +23,7 @@ final class CorporateActionFieldScopeValidator {
                 rejectPresent(request.subscriptionStartDate(), "Stock split does not use subscriptionStartDate");
                 rejectPresent(request.subscriptionEndDate(), "Stock split does not use subscriptionEndDate");
                 rejectPresent(request.exRightsDate(), "Stock split does not use exRightsDate");
+                rejectPresent(request.recordDate(), "Stock split does not use recordDate");
                 rejectPresent(request.paymentDate(), "Stock split does not use paymentDate");
                 rejectPresent(request.dividendAmount(), "Stock split does not use dividendAmount");
                 rejectPresent(request.delistingDate(), "Stock split does not use delistingDate");
@@ -37,6 +38,7 @@ final class CorporateActionFieldScopeValidator {
                 rejectPresent(request.splitTo(), "Cash dividend does not use splitTo");
                 rejectPresent(request.listingDate(), "Cash dividend does not use listingDate");
                 rejectPresent(request.delistingDate(), "Cash dividend does not use delistingDate");
+                rejectPresent(request.recordDate(), "Cash dividend does not use recordDate");
             }
             case BONUS_ISSUE, STOCK_DIVIDEND -> {
                 rejectPresent(request.issuePrice(), "Free share distribution does not use issuePrice");
@@ -48,6 +50,7 @@ final class CorporateActionFieldScopeValidator {
                 rejectPresent(request.paymentDate(), "Free share distribution does not use paymentDate");
                 rejectPresent(request.dividendAmount(), "Free share distribution does not use dividendAmount");
                 rejectPresent(request.delistingDate(), "Free share distribution does not use delistingDate");
+                rejectPresent(request.recordDate(), "Free share distribution does not use recordDate");
             }
             case DELISTING -> {
                 rejectPresent(request.shareQuantity(), "Delisting does not use shareQuantity");
@@ -61,6 +64,7 @@ final class CorporateActionFieldScopeValidator {
                 rejectPresent(request.paymentDate(), "Delisting does not use paymentDate");
                 rejectPresent(request.listingDate(), "Delisting does not use listingDate");
                 rejectPresent(request.dividendAmount(), "Delisting does not use dividendAmount");
+                rejectPresent(request.recordDate(), "Delisting does not use recordDate");
             }
             case INITIAL_ISSUE -> throw StockException.badRequest("Initial issue is only allowed when creating an instrument");
         }

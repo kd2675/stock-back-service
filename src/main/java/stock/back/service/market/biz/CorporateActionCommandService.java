@@ -73,9 +73,6 @@ public class CorporateActionCommandService {
         if (!Boolean.TRUE.equals(instrument.getEnabled())) {
             throw StockException.conflict("Corporate action is not allowed for a disabled or delisted instrument: " + normalizedSymbol);
         }
-        if (request.actionType() != StockCorporateActionType.DELISTING) {
-            assertNoOpenOrderBookOrders(normalizedSymbol);
-        }
         LocalDateTime createdAt = simulationClockService.currentMarketDateTime();
         LocalDate currentSimulationDate = createdAt.toLocalDate();
         assertNoActiveExclusiveInstrumentAction(normalizedSymbol, request.actionType());
@@ -102,8 +99,15 @@ public class CorporateActionCommandService {
         StockCapitalIncreaseOfferingType offeringType = request.offeringType() == null
                 ? StockCapitalIncreaseOfferingType.defaultType()
                 : request.offeringType();
+        LocalDate recordDate = request.recordDate() == null
+                ? CorporateActionPolicy.defaultPaidInRecordDate(offeringType, exRightsDate)
+                : request.recordDate();
         LocalDate subscriptionStartDate = request.subscriptionStartDate() == null
-                ? CorporateActionPolicy.defaultPaidInSubscriptionStartDate(offeringType, exRightsDate, currentSimulationDate)
+                ? CorporateActionPolicy.defaultPaidInSubscriptionStartDate(
+                        offeringType,
+                        recordDate,
+                        currentSimulationDate
+                )
                 : request.subscriptionStartDate();
         LocalDate subscriptionEndDate = request.subscriptionEndDate() == null
                 ? CorporateActionPolicy.defaultPaidInSubscriptionEndDate(request.paymentDate())
@@ -113,6 +117,7 @@ public class CorporateActionCommandService {
         CorporateActionPolicy.requirePaidInCapitalIncreaseDates(
                 offeringType,
                 exRightsDate,
+                recordDate,
                 subscriptionStartDate,
                 subscriptionEndDate,
                 paymentDate,
@@ -139,6 +144,7 @@ public class CorporateActionCommandService {
                 basePrice,
                 theoreticalExRightsPrice,
                 exRightsDate,
+                recordDate,
                 subscriptionStartDate,
                 subscriptionEndDate,
                 paymentDate,
@@ -256,24 +262,6 @@ public class CorporateActionCommandService {
                 createdAt
         ));
         return OrderBookInstrumentResponseMapper.toResponse(instrument, findPrice(instrument));
-    }
-
-    private void assertNoOpenOrderBookOrders(String symbol) {
-        Long openOrderCount = jdbcClient.sql(
-                        """
-                select count(*)
-                  from stock_order
-                 where symbol = ?
-                   and market_type = 'ORDER_BOOK'
-                   and status in ('PENDING', 'PARTIALLY_FILLED')
-                """
-                )
-                .param(symbol)
-                .query(Long.class)
-                .single();
-        if (openOrderCount > 0) {
-            throw StockException.conflict("Corporate action requires no open order book orders: " + symbol);
-        }
     }
 
     private void assertNoActiveExclusiveInstrumentAction(String symbol, StockCorporateActionType requestedActionType) {

@@ -170,7 +170,7 @@ public class AdminFlowQueryService {
                        select sum(e.subscribed_cash_amount)
                          from stock_corporate_action_entitlement e
                          join active_accounts aa on aa.id = e.account_id
-                        where e.status = 'SUBSCRIBED'
+                        where e.status in ('PARTIALLY_SUBSCRIBED', 'SUBSCRIBED')
                      ), 0) as total_reserved_buy_cash
                 from stock_order o
                 join active_accounts aa on aa.id = o.account_id
