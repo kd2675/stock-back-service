@@ -10,10 +10,11 @@ import org.springframework.web.bind.annotation.RestController;
 import stock.back.service.market.biz.AdminFlowQueryService;
 import stock.back.service.market.vo.AdminCashFlowPageResponse;
 import stock.back.service.market.vo.AdminFlowOverviewResponse;
+import stock.back.service.market.vo.AdminFundFlowBreakdownResponse;
 import stock.back.service.market.vo.AdminFundFlowScope;
-import stock.back.service.market.vo.AdminFundFlowSummaryResponse;
 import stock.back.service.market.vo.AdminInvestorFlowHistoryResponse;
 import stock.back.service.market.vo.AdminInvestorFlowSummaryResponse;
+import stock.back.service.market.vo.AdminParticipantScope;
 import stock.back.service.market.vo.AdminSymbolFlowListResponse;
 import stock.back.service.market.vo.AdminTotalAssetHistoryPageResponse;
 import web.common.core.response.base.dto.ResponseDataDTO;
@@ -43,11 +44,11 @@ public class MarketAdminController {
         ));
     }
 
-    @GetMapping("/admin/fund-flow-summary")
-    public ResponseDataDTO<AdminFundFlowSummaryResponse> getAdminFundFlowSummary(
+    @GetMapping("/admin/fund-flow-breakdown")
+    public ResponseDataDTO<AdminFundFlowBreakdownResponse> getAdminFundFlowBreakdown(
             @RequestParam(defaultValue = "RECENT_SIMULATION_DAY") AdminFundFlowScope scope
     ) {
-        return ResponseDataDTO.of(adminFlowQueryService.getAdminFundFlowSummary(scope));
+        return ResponseDataDTO.of(adminFlowQueryService.getAdminFundFlowBreakdown(scope));
     }
 
     @GetMapping("/admin/investor-flow-summary")
@@ -64,9 +65,10 @@ public class MarketAdminController {
 
     @GetMapping("/admin/total-asset-history")
     public ResponseDataDTO<AdminTotalAssetHistoryPageResponse> getAdminTotalAssetHistory(
-            @RequestParam(defaultValue = "0") int page
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "ALL") AdminParticipantScope participantScope
     ) {
-        return ResponseDataDTO.of(adminFlowQueryService.getAdminTotalAssetHistory(page));
+        return ResponseDataDTO.of(adminFlowQueryService.getAdminTotalAssetHistory(page, participantScope));
     }
 
     @GetMapping("/admin/symbol-flows")

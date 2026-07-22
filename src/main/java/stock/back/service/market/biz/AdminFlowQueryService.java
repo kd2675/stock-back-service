@@ -7,6 +7,7 @@ import org.springframework.transaction.annotation.Transactional;
 import stock.back.service.market.vo.AdminCashFlowPageResponse;
 import stock.back.service.market.vo.AdminCorporateActionFlowSummaryResponse;
 import stock.back.service.market.vo.AdminFlowOverviewResponse;
+import stock.back.service.market.vo.AdminFundFlowBreakdownResponse;
 import stock.back.service.market.vo.AdminFundFlowScope;
 import stock.back.service.market.vo.AdminFundFlowSummaryResponse;
 import stock.back.service.market.vo.AdminInvestorCategoryFlowResponse;
@@ -14,6 +15,9 @@ import stock.back.service.market.vo.AdminInvestorFlowHistoryResponse;
 import stock.back.service.market.vo.AdminInvestorFlowSourceStatus;
 import stock.back.service.market.vo.AdminInvestorFlowSummaryResponse;
 import stock.back.service.market.vo.AdminOrderFlowSummaryResponse;
+import stock.back.service.market.vo.AdminParticipantFundFlowResponse;
+import stock.back.service.market.vo.AdminParticipantCategory;
+import stock.back.service.market.vo.AdminParticipantScope;
 import stock.back.service.market.vo.AdminRecentCashFlowResponse;
 import stock.back.service.market.vo.AdminSymbolFlowListResponse;
 import stock.back.service.market.vo.AdminTotalAssetHistoryPageResponse;
@@ -50,11 +54,7 @@ public class AdminFlowQueryService {
     );
 
     static final String INVESTOR_FLOW_SUMMARY_SQL = """
-            select case
-                       when account.user_key like 'stock-listing-%' then 'LISTING_UNDERWRITER'
-                       when participant.user_key is not null then 'AUTO_PARTICIPANT'
-                       else 'MANUAL_PARTICIPANT'
-                   end as participant_category,
+            select account.participant_category,
                    sum(summary.buy_quantity) as buy_quantity,
                    sum(summary.sell_quantity) as sell_quantity,
                    sum(summary.buy_gross_amount) as buy_amount,
@@ -63,13 +63,8 @@ public class AdminFlowQueryService {
                    max(summary.updated_at) as source_updated_at
               from stock_execution_account_day_summary summary
               join stock_account account on account.id = summary.account_id
-              left join stock_auto_participant participant on participant.user_key = account.user_key
              where summary.simulation_trade_date = ?
-             group by case
-                        when account.user_key like 'stock-listing-%' then 'LISTING_UNDERWRITER'
-                        when participant.user_key is not null then 'AUTO_PARTICIPANT'
-                        else 'MANUAL_PARTICIPANT'
-                      end
+             group by account.participant_category
             """;
 
     static final String INVESTOR_FLOW_HISTORY_CYCLE_SQL = """
@@ -122,9 +117,9 @@ public class AdminFlowQueryService {
              order by snapshot.simulation_trade_date desc
             """;
 
-    static final String FUND_FLOW_SUMMARY_SQL = fundFlowSummarySql("", "");
+    static final String FUND_FLOW_BREAKDOWN_SQL = fundFlowBreakdownSql("", "");
 
-    static final String FUND_FLOW_SUMMARY_RECENT_SIMULATION_DAY_SQL = fundFlowSummarySql(
+    static final String FUND_FLOW_BREAKDOWN_RECENT_SIMULATION_DAY_SQL = fundFlowBreakdownSql(
             """
              where f.created_at >= ?
                and f.created_at <= ?
@@ -134,69 +129,68 @@ public class AdminFlowQueryService {
             """
     );
 
-    private static String fundFlowSummarySql(String cashFlowDatePredicate, String executionDatePredicate) {
+    private static String fundFlowBreakdownSql(String cashFlowDatePredicate, String executionDatePredicate) {
         return """
-            with active_accounts as (
-                select id, cash_balance
+            with category_catalog(participant_category) as (
+                select 'MANUAL_PARTICIPANT'
+                union all select 'AUTO_PARTICIPANT'
+                union all select 'LISTING_UNDERWRITER'
+            ),
+            active_accounts as (
+                select id, cash_balance, participant_category
                   from stock_account
                  where status = 'ACTIVE'
                    and user_key is not null
-                   and user_key not like 'stock-listing-%%'
-            )
-            select
-              coalesce(a.active_account_count, 0) as active_account_count,
-              coalesce(a.total_cash_balance, 0) as total_cash_balance,
-              coalesce(o.total_reserved_buy_cash, 0) as total_reserved_buy_cash,
-              coalesce(h.total_holding_market_value, 0) as total_holding_market_value,
-              coalesce(h.total_holding_quantity, 0) as total_holding_quantity,
-              coalesce(h.total_reserved_sell_quantity, 0) as total_reserved_sell_quantity,
-              coalesce(h.holding_position_count, 0) as holding_position_count,
-              coalesce(f.external_deposit_amount, 0) as external_deposit_amount,
-              coalesce(f.external_withdraw_amount, 0) as external_withdraw_amount,
-              coalesce(f.dividend_income_amount, 0) as dividend_income_amount,
-              coalesce(e.buy_net_amount, 0) as buy_net_amount,
-              coalesce(e.sell_net_amount, 0) as sell_net_amount,
-              coalesce(e.total_fee_amount, 0) as total_fee_amount,
-              coalesce(e.total_tax_amount, 0) as total_tax_amount,
-              coalesce(e.realized_profit, 0) as realized_profit,
-              coalesce(e.execution_count, 0) as execution_count
-            from (
-              select count(*) as active_account_count,
+            ),
+            account_aggregate as (
+              select participant_category,
+                     count(*) as active_account_count,
                      sum(cash_balance) as total_cash_balance
                 from active_accounts
-            ) a
-            cross join (
-              select coalesce(sum(reserved_cash), 0) + coalesce((
-                       select sum(e.subscribed_cash_amount)
-                         from stock_corporate_action_entitlement e
-                         join active_accounts aa on aa.id = e.account_id
-                        where e.status in ('PARTIALLY_SUBSCRIBED', 'SUBSCRIBED')
-                     ), 0) as total_reserved_buy_cash
+               group by participant_category
+            ),
+            order_aggregate as (
+              select aa.participant_category,
+                     sum(o.reserved_cash) as reserved_cash
                 from stock_order o
                 join active_accounts aa on aa.id = o.account_id
                where o.market_type = 'ORDER_BOOK'
                  and o.side = 'BUY'
                  and o.status in ('PENDING', 'PARTIALLY_FILLED')
-            ) o
-            cross join (
-              select sum(h.quantity * coalesce(p.current_price, h.average_price)) as total_holding_market_value,
+               group by aa.participant_category
+            ),
+            subscription_aggregate as (
+              select aa.participant_category,
+                     sum(entitlement.subscribed_cash_amount) as reserved_cash
+                from stock_corporate_action_entitlement entitlement
+                join active_accounts aa on aa.id = entitlement.account_id
+               where entitlement.status in ('PARTIALLY_SUBSCRIBED', 'SUBSCRIBED')
+               group by aa.participant_category
+            ),
+            holding_aggregate as (
+              select aa.participant_category,
+                     sum(h.quantity * coalesce(p.current_price, h.average_price)) as total_holding_market_value,
                      sum(h.quantity) as total_holding_quantity,
                      sum(h.reserved_quantity) as total_reserved_sell_quantity,
                      sum(case when h.quantity > 0 then 1 else 0 end) as holding_position_count
                 from stock_holding h
                 join active_accounts aa on aa.id = h.account_id
                 left join stock_price p on p.symbol = h.symbol
-            ) h
-            cross join (
-              select sum(case when f.flow_type = 'DEPOSIT' and f.reason <> 'DIVIDEND_PAYMENT' then f.amount else 0 end) as external_deposit_amount,
+               group by aa.participant_category
+            ),
+            cash_flow_aggregate as (
+              select aa.participant_category,
+                     sum(case when f.flow_type = 'DEPOSIT' and f.reason <> 'DIVIDEND_PAYMENT' then f.amount else 0 end) as external_deposit_amount,
                      sum(case when f.flow_type = 'WITHDRAW' and f.reason <> 'CAPITAL_INCREASE_SUBSCRIPTION' then f.amount else 0 end) as external_withdraw_amount,
                      sum(case when f.flow_type = 'DEPOSIT' and f.reason = 'DIVIDEND_PAYMENT' then f.amount else 0 end) as dividend_income_amount
                 from stock_account_cash_flow f
                 join active_accounts aa on aa.id = f.account_id
             %s
-            ) f
-            cross join (
-              select sum(e.buy_net_amount) as buy_net_amount,
+               group by aa.participant_category
+            ),
+            execution_aggregate as (
+              select aa.participant_category,
+                     sum(e.buy_net_amount) as buy_net_amount,
                      sum(e.sell_net_amount) as sell_net_amount,
                      sum(e.fee_amount) as total_fee_amount,
                      sum(e.tax_amount) as total_tax_amount,
@@ -205,7 +199,37 @@ public class AdminFlowQueryService {
                 from stock_execution_account_day_summary e
                 join active_accounts aa on aa.id = e.account_id
             %s
-            ) e
+               group by aa.participant_category
+            )
+            select category.participant_category,
+                   coalesce(account.active_account_count, 0) as active_account_count,
+                   coalesce(account.total_cash_balance, 0) as total_cash_balance,
+                   coalesce(open_order.reserved_cash, 0) + coalesce(subscription.reserved_cash, 0) as total_reserved_buy_cash,
+                   coalesce(holding.total_holding_market_value, 0) as total_holding_market_value,
+                   coalesce(holding.total_holding_quantity, 0) as total_holding_quantity,
+                   coalesce(holding.total_reserved_sell_quantity, 0) as total_reserved_sell_quantity,
+                   coalesce(holding.holding_position_count, 0) as holding_position_count,
+                   coalesce(cash_flow.external_deposit_amount, 0) as external_deposit_amount,
+                   coalesce(cash_flow.external_withdraw_amount, 0) as external_withdraw_amount,
+                   coalesce(cash_flow.dividend_income_amount, 0) as dividend_income_amount,
+                   coalesce(execution.buy_net_amount, 0) as buy_net_amount,
+                   coalesce(execution.sell_net_amount, 0) as sell_net_amount,
+                   coalesce(execution.total_fee_amount, 0) as total_fee_amount,
+                   coalesce(execution.total_tax_amount, 0) as total_tax_amount,
+                   coalesce(execution.realized_profit, 0) as realized_profit,
+                   coalesce(execution.execution_count, 0) as execution_count
+              from category_catalog category
+              left join account_aggregate account on account.participant_category = category.participant_category
+              left join order_aggregate open_order on open_order.participant_category = category.participant_category
+              left join subscription_aggregate subscription on subscription.participant_category = category.participant_category
+              left join holding_aggregate holding on holding.participant_category = category.participant_category
+              left join cash_flow_aggregate cash_flow on cash_flow.participant_category = category.participant_category
+              left join execution_aggregate execution on execution.participant_category = category.participant_category
+             order by case category.participant_category
+                        when 'MANUAL_PARTICIPANT' then 1
+                        when 'AUTO_PARTICIPANT' then 2
+                        else 3
+                      end
             """.formatted(cashFlowDatePredicate, executionDatePredicate);
     }
 
@@ -354,7 +378,7 @@ public class AdminFlowQueryService {
                 ? getAdminSymbolFlows(symbolFlowLimit, symbolFlowScope)
                 : new AdminSymbolFlowListResponse(adminSymbolFlowQueryService.countSymbols(), List.of());
         return new AdminFlowOverviewResponse(
-                includeFundFlow ? loadAdminFundFlowSummary(normalizeFlowScope(fundFlowScope)) : null,
+                includeFundFlow ? loadAdminFundFlowBreakdown(normalizeFlowScope(fundFlowScope)) : null,
                 loadAdminOrderFlowSummary(todayStart, todayEnd),
                 loadAdminCorporateActionFlowSummary(todayStart, todayEnd),
                 loadAdminInvestorFlowSummary(todayStart.toLocalDate()),
@@ -366,13 +390,13 @@ public class AdminFlowQueryService {
     }
 
     @Transactional(readOnly = true, timeout = 10)
-    public AdminFundFlowSummaryResponse getAdminFundFlowSummary() {
-        return getAdminFundFlowSummary(AdminFundFlowScope.RECENT_SIMULATION_DAY);
+    public AdminFundFlowBreakdownResponse getAdminFundFlowBreakdown() {
+        return getAdminFundFlowBreakdown(AdminFundFlowScope.RECENT_SIMULATION_DAY);
     }
 
     @Transactional(readOnly = true, timeout = 10)
-    public AdminFundFlowSummaryResponse getAdminFundFlowSummary(AdminFundFlowScope scope) {
-        return loadAdminFundFlowSummary(normalizeFlowScope(scope));
+    public AdminFundFlowBreakdownResponse getAdminFundFlowBreakdown(AdminFundFlowScope scope) {
+        return loadAdminFundFlowBreakdown(normalizeFlowScope(scope));
     }
 
     @Transactional(readOnly = true, timeout = 10)
@@ -495,62 +519,73 @@ public class AdminFlowQueryService {
 
     @Transactional(readOnly = true, timeout = 10)
     public AdminTotalAssetHistoryPageResponse getAdminTotalAssetHistory(int page) {
+        return getAdminTotalAssetHistory(page, AdminParticipantScope.ALL);
+    }
+
+    @Transactional(readOnly = true, timeout = 10)
+    public AdminTotalAssetHistoryPageResponse getAdminTotalAssetHistory(
+            int page,
+            AdminParticipantScope participantScope
+    ) {
+        AdminParticipantScope normalizedParticipantScope = participantScope == null
+                ? AdminParticipantScope.ALL
+                : participantScope;
         AdminTotalAssetHistoryPageRequest pageRequest = AdminTotalAssetHistoryPageRequest.of(page);
         long total = jdbcClient.sql("""
-                select count(distinct ps.snapshot_date)
-                  from portfolio_snapshot ps
-                  join stock_account a on a.id = ps.account_id
-                  left join stock_post_close_cycle cycle on cycle.id = ps.close_cycle_id
-                 where a.user_key is not null
-                   and a.user_key not like 'stock-listing-%'
-                   and (
-                       (ps.close_cycle_id is null and ps.close_run_id is null)
-                       or (
-                           cycle.scope_type = 'FULL_MARKET'
-                           and cycle.scope_key = 'ALL'
-                           and cycle.phase in (
-                               'PORTFOLIO_SETTLED', 'OVERNIGHT_CASH_APPLIED', 'CORPORATE_CASH_APPLIED',
-                               'REPORTS_AGGREGATED', 'PREOPEN_SECURITY_TRANSFORMS_APPLIED',
-                               'MARKET_DATA_PREPARED', 'AUTO_MARKET_PREPARED', 'READY_TO_OPEN', 'COMPLETED'
-                           )
-                       )
+                select count(distinct cycle.business_date)
+                  from stock_close_account_snapshot snapshot
+                  join stock_post_close_cycle cycle on cycle.id = snapshot.close_cycle_id
+                 where cycle.scope_type = 'FULL_MARKET'
+                   and cycle.scope_key = 'ALL'
+                   and cycle.cycle_kind = 'TRADING'
+                   and cycle.phase in (
+                       'PORTFOLIO_SETTLED', 'OVERNIGHT_CASH_APPLIED', 'CORPORATE_CASH_APPLIED',
+                       'REPORTS_AGGREGATED', 'PREOPEN_SECURITY_TRANSFORMS_APPLIED',
+                       'MARKET_DATA_PREPARED', 'AUTO_MARKET_PREPARED', 'READY_TO_OPEN', 'COMPLETED'
                    )
+                   and snapshot.account_status = 'ACTIVE'
+                   and snapshot.user_key is not null
+                   and snapshot.reconciliation_status = 'MATCHED'
+                   and (? = 'ALL' or snapshot.participant_category = ?)
                 """)
+                .params(normalizedParticipantScope.name(), normalizedParticipantScope.name())
                 .query(Long.class)
                 .single();
         int totalPages = pageRequest.totalPages(total);
         List<TotalAssetDailyAggregate> aggregates = jdbcClient.sql("""
-                select ps.snapshot_date,
+                select cycle.business_date as snapshot_date,
                        count(*) as account_count,
-                       sum(ps.total_asset) as total_asset,
-                       sum(ps.cash_balance) as cash_balance,
-                       sum(ps.market_value) as market_value,
-                       sum(ps.pending_subscription_asset) as pending_subscription_asset,
-                       case when count(*) = count(ps.holding_quantity) then sum(ps.holding_quantity) end as holding_quantity,
-                       case when count(*) = count(ps.reserved_sell_quantity) then sum(ps.reserved_sell_quantity) end as reserved_sell_quantity,
-                       case when count(*) = count(ps.holding_position_count) then sum(ps.holding_position_count) end as holding_position_count
-                  from portfolio_snapshot ps
-                  join stock_account a on a.id = ps.account_id
-                  left join stock_post_close_cycle cycle on cycle.id = ps.close_cycle_id
-                 where a.user_key is not null
-                   and a.user_key not like 'stock-listing-%'
-                   and (
-                       (ps.close_cycle_id is null and ps.close_run_id is null)
-                       or (
-                           cycle.scope_type = 'FULL_MARKET'
-                           and cycle.scope_key = 'ALL'
-                           and cycle.phase in (
-                               'PORTFOLIO_SETTLED', 'OVERNIGHT_CASH_APPLIED', 'CORPORATE_CASH_APPLIED',
-                               'REPORTS_AGGREGATED', 'PREOPEN_SECURITY_TRANSFORMS_APPLIED',
-                               'MARKET_DATA_PREPARED', 'AUTO_MARKET_PREPARED', 'READY_TO_OPEN', 'COMPLETED'
-                           )
-                       )
+                       sum(snapshot.post_cancel_cash + snapshot.subscription_reserved_cash + snapshot.holding_market_value) as total_asset,
+                       sum(snapshot.post_cancel_cash) as cash_balance,
+                       sum(snapshot.holding_market_value) as market_value,
+                       sum(snapshot.subscription_reserved_cash) as pending_subscription_asset,
+                       sum(snapshot.holding_quantity) as holding_quantity,
+                       sum(snapshot.reserved_sell_quantity) as reserved_sell_quantity,
+                       sum(snapshot.holding_position_count) as holding_position_count
+                  from stock_close_account_snapshot snapshot
+                  join stock_post_close_cycle cycle on cycle.id = snapshot.close_cycle_id
+                 where cycle.scope_type = 'FULL_MARKET'
+                   and cycle.scope_key = 'ALL'
+                   and cycle.cycle_kind = 'TRADING'
+                   and cycle.phase in (
+                       'PORTFOLIO_SETTLED', 'OVERNIGHT_CASH_APPLIED', 'CORPORATE_CASH_APPLIED',
+                       'REPORTS_AGGREGATED', 'PREOPEN_SECURITY_TRANSFORMS_APPLIED',
+                       'MARKET_DATA_PREPARED', 'AUTO_MARKET_PREPARED', 'READY_TO_OPEN', 'COMPLETED'
                    )
-                 group by ps.snapshot_date
-                 order by ps.snapshot_date desc
+                   and snapshot.account_status = 'ACTIVE'
+                   and snapshot.user_key is not null
+                   and snapshot.reconciliation_status = 'MATCHED'
+                   and (? = 'ALL' or snapshot.participant_category = ?)
+                 group by cycle.business_date
+                 order by cycle.business_date desc
                  limit ? offset ?
                 """)
-                .params(pageRequest.querySize(), pageRequest.offset())
+                .params(
+                        normalizedParticipantScope.name(),
+                        normalizedParticipantScope.name(),
+                        pageRequest.querySize(),
+                        pageRequest.offset()
+                )
                 .query((rs, rowNum) -> new TotalAssetDailyAggregate(
                         rs.getObject("snapshot_date", LocalDate.class),
                         rs.getLong("account_count"),
@@ -563,8 +598,26 @@ public class AdminFlowQueryService {
                         rs.getObject("holding_position_count", Long.class)
                 ))
                 .list();
+        LocalDate roleFrozenFrom = jdbcClient.sql("""
+                select min(cycle.business_date)
+                  from stock_close_account_snapshot snapshot
+                  join stock_post_close_cycle cycle on cycle.id = snapshot.close_cycle_id
+                 where cycle.scope_type = 'FULL_MARKET'
+                   and cycle.scope_key = 'ALL'
+                   and cycle.cycle_kind = 'TRADING'
+                   and snapshot.account_status = 'ACTIVE'
+                   and snapshot.user_key is not null
+                   and snapshot.reconciliation_status = 'MATCHED'
+                   and (? = 'ALL' or snapshot.participant_category = ?)
+                """)
+                .params(normalizedParticipantScope.name(), normalizedParticipantScope.name())
+                .query(LocalDate.class)
+                .optional()
+                .orElse(null);
         List<AdminTotalAssetHistoryPointResponse> content = toTotalAssetHistoryPoints(aggregates);
         return new AdminTotalAssetHistoryPageResponse(
+                normalizedParticipantScope,
+                roleFrozenFrom,
                 content,
                 toTotalAssetPeriodSummary(content),
                 pageRequest.page(),
@@ -655,20 +708,32 @@ public class AdminFlowQueryService {
         return holdingQuantity - reservedSellQuantity;
     }
 
-    private AdminFundFlowSummaryResponse loadAdminFundFlowSummary(AdminFundFlowScope scope) {
+    private AdminFundFlowBreakdownResponse loadAdminFundFlowBreakdown(AdminFundFlowScope scope) {
+        LocalDateTime generatedAt = simulationClockService.currentMarketDateTime();
+        List<AdminParticipantFundFlowResponse> categories;
         if (scope == AdminFundFlowScope.ALL) {
-            return jdbcClient.sql(FUND_FLOW_SUMMARY_SQL)
-                    .query((rs, rowNum) -> AdminFlowResponseMapper.toFundFlowSummary(rs))
-                    .single();
+            categories = jdbcClient.sql(FUND_FLOW_BREAKDOWN_SQL)
+                    .query((rs, rowNum) -> new AdminParticipantFundFlowResponse(
+                            AdminParticipantCategory.valueOf(rs.getString("participant_category")),
+                            AdminFlowResponseMapper.toFundFlowSummary(rs)
+                    ))
+                    .list();
+        } else {
+            LocalDateTime rangeStart = todayStart();
+            categories = jdbcClient.sql(FUND_FLOW_BREAKDOWN_RECENT_SIMULATION_DAY_SQL)
+                    .param(rangeStart)
+                    .param(generatedAt)
+                    .param(rangeStart.toLocalDate())
+                    .query((rs, rowNum) -> new AdminParticipantFundFlowResponse(
+                            AdminParticipantCategory.valueOf(rs.getString("participant_category")),
+                            AdminFlowResponseMapper.toFundFlowSummary(rs)
+                    ))
+                    .list();
         }
-        LocalDateTime rangeStart = todayStart();
-        LocalDateTime rangeEnd = simulationClockService.currentMarketDateTime();
-        return jdbcClient.sql(FUND_FLOW_SUMMARY_RECENT_SIMULATION_DAY_SQL)
-                .param(rangeStart)
-                .param(rangeEnd)
-                .param(rangeStart.toLocalDate())
-                .query((rs, rowNum) -> AdminFlowResponseMapper.toFundFlowSummary(rs))
-                .single();
+        AdminFundFlowSummaryResponse total = categories.stream()
+                .map(AdminParticipantFundFlowResponse::summary)
+                .reduce(AdminFundFlowSummaryResponse.zero(), AdminFundFlowSummaryResponse::plus);
+        return new AdminFundFlowBreakdownResponse(scope, generatedAt, total, List.copyOf(categories));
     }
 
     private AdminOrderFlowSummaryResponse loadAdminOrderFlowSummary(LocalDateTime todayStart, LocalDateTime todayEnd) {

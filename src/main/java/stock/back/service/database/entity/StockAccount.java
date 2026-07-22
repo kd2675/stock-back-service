@@ -46,6 +46,10 @@ public class StockAccount {
     @Column(name = "status", nullable = false, length = 20, columnDefinition = "varchar(20) default 'ACTIVE'")
     private StockAccountStatus status;
 
+    @Enumerated(EnumType.STRING)
+    @Column(name = "participant_category", nullable = false, length = 30, columnDefinition = "varchar(30) default 'MANUAL_PARTICIPANT'")
+    private StockAccountParticipantCategory participantCategory;
+
     @Column(name = "cash_balance", nullable = false, precision = 19, scale = 2)
     private BigDecimal cashBalance;
 
@@ -93,6 +97,7 @@ public class StockAccount {
         account.accountCode = accountCode;
         account.recoveryCodeHash = recoveryCodeHash;
         account.status = StockAccountStatus.ACTIVE;
+        account.participantCategory = StockAccountParticipantCategory.MANUAL_PARTICIPANT;
         account.cashBalance = BigDecimal.ZERO;
         account.createdAt = openedAt == null ? LocalDateTime.now() : openedAt;
         account.updatedAt = account.createdAt;
@@ -106,6 +111,17 @@ public class StockAccount {
 
     public boolean isDetached() {
         return status == StockAccountStatus.DETACHED;
+    }
+
+    public void assignParticipantCategory(
+            StockAccountParticipantCategory participantCategory,
+            LocalDateTime changedAt
+    ) {
+        if (participantCategory == null) {
+            throw new IllegalArgumentException("Participant category is required");
+        }
+        this.participantCategory = participantCategory;
+        this.updatedAt = changedAt == null ? LocalDateTime.now() : changedAt;
     }
 
     public void assignAccountCodeIfMissing(String accountCode) {

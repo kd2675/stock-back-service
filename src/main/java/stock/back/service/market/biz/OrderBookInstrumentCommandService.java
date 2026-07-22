@@ -166,9 +166,9 @@ public class OrderBookInstrumentCommandService {
         jdbcTemplate.update(
                 """
                 insert into stock_account(
-                    user_key, status, cash_balance, created_at, updated_at
+                    user_key, status, participant_category, cash_balance, created_at, updated_at
                 )
-                values (?, 'ACTIVE', 0.00, ?, ?)
+                values (?, 'ACTIVE', 'LISTING_UNDERWRITER', 0.00, ?, ?)
                 """,
                 listingUserKey,
                 now,

@@ -8,6 +8,7 @@ import stock.back.service.database.entity.AutoParticipantProfileType;
 import stock.back.service.database.entity.RecurringCashIntervalUnit;
 import stock.back.service.database.entity.StockAccount;
 import stock.back.service.database.entity.StockAccountCashFlow;
+import stock.back.service.database.entity.StockAccountParticipantCategory;
 import stock.back.service.database.entity.StockAccountStatus;
 import stock.back.service.database.entity.StockAutoParticipant;
 import stock.back.service.database.repository.StockAccountCashFlowRepository;
@@ -117,13 +118,15 @@ public class AutoParticipantManagementService {
         BigDecimal initialCashAmount = normalizeInitialCashAmount(request == null ? null : request.initialCashAmount());
         boolean shouldCreateAccount = Boolean.TRUE.equals(request == null ? null : request.createAccount())
                 || initialCashAmount.compareTo(BigDecimal.ZERO) > 0;
-        if (!shouldCreateAccount) {
+        boolean accountExists = stockAccountRepository.findByUserKey(userKey).isPresent();
+        if (!shouldCreateAccount && !accountExists) {
             return null;
         }
 
         marketLedgerFreezeGuard.acquireMutationPermit("auto-participant account funding");
         LocalDateTime now = simulationClockService.currentMarketDateTime();
         StockAccount account = findOrCreateActiveAccount(userKey, now);
+        account.assignParticipantCategory(StockAccountParticipantCategory.AUTO_PARTICIPANT, now);
         if (initialCashAmount.compareTo(BigDecimal.ZERO) > 0) {
             account.depositCash(initialCashAmount, now);
         }

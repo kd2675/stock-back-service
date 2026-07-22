@@ -106,6 +106,7 @@ CREATE TABLE IF NOT EXISTS stock_account (
   account_code VARCHAR(32) NULL,
   recovery_code_hash VARCHAR(128) NULL,
   status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE',
+  participant_category VARCHAR(30) NOT NULL DEFAULT 'MANUAL_PARTICIPANT',
   cash_balance DECIMAL(19,2) NOT NULL,
   created_at DATETIME NOT NULL,
   updated_at DATETIME NOT NULL,
@@ -119,8 +120,17 @@ CREATE TABLE IF NOT EXISTS stock_account (
   UNIQUE KEY uk_stock_account_account_code (account_code),
   KEY idx_stock_account_status_purge (status, purge_after),
   KEY idx_stock_account_status_id (status, id),
+  KEY idx_stock_account_status_participant_id (status, participant_category, id),
   CONSTRAINT chk_stock_account_cash_non_negative CHECK (cash_balance >= 0),
   CONSTRAINT chk_stock_account_status_valid CHECK (CASE `status` WHEN 'ACTIVE' THEN 1 WHEN 'DETACHED' THEN 1 WHEN 'CLOSED' THEN 1 ELSE 0 END = 1),
+  CONSTRAINT chk_stock_account_participant_category CHECK (
+    CASE `participant_category`
+      WHEN 'MANUAL_PARTICIPANT' THEN 1
+      WHEN 'AUTO_PARTICIPANT' THEN 1
+      WHEN 'LISTING_UNDERWRITER' THEN 1
+      ELSE 0
+    END = 1
+  ),
   CONSTRAINT chk_stock_account_detached_user_scope CHECK (status <> 'DETACHED' OR user_key IS NULL),
   CONSTRAINT chk_stock_account_recovery_window CHECK (
     recovery_expires_at IS NULL OR purge_after IS NULL OR purge_after >= recovery_expires_at

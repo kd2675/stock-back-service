@@ -4,7 +4,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 public record AdminFlowOverviewResponse(
-        AdminFundFlowSummaryResponse fundFlow,
+        AdminFundFlowBreakdownResponse fundFlow,
         AdminOrderFlowSummaryResponse orderFlow,
         AdminCorporateActionFlowSummaryResponse corporateActionFlow,
         AdminInvestorFlowSummaryResponse investorFlow,

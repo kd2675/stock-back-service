@@ -6,6 +6,7 @@ import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import stock.back.service.database.repository.StockOrderBookInstrumentRepository;
 import stock.back.service.market.vo.AdminFundFlowScope;
 import stock.back.service.market.vo.AdminInvestorFlowSourceStatus;
+import stock.back.service.market.vo.AdminParticipantScope;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -21,15 +22,23 @@ class AdminFlowQueryServiceTest {
     private static final LocalDateTime SIMULATION_NOW = LocalDateTime.of(2026, 7, 3, 10, 0);
 
     @Test
-    void getAdminFundFlowSummary_recentSimulationDay_readsScopedAggregateWithJdbcClient() {
+    void getAdminFundFlowBreakdown_recentSimulationDay_readsAllRolesWithOneJdbcQuery() {
         JdbcTemplate jdbcTemplate = createJdbcTemplate("admin_flow_query_service_fund_summary_test");
         AdminFlowQueryService service = createService(jdbcTemplate);
         seedFundFlow(jdbcTemplate);
         insertCashFlowAt(jdbcTemplate, 5L, 1L, "DEPOSIT", "1000.00", "ADMIN_DEPOSIT", SIMULATION_DAY_START.minusMinutes(1));
         insertExecutionAt(jdbcTemplate, 5L, 1L, "SELL", "1000.00", "1.00", "2.00", "1000.00", SIMULATION_DAY_START.minusMinutes(1));
 
-        var summary = service.getAdminFundFlowSummary();
+        var breakdown = service.getAdminFundFlowBreakdown();
+        var summary = breakdown.categories().getFirst().summary();
 
+        assertThat(breakdown.categories()).extracting(category -> category.participantCategory().name())
+                .containsExactly("MANUAL_PARTICIPANT", "AUTO_PARTICIPANT", "LISTING_UNDERWRITER");
+        assertThat(breakdown.total().activeAccountCount()).isEqualTo(3L);
+        assertThat(breakdown.total().totalAsset()).isEqualByComparingTo(new BigDecimal("2083328.00"));
+        assertThat(breakdown.categories().get(1).summary().activeAccountCount()).isZero();
+        assertThat(breakdown.categories().get(1).summary().totalAsset()).isZero();
+        assertThat(breakdown.categories().get(2).summary().activeAccountCount()).isEqualTo(1L);
         assertThat(summary.activeAccountCount()).isEqualTo(2L);
         assertThat(summary.totalCashBalance()).isEqualByComparingTo(new BigDecimal("2880.00"));
         assertThat(summary.totalReservedBuyCash()).isEqualByComparingTo(new BigDecimal("270.00"));
@@ -53,14 +62,14 @@ class AdminFlowQueryServiceTest {
     }
 
     @Test
-    void getAdminFundFlowSummary_all_readsFullAggregateWithJdbcClient() {
+    void getAdminFundFlowBreakdown_all_readsFullAggregateWithJdbcClient() {
         JdbcTemplate jdbcTemplate = createJdbcTemplate("admin_flow_query_service_fund_summary_all_test");
         AdminFlowQueryService service = createService(jdbcTemplate);
         seedFundFlow(jdbcTemplate);
         insertCashFlowAt(jdbcTemplate, 5L, 1L, "DEPOSIT", "1000.00", "ADMIN_DEPOSIT", SIMULATION_DAY_START.minusMinutes(1));
         insertExecutionAt(jdbcTemplate, 5L, 1L, "SELL", "1000.00", "1.00", "2.00", "1000.00", SIMULATION_DAY_START.minusMinutes(1));
 
-        var summary = service.getAdminFundFlowSummary(AdminFundFlowScope.ALL);
+        var summary = service.getAdminFundFlowBreakdown(AdminFundFlowScope.ALL).total();
 
         assertThat(summary.netExternalCashFlow()).isEqualByComparingTo(new BigDecimal("1380.00"));
         assertThat(summary.sellNetAmount()).isEqualByComparingTo(new BigDecimal("1900.00"));
@@ -210,40 +219,48 @@ class AdminFlowQueryServiceTest {
     }
 
     @Test
-    void getAdminTotalAssetHistory_readsSevenSettlementDaysWithChanges() {
+    void getAdminTotalAssetHistory_readsSevenFrozenSettlementDaysAndFiltersRole() {
         JdbcTemplate jdbcTemplate = createJdbcTemplate("admin_flow_query_service_total_asset_history_test");
         AdminFlowQueryService service = createService(jdbcTemplate);
-        insertAccount(jdbcTemplate, 1L, "history-active-user", "ACTIVE", "0.00");
-        insertAccount(jdbcTemplate, 2L, "history-closed-user", "CLOSED", "0.00");
-        insertAccount(jdbcTemplate, 3L, "stock-listing-HISTORY", "ACTIVE", "0.00");
         for (int dayOffset = 0; dayOffset < 10; dayOffset++) {
             LocalDate snapshotDate = SIMULATION_DAY_START.toLocalDate().minusDays(dayOffset);
-            insertPortfolioSnapshot(jdbcTemplate, dayOffset * 2L + 1L, 1L, snapshotDate, 1000 - dayOffset * 10L);
-            insertPortfolioSnapshot(jdbcTemplate, dayOffset * 2L + 2L, 2L, snapshotDate, 2000 - dayOffset * 20L);
+            long cycleId = 100L + dayOffset;
+            insertPostCloseCycle(jdbcTemplate, cycleId, snapshotDate, "PORTFOLIO_SETTLED");
+            insertCloseAccountSnapshot(jdbcTemplate, dayOffset * 3L + 1L, cycleId, 1L, "manual-user", "MANUAL_PARTICIPANT", String.valueOf(500 - dayOffset * 5L), "0", String.valueOf(500 - dayOffset * 5L), 10L, 2L, 1L);
+            insertCloseAccountSnapshot(jdbcTemplate, dayOffset * 3L + 2L, cycleId, 2L, "auto-user", "AUTO_PARTICIPANT", String.valueOf(1000 - dayOffset * 10L), "0", String.valueOf(1000 - dayOffset * 10L), 20L, 3L, 2L);
+            insertCloseAccountSnapshot(jdbcTemplate, dayOffset * 3L + 3L, cycleId, 3L, "stock-listing-HISTORY", "LISTING_UNDERWRITER", String.valueOf(1500 - dayOffset * 15L), "0", String.valueOf(1500 - dayOffset * 15L), 30L, 4L, 3L);
         }
-        insertPortfolioSnapshot(jdbcTemplate, 100L, 3L, SIMULATION_DAY_START.toLocalDate(), 999999L);
 
         var firstPage = service.getAdminTotalAssetHistory(0);
 
+        assertThat(firstPage.participantScope()).isEqualTo(AdminParticipantScope.ALL);
+        assertThat(firstPage.roleFrozenFrom()).isEqualTo(LocalDate.of(2026, 6, 24));
         assertThat(firstPage.content()).hasSize(7);
         assertThat(firstPage.totalElements()).isEqualTo(10L);
         assertThat(firstPage.totalPages()).isEqualTo(2);
         assertThat(firstPage.hasPrevious()).isFalse();
         assertThat(firstPage.hasNext()).isTrue();
         assertThat(firstPage.content().getFirst().snapshotDate()).isEqualTo(LocalDate.of(2026, 7, 3));
-        assertThat(firstPage.content().getFirst().totalAsset()).isEqualByComparingTo("3000.00");
+        assertThat(firstPage.content().getFirst().accountCount()).isEqualTo(3L);
+        assertThat(firstPage.content().getFirst().totalAsset()).isEqualByComparingTo("6000.00");
         assertThat(firstPage.content().getFirst().pendingSubscriptionAsset()).isZero();
-        assertThat(firstPage.content().getFirst().holdingQuantity()).isEqualTo(30L);
-        assertThat(firstPage.content().getFirst().reservedSellQuantity()).isEqualTo(5L);
-        assertThat(firstPage.content().getFirst().availableHoldingQuantity()).isEqualTo(25L);
-        assertThat(firstPage.content().getFirst().holdingPositionCount()).isEqualTo(3L);
-        assertThat(firstPage.content().getFirst().changeAmount()).isEqualByComparingTo("30.00");
+        assertThat(firstPage.content().getFirst().holdingQuantity()).isEqualTo(60L);
+        assertThat(firstPage.content().getFirst().reservedSellQuantity()).isEqualTo(9L);
+        assertThat(firstPage.content().getFirst().availableHoldingQuantity()).isEqualTo(51L);
+        assertThat(firstPage.content().getFirst().holdingPositionCount()).isEqualTo(6L);
+        assertThat(firstPage.content().getFirst().changeAmount()).isEqualByComparingTo("60.00");
         assertThat(firstPage.content().getFirst().changeRate()).isEqualByComparingTo("1.0101");
         assertThat(firstPage.summary().rangeStart()).isEqualTo(LocalDate.of(2026, 6, 27));
         assertThat(firstPage.summary().rangeEnd()).isEqualTo(LocalDate.of(2026, 7, 3));
-        assertThat(firstPage.summary().changeAmount()).isEqualByComparingTo("180.00");
+        assertThat(firstPage.summary().changeAmount()).isEqualByComparingTo("360.00");
         assertThat(firstPage.summary().changeRate()).isEqualByComparingTo("6.3830");
-        assertThat(firstPage.summary().averageTotalAsset()).isEqualByComparingTo("2910.00");
+        assertThat(firstPage.summary().averageTotalAsset()).isEqualByComparingTo("5820.00");
+
+        var autoPage = service.getAdminTotalAssetHistory(0, AdminParticipantScope.AUTO_PARTICIPANT);
+
+        assertThat(autoPage.participantScope()).isEqualTo(AdminParticipantScope.AUTO_PARTICIPANT);
+        assertThat(autoPage.content().getFirst().accountCount()).isEqualTo(1L);
+        assertThat(autoPage.content().getFirst().totalAsset()).isEqualByComparingTo("2000.00");
 
         var secondPage = service.getAdminTotalAssetHistory(1);
 
@@ -255,31 +272,20 @@ class AdminFlowQueryServiceTest {
     }
 
     @Test
-    void getAdminTotalAssetHistory_whenAnyDailyHoldingMetricIsMissing_returnsUnknownHoldingMetrics() {
-        JdbcTemplate jdbcTemplate = createJdbcTemplate("admin_flow_query_service_total_asset_history_partial_metrics_test");
+    void getAdminTotalAssetHistory_usesFrozenRoleAfterCurrentAccountRoleChanges() {
+        JdbcTemplate jdbcTemplate = createJdbcTemplate("admin_flow_query_service_total_asset_history_frozen_role_test");
         AdminFlowQueryService service = createService(jdbcTemplate);
         LocalDate snapshotDate = SIMULATION_DAY_START.toLocalDate();
-        insertAccount(jdbcTemplate, 1L, "history-user-1", "ACTIVE", "0.00");
-        insertAccount(jdbcTemplate, 2L, "history-user-2", "ACTIVE", "0.00");
-        insertPortfolioSnapshot(jdbcTemplate, 1L, 1L, snapshotDate, 1000L);
-        jdbcTemplate.update(
-                """
-                insert into portfolio_snapshot(
-                    id, account_id, snapshot_date, total_asset, cash_balance, market_value,
-                    holding_quantity, reserved_sell_quantity, holding_position_count, return_rate, created_at
-                )
-                values (2, 2, ?, 2000, 1000, 1000, null, null, null, 0, ?)
-                """,
-                snapshotDate,
-                snapshotDate.atTime(18, 0)
-        );
+        insertPostCloseCycle(jdbcTemplate, 10L, snapshotDate, "PORTFOLIO_SETTLED");
+        insertCloseAccountSnapshot(jdbcTemplate, 1L, 10L, 1L, "auto-at-close", "AUTO_PARTICIPANT", "600", "0", "400", 10L, 2L, 1L);
+        insertAccount(jdbcTemplate, 1L, "auto-at-close", "ACTIVE", "0.00", "MANUAL_PARTICIPANT");
 
-        var point = service.getAdminTotalAssetHistory(0).content().getFirst();
+        var autoPage = service.getAdminTotalAssetHistory(0, AdminParticipantScope.AUTO_PARTICIPANT);
+        var manualPage = service.getAdminTotalAssetHistory(0, AdminParticipantScope.MANUAL_PARTICIPANT);
 
-        assertThat(point.holdingQuantity()).isNull();
-        assertThat(point.reservedSellQuantity()).isNull();
-        assertThat(point.availableHoldingQuantity()).isNull();
-        assertThat(point.holdingPositionCount()).isNull();
+        assertThat(autoPage.content()).hasSize(1);
+        assertThat(autoPage.content().getFirst().totalAsset()).isEqualByComparingTo("1000.00");
+        assertThat(manualPage.content()).isEmpty();
     }
 
     @Test
@@ -288,10 +294,10 @@ class AdminFlowQueryServiceTest {
         AdminFlowQueryService service = createService(jdbcTemplate);
         LocalDate completedDate = SIMULATION_DAY_START.toLocalDate().minusDays(1);
         LocalDate partialDate = SIMULATION_DAY_START.toLocalDate();
-        insertAccount(jdbcTemplate, 1L, "history-user", "ACTIVE", "0.00");
-        insertPortfolioSnapshot(jdbcTemplate, 1L, 1L, completedDate, 1000L);
-        insertPostCloseCycle(jdbcTemplate, 10L, "LEDGER_FROZEN");
-        insertCyclePortfolioSnapshot(jdbcTemplate, 2L, 10L, 100L, 1L, partialDate, 2000L);
+        insertPostCloseCycle(jdbcTemplate, 9L, completedDate, "PORTFOLIO_SETTLED");
+        insertCloseAccountSnapshot(jdbcTemplate, 1L, 9L, 1L, "history-user", "MANUAL_PARTICIPANT", "500", "0", "500", 10L, 2L, 1L);
+        insertPostCloseCycle(jdbcTemplate, 10L, partialDate, "LEDGER_FROZEN");
+        insertCloseAccountSnapshot(jdbcTemplate, 2L, 10L, 1L, "history-user", "MANUAL_PARTICIPANT", "1000", "0", "1000", 10L, 2L, 1L);
 
         var page = service.getAdminTotalAssetHistory(0);
 
@@ -303,9 +309,8 @@ class AdminFlowQueryServiceTest {
         JdbcTemplate jdbcTemplate = createJdbcTemplate("admin_flow_query_service_total_asset_settled_cycle_test");
         AdminFlowQueryService service = createService(jdbcTemplate);
         LocalDate snapshotDate = SIMULATION_DAY_START.toLocalDate();
-        insertAccount(jdbcTemplate, 1L, "history-user", "ACTIVE", "0.00");
         insertPostCloseCycle(jdbcTemplate, 10L, "PORTFOLIO_SETTLED");
-        insertCyclePortfolioSnapshot(jdbcTemplate, 1L, 10L, 100L, 1L, snapshotDate, 2000L);
+        insertCloseAccountSnapshot(jdbcTemplate, 1L, 10L, 1L, "history-user", "MANUAL_PARTICIPANT", "1000", "0", "1000", 10L, 2L, 1L);
 
         var page = service.getAdminTotalAssetHistory(0);
 
@@ -317,18 +322,8 @@ class AdminFlowQueryServiceTest {
         JdbcTemplate jdbcTemplate = createJdbcTemplate("admin_flow_query_service_total_asset_components_test");
         AdminFlowQueryService service = createService(jdbcTemplate);
         LocalDate snapshotDate = SIMULATION_DAY_START.toLocalDate();
-        insertAccount(jdbcTemplate, 1L, "history-user", "ACTIVE", "0.00");
         insertPostCloseCycle(jdbcTemplate, 10L, "PORTFOLIO_SETTLED");
-        insertCyclePortfolioSnapshot(jdbcTemplate, 1L, 10L, 100L, 1L, snapshotDate, 1000L);
-        jdbcTemplate.update(
-                """
-                update portfolio_snapshot
-                   set cash_balance = 750,
-                       pending_subscription_asset = 50,
-                       market_value = 200
-                 where id = 1
-                """
-        );
+        insertCloseAccountSnapshot(jdbcTemplate, 1L, 10L, 1L, "history-user", "MANUAL_PARTICIPANT", "750", "50", "200", 10L, 2L, 1L);
 
         var point = service.getAdminTotalAssetHistory(0).content().getFirst();
 
@@ -362,8 +357,8 @@ class AdminFlowQueryServiceTest {
         JdbcTemplate jdbcTemplate = createJdbcTemplate("admin_flow_query_service_investor_flow_test");
         AdminFlowQueryService service = createService(jdbcTemplate);
         insertAccount(jdbcTemplate, 1L, "manual-user", "ACTIVE", "1000.00");
-        insertAccount(jdbcTemplate, 2L, "auto-user", "ACTIVE", "1000.00");
-        insertAccount(jdbcTemplate, 3L, "stock-listing-STOCK001", "ACTIVE", "1000.00");
+        insertAccount(jdbcTemplate, 2L, "auto-user", "ACTIVE", "1000.00", "AUTO_PARTICIPANT");
+        insertAccount(jdbcTemplate, 3L, "stock-listing-STOCK001", "ACTIVE", "1000.00", "LISTING_UNDERWRITER");
         jdbcTemplate.update("insert into stock_auto_participant(user_key) values ('auto-user')");
         insertExecutionDaySummary(jdbcTemplate, 1L, 100L, 20L, "10000.00", "2000.00", SIMULATION_NOW.minusSeconds(7));
         insertExecutionDaySummary(jdbcTemplate, 2L, 30L, 60L, "3000.00", "6000.00", SIMULATION_NOW.minusSeconds(5));
@@ -412,8 +407,8 @@ class AdminFlowQueryServiceTest {
     void getAdminInvestorFlowHistory_returnsSevenSimulationDaysWithBalancedCategoryNetQuantities() {
         JdbcTemplate jdbcTemplate = createJdbcTemplate("admin_investor_flow_history_test");
         AdminFlowQueryService service = createService(jdbcTemplate);
-        insertAccount(jdbcTemplate, 1L, "auto-user", "ACTIVE", "1000.00");
-        insertAccount(jdbcTemplate, 2L, "stock-listing-STOCK001", "ACTIVE", "1000.00");
+        insertAccount(jdbcTemplate, 1L, "auto-user", "ACTIVE", "1000.00", "AUTO_PARTICIPANT");
+        insertAccount(jdbcTemplate, 2L, "stock-listing-STOCK001", "ACTIVE", "1000.00", "LISTING_UNDERWRITER");
         jdbcTemplate.update("insert into stock_auto_participant(user_key) values ('auto-user')");
         insertExecutionDaySummary(
                 jdbcTemplate,
@@ -481,7 +476,7 @@ class AdminFlowQueryServiceTest {
         JdbcTemplate jdbcTemplate = createJdbcTemplate("admin_investor_flow_frozen_role_test");
         AdminFlowQueryService service = createService(jdbcTemplate);
         LocalDate closedDate = SIMULATION_DAY_START.minusDays(1).toLocalDate();
-        insertAccount(jdbcTemplate, 99L, "removed-auto-user", "ACTIVE", "1000.00");
+        insertAccount(jdbcTemplate, 99L, "removed-auto-user", "ACTIVE", "1000.00", "AUTO_PARTICIPANT");
         jdbcTemplate.update("insert into stock_auto_participant(user_key) values ('removed-auto-user')");
         insertInvestorFlowCycle(jdbcTemplate, 110L, closedDate, "TRADING", "REPORTS_AGGREGATED", "PENDING", "COMPLETED");
         insertInvestorFlowSnapshot(jdbcTemplate, 11L, 110L, "STOCK001", closedDate, 99L, "AUTO_PARTICIPANT", 25L, 10L, "2500.00", "1000.00", "-1497.00");
@@ -546,6 +541,7 @@ class AdminFlowQueryServiceTest {
                     id bigint primary key,
                     user_key varchar(100),
                     status varchar(30) not null,
+                    participant_category varchar(30) not null default 'MANUAL_PARTICIPANT',
                     cash_balance decimal(19, 2) not null
                 )
                 """);
@@ -745,22 +741,29 @@ class AdminFlowQueryServiceTest {
                 )
                 """);
         jdbcTemplate.execute("""
-                create table portfolio_snapshot (
+                create table stock_close_account_snapshot (
                     id bigint primary key,
-                    close_cycle_id bigint,
-                    close_run_id bigint,
+                    close_cycle_id bigint not null,
+                    close_run_id bigint not null,
                     account_id bigint not null,
-                    snapshot_date date not null,
-                    total_asset decimal(19, 2) not null,
-                    cash_balance decimal(19, 2) not null,
-                    pending_subscription_asset decimal(19, 2) not null default 0,
-                    market_value decimal(19, 2) not null,
-                    holding_quantity bigint,
-                    reserved_sell_quantity bigint,
-                    holding_position_count bigint,
-                    return_rate decimal(9, 4) not null,
+                    user_key varchar(100),
+                    account_status varchar(20) not null,
+                    participant_category varchar(30) not null,
+                    settlement_target boolean not null,
+                    pre_cancel_cash decimal(19, 2) not null,
+                    pre_cancel_order_reserved_cash decimal(19, 2) not null default 0,
+                    subscription_reserved_cash decimal(19, 2) not null default 0,
+                    post_cancel_cash decimal(19, 2),
+                    external_net_cash_flow decimal(19, 2) not null default 0,
+                    cash_flow_watermark_id bigint not null default 0,
+                    holding_market_value decimal(19, 2) not null default 0,
+                    holding_quantity bigint not null default 0,
+                    reserved_sell_quantity bigint not null default 0,
+                    holding_position_count bigint not null default 0,
+                    reconciliation_status varchar(20) not null,
+                    snapshot_at timestamp not null,
                     created_at timestamp not null,
-                    unique (account_id, snapshot_date)
+                    unique (close_cycle_id, account_id)
                 )
                 """);
         return jdbcTemplate;
@@ -770,7 +773,7 @@ class AdminFlowQueryServiceTest {
         insertAccount(jdbcTemplate, 1L, "active-user-1", "ACTIVE", "880.00");
         insertAccount(jdbcTemplate, 2L, "active-user-2", "ACTIVE", "2000.00");
         insertAccount(jdbcTemplate, 3L, "closed-user", "CLOSED", "9999.00");
-        insertAccount(jdbcTemplate, 4L, "stock-listing-STOCK001", "ACTIVE", "999999.00");
+        insertAccount(jdbcTemplate, 4L, "stock-listing-STOCK001", "ACTIVE", "999999.00", "LISTING_UNDERWRITER");
         insertOrder(jdbcTemplate, 1L, 1L, "BUY", "PENDING", "100.00");
         insertOrder(jdbcTemplate, 2L, 2L, "BUY", "PARTIALLY_FILLED", "50.00");
         insertOrder(jdbcTemplate, 3L, 1L, "SELL", "PENDING", "0.00");
@@ -817,12 +820,24 @@ class AdminFlowQueryServiceTest {
     }
 
     private void insertAccount(JdbcTemplate jdbcTemplate, long id, String userKey, String status, String cashBalance) {
+        insertAccount(jdbcTemplate, id, userKey, status, cashBalance, "MANUAL_PARTICIPANT");
+    }
+
+    private void insertAccount(
+            JdbcTemplate jdbcTemplate,
+            long id,
+            String userKey,
+            String status,
+            String cashBalance,
+            String participantCategory
+    ) {
         jdbcTemplate.update(
-                "insert into stock_account(id, user_key, status, cash_balance) values (?, ?, ?, ?)",
+                "insert into stock_account(id, user_key, status, cash_balance, participant_category) values (?, ?, ?, ?, ?)",
                 id,
                 userKey,
                 status,
-                new BigDecimal(cashBalance)
+                new BigDecimal(cashBalance),
+                participantCategory
         );
     }
 
@@ -885,37 +900,11 @@ class AdminFlowQueryServiceTest {
         );
     }
 
-    private void insertPortfolioSnapshot(
-            JdbcTemplate jdbcTemplate,
-            long id,
-            long accountId,
-            LocalDate snapshotDate,
-            long totalAsset
-    ) {
-        BigDecimal totalAssetAmount = BigDecimal.valueOf(totalAsset).setScale(2);
-        BigDecimal cashBalance = totalAssetAmount.divide(BigDecimal.valueOf(2));
-        jdbcTemplate.update(
-                """
-                insert into portfolio_snapshot(
-                    id, account_id, snapshot_date, total_asset, cash_balance, market_value,
-                    holding_quantity, reserved_sell_quantity, holding_position_count, return_rate, created_at
-                )
-                values (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
-                """,
-                id,
-                accountId,
-                snapshotDate,
-                totalAssetAmount,
-                cashBalance,
-                totalAssetAmount.subtract(cashBalance),
-                accountId == 1L ? 10L : 20L,
-                accountId == 1L ? 2L : 3L,
-                accountId == 1L ? 1L : 2L,
-                snapshotDate.atTime(18, 0)
-        );
+    private void insertPostCloseCycle(JdbcTemplate jdbcTemplate, long cycleId, String phase) {
+        insertPostCloseCycle(jdbcTemplate, cycleId, SIMULATION_DAY_START.toLocalDate(), phase);
     }
 
-    private void insertPostCloseCycle(JdbcTemplate jdbcTemplate, long cycleId, String phase) {
+    private void insertPostCloseCycle(JdbcTemplate jdbcTemplate, long cycleId, LocalDate businessDate, String phase) {
         jdbcTemplate.update(
                 """
                 insert into stock_post_close_cycle(
@@ -924,8 +913,51 @@ class AdminFlowQueryServiceTest {
                 values (?, ?, 'FULL_MARKET', 'ALL', 'TRADING', ?, 'PENDING', ?)
                 """,
                 cycleId,
-                SIMULATION_DAY_START.toLocalDate(),
+                businessDate,
                 phase,
+                SIMULATION_NOW
+        );
+    }
+
+    private void insertCloseAccountSnapshot(
+            JdbcTemplate jdbcTemplate,
+            long id,
+            long cycleId,
+            long accountId,
+            String userKey,
+            String participantCategory,
+            String postCancelCash,
+            String subscriptionReservedCash,
+            String holdingMarketValue,
+            long holdingQuantity,
+            long reservedSellQuantity,
+            long holdingPositionCount
+    ) {
+        jdbcTemplate.update(
+                """
+                insert into stock_close_account_snapshot(
+                    id, close_cycle_id, close_run_id, account_id, user_key, account_status,
+                    participant_category, settlement_target, pre_cancel_cash,
+                    subscription_reserved_cash, post_cancel_cash, holding_market_value,
+                    holding_quantity, reserved_sell_quantity, holding_position_count,
+                    reconciliation_status, snapshot_at, created_at
+                )
+                values (?, ?, ?, ?, ?, 'ACTIVE', ?, true, ?, ?, ?, ?, ?, ?, ?, 'MATCHED', ?, ?)
+                """,
+                id,
+                cycleId,
+                cycleId + 1000,
+                accountId,
+                userKey,
+                participantCategory,
+                new BigDecimal(postCancelCash),
+                new BigDecimal(subscriptionReservedCash),
+                new BigDecimal(postCancelCash),
+                new BigDecimal(holdingMarketValue),
+                holdingQuantity,
+                reservedSellQuantity,
+                holdingPositionCount,
+                SIMULATION_NOW,
                 SIMULATION_NOW
         );
     }
@@ -1008,39 +1040,6 @@ class AdminFlowQueryServiceTest {
                 new BigDecimal(buyAmount).add(new BigDecimal(sellAmount)),
                 SIMULATION_NOW,
                 SIMULATION_NOW
-        );
-    }
-
-    private void insertCyclePortfolioSnapshot(
-            JdbcTemplate jdbcTemplate,
-            long id,
-            long closeCycleId,
-            long closeRunId,
-            long accountId,
-            LocalDate snapshotDate,
-            long totalAsset
-    ) {
-        BigDecimal totalAssetAmount = BigDecimal.valueOf(totalAsset).setScale(2);
-        BigDecimal cashBalance = totalAssetAmount.divide(BigDecimal.valueOf(2));
-        jdbcTemplate.update(
-                """
-                insert into portfolio_snapshot(
-                    id, close_cycle_id, close_run_id, account_id, snapshot_date,
-                    total_asset, cash_balance, market_value,
-                    holding_quantity, reserved_sell_quantity, holding_position_count,
-                    return_rate, created_at
-                )
-                values (?, ?, ?, ?, ?, ?, ?, ?, 10, 2, 1, 0, ?)
-                """,
-                id,
-                closeCycleId,
-                closeRunId,
-                accountId,
-                snapshotDate,
-                totalAssetAmount,
-                cashBalance,
-                totalAssetAmount.subtract(cashBalance),
-                snapshotDate.atTime(18, 0)
         );
     }
 

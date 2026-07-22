@@ -145,6 +145,34 @@ class StockTestEodSchemaInitializer implements ApplicationRunner {
         );
         jdbcTemplate.execute(
                 """
+                create table if not exists stock_close_account_snapshot (
+                    id bigint auto_increment primary key,
+                    close_cycle_id bigint not null,
+                    close_run_id bigint not null,
+                    account_id bigint not null,
+                    user_key varchar(64),
+                    account_status varchar(20) not null,
+                    participant_category varchar(30) not null,
+                    settlement_target boolean not null,
+                    pre_cancel_cash decimal(19, 2) not null,
+                    pre_cancel_order_reserved_cash decimal(19, 2) not null default 0,
+                    subscription_reserved_cash decimal(19, 2) not null default 0,
+                    post_cancel_cash decimal(19, 2),
+                    external_net_cash_flow decimal(19, 2) not null default 0,
+                    cash_flow_watermark_id bigint not null default 0,
+                    holding_market_value decimal(19, 2) not null default 0,
+                    holding_quantity bigint not null default 0,
+                    reserved_sell_quantity bigint not null default 0,
+                    holding_position_count bigint not null default 0,
+                    reconciliation_status varchar(20) not null default 'PENDING',
+                    snapshot_at timestamp not null,
+                    created_at timestamp not null,
+                    unique (close_cycle_id, account_id)
+                )
+                """
+        );
+        jdbcTemplate.execute(
+                """
                 create table if not exists stock_execution_daily_account_snapshot (
                     id bigint auto_increment primary key,
                     close_run_id bigint not null,

@@ -8,6 +8,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import stock.back.service.common.exception.StockException;
 import stock.back.service.database.entity.StockAccount;
 import stock.back.service.database.entity.StockAccountCashFlow;
+import stock.back.service.database.entity.StockAccountParticipantCategory;
 import stock.back.service.database.entity.StockAccountStatus;
 import stock.back.service.database.entity.StockAutoParticipant;
 import stock.back.service.database.repository.StockAccountCashFlowRepository;
@@ -195,6 +196,37 @@ class AutoParticipantManagementServiceTest {
                 cashFlow.getAccountId().equals(103L)
                         && cashFlow.getAmount().compareTo(new BigDecimal("2500000")) == 0
         ));
+    }
+
+    @Test
+    void upsertAutoParticipant_existingManualAccountWithoutFunding_assignsAutoParticipantRole() {
+        StockAccount account = StockAccount.open("stock-auto-001");
+        setAccountId(account, 104L);
+        when(stockAutoParticipantRepository.findById("stock-auto-001")).thenReturn(Optional.empty());
+        when(stockAutoParticipantRepository.save(any(StockAutoParticipant.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+        when(stockAccountRepository.findByUserKey("stock-auto-001")).thenReturn(Optional.of(account));
+        when(stockAccountRepository.findByUserKeyAndStatusForUpdate("stock-auto-001", StockAccountStatus.ACTIVE))
+                .thenReturn(Optional.of(account));
+        when(stockAccountRepository.save(any(StockAccount.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        service.upsertAutoParticipant(
+                "stock-auto-001",
+                new AutoParticipantRequest(
+                        "자동 참여자 1",
+                        true,
+                        "NOISE_TRADER",
+                        null,
+                        null,
+                        null,
+                        false,
+                        BigDecimal.ZERO
+                )
+        );
+
+        assertThat(account.getParticipantCategory()).isEqualTo(StockAccountParticipantCategory.AUTO_PARTICIPANT);
+        verify(stockAccountRepository).save(account);
     }
 
     @Test

@@ -118,6 +118,7 @@ class StockMysqlDdlContractTest {
 
     private static final List<String> ADMIN_QUERY_INDEX_MARKERS = List.of(
             "idx_stock_account_status_id",
+            "idx_stock_account_status_participant_id",
             "idx_stock_account_cash_flow_account_reason_creator_time",
             "idx_stock_account_cash_flow_time",
             "idx_stock_order_market_status_side",
@@ -484,6 +485,39 @@ class StockMysqlDdlContractTest {
                 "FROM stock_execution",
                 "JOIN stock_execution",
                 "ADD COLUMN IF NOT EXISTS"
+        );
+    }
+
+    @Test
+    void accountParticipantCategoryAlterDdl_persistsCurrentRoleWithoutScanningHotLedgers()
+            throws IOException {
+        String backDdl = Files.readString(
+                Path.of("src/main/resources/db/ddl/stock_account_participant_category_alter.sql"),
+                StandardCharsets.UTF_8
+        );
+        String batchDdl = Files.readString(
+                Path.of("../stock-batch-service/src/main/resources/db/ddl/stock_account_participant_category_alter.sql"),
+                StandardCharsets.UTF_8
+        );
+
+        assertThat(normalizeSqlBlock(backDdl)).isEqualTo(normalizeSqlBlock(batchDdl));
+        assertThat(firstExecutableSqlLine(backDdl)).isEqualTo("USE STOCK_SERVICE;");
+        assertThat(backDdl).contains(
+                "ADD COLUMN participant_category VARCHAR(30) NULL",
+                "stock_auto_participant participant",
+                "account.user_key LIKE 'stock-listing-%'",
+                "WHERE participant_category IS NULL",
+                "MODIFY COLUMN participant_category VARCHAR(30) NOT NULL DEFAULT ''MANUAL_PARTICIPANT''",
+                "chk_stock_account_participant_category",
+                "idx_stock_account_status_participant_id"
+        );
+        assertThat(backDdl).doesNotContain(
+                "ALTER TABLE stock_order",
+                "ALTER TABLE stock_execution",
+                "FROM stock_order",
+                "JOIN stock_order",
+                "FROM stock_execution",
+                "JOIN stock_execution"
         );
     }
 

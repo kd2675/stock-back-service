@@ -7,7 +7,7 @@ import stock.back.service.market.vo.AutoMarketConfigUpdateRequest;
 import stock.back.service.market.vo.AutoMarketStatusResponse;
 import stock.back.service.market.vo.AdminCashFlowPageResponse;
 import stock.back.service.market.vo.AdminFlowOverviewResponse;
-import stock.back.service.market.vo.AdminFundFlowSummaryResponse;
+import stock.back.service.market.vo.AdminFundFlowBreakdownResponse;
 import stock.back.service.market.vo.AdminSymbolFlowListResponse;
 import stock.back.service.market.vo.AdminFundFlowScope;
 import stock.back.service.market.vo.AutoParticipantHoldingGroupResponse;
@@ -245,8 +245,8 @@ public class MarketServiceTestFacade {
     }
 
     @Transactional(readOnly = true)
-    public AdminFundFlowSummaryResponse getAdminFundFlowSummary() {
-        return adminFlowQueryService.getAdminFundFlowSummary();
+    public AdminFundFlowBreakdownResponse getAdminFundFlowBreakdown() {
+        return adminFlowQueryService.getAdminFundFlowBreakdown();
     }
 
     @Transactional(readOnly = true)

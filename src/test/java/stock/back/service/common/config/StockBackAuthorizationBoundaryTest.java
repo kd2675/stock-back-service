@@ -1021,8 +1021,8 @@ class StockBackAuthorizationBoundaryTest {
     }
 
     @Test
-    void getAdminFundFlowSummary_adminPrincipalHeaders_isAllowed() throws Exception {
-        mockMvc.perform(get("/api/stock/v1/markets/admin/fund-flow-summary")
+    void getAdminFundFlowBreakdown_adminPrincipalHeaders_isAllowed() throws Exception {
+        mockMvc.perform(get("/api/stock/v1/markets/admin/fund-flow-breakdown")
                         .header("X-User-Key", "stock-admin-key")
                         .header("X-User-Role", "ROLE_ADMIN"))
                 .andExpect(status().isOk())
@@ -1031,8 +1031,8 @@ class StockBackAuthorizationBoundaryTest {
     }
 
     @Test
-    void getAdminFundFlowSummary_userPrincipalHeaders_returnsForbidden() throws Exception {
-        mockMvc.perform(get("/api/stock/v1/markets/admin/fund-flow-summary")
+    void getAdminFundFlowBreakdown_userPrincipalHeaders_returnsForbidden() throws Exception {
+        mockMvc.perform(get("/api/stock/v1/markets/admin/fund-flow-breakdown")
                         .header("X-User-Key", "stock-user-key")
                         .header("X-User-Role", "ROLE_USER"))
                 .andExpect(status().isForbidden())
