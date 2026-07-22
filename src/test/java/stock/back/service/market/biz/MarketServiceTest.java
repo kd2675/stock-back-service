@@ -823,7 +823,7 @@ class MarketServiceTest {
         assertThat(overview.estimatedTotalAsset()).isEqualByComparingTo(new BigDecimal("1500.00"));
         assertThat(overview.netCashFlow()).isEqualByComparingTo(new BigDecimal("1100.00"));
         assertThat(overview.totalProfit()).isEqualByComparingTo(new BigDecimal("400.00"));
-        assertThat(overview.returnRate()).isEqualByComparingTo(new BigDecimal("36.3636"));
+        assertThat(overview.returnRate()).isEqualByComparingTo(new BigDecimal("36.36363636"));
         assertThat(overview.lastOrderAt()).isEqualTo(lastTerminalOrderAt);
         assertThat(overview.reservedBuyCash()).isEqualByComparingTo(new BigDecimal("150.00"));
         assertThat(overview.openOrderCount()).isEqualTo(2);

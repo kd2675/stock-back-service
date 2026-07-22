@@ -70,8 +70,17 @@ public class PortfolioSnapshot {
     @Column(name = "holding_position_count")
     private Long holdingPositionCount;
 
-    @Column(name = "return_rate", nullable = false, precision = 9, scale = 4)
+    @Column(name = "net_contribution", precision = 19, scale = 2)
+    private BigDecimal netContribution;
+
+    @Column(name = "total_profit", precision = 19, scale = 2)
+    private BigDecimal totalProfit;
+
+    @Column(name = "return_rate", precision = 19, scale = 8)
     private BigDecimal returnRate;
+
+    @Column(name = "return_rate_status", nullable = false, length = 40)
+    private String returnRateStatus;
 
     @Column(name = "input_hash", length = 64)
     private String inputHash;

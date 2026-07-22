@@ -649,6 +649,35 @@ class StockMysqlDdlContractTest {
     }
 
     @Test
+    void portfolioReturnContractAlter_usesImmutableSnapshotsWithoutHotLedgers() throws IOException {
+        String backDdl = Files.readString(
+                Path.of("src/main/resources/db/ddl/stock_portfolio_snapshot_return_contract_alter.sql"),
+                StandardCharsets.UTF_8
+        );
+        String batchDdl = Files.readString(
+                Path.of("../stock-batch-service/src/main/resources/db/ddl/stock_portfolio_snapshot_return_contract_alter.sql"),
+                StandardCharsets.UTF_8
+        );
+
+        assertThat(firstExecutableSqlLine(backDdl)).isEqualTo("USE STOCK_SERVICE;");
+        assertThat(firstExecutableSqlLine(batchDdl)).isEqualTo("USE STOCK_SERVICE;");
+        assertThat(backDdl).contains(
+                "chk_portfolio_snapshot_return_contract",
+                "UNDEFINED_ZERO_CONTRIBUTION",
+                "UNDEFINED_NEGATIVE_CONTRIBUTION",
+                "stock_close_account_snapshot"
+        );
+        assertThat(batchDdl).contains(
+                "chk_portfolio_snapshot_return_contract",
+                "UNDEFINED_ZERO_CONTRIBUTION",
+                "UNDEFINED_NEGATIVE_CONTRIBUTION",
+                "stock_close_account_snapshot"
+        );
+        assertThat(backDdl).doesNotContain("stock_order", "stock_execution");
+        assertThat(batchDdl).doesNotContain("stock_order", "stock_execution");
+    }
+
+    @Test
     void executionDailyAccountAlterDdl_usesMysqlCompatibleMetadataGuardAndMatchesBatchCopy()
             throws IOException {
         String backDdl = Files.readString(

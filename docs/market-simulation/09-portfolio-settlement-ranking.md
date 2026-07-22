@@ -27,11 +27,17 @@
 - 예약 매도 보유량: `sum(stock_holding.reserved_quantity)`
 - 가용 보유량: 총 보유량 - 예약 매도 보유량
 - 보유 포지션 수: 수량이 양수인 계좌별 종목 row 수
-- 수익률: `(총자산 - 순입금액) / 순입금액 * 100`
+- 누적 손익: `총자산 - 외부 순입금액`이며 분모와 관계없이 항상 계산한다.
+- 계좌 순입금 대비 수익률: `누적 손익 / 외부 순입금액 * 100`
+- 외부 순입금액이 0원 이하이면 수익률은 `0%`가 아니라 산출 불가(`NULL`)다.
 - 미체결 주문 수
 - 보유 종목 목록
 
 순입금액은 `stock_account_cash_flow`의 입금 합계에서 회수 합계를 뺀 값이다.
+
+자동 참여자 그룹의 대표 수익률은 계좌 수익률 단순 평균이 아니다. 그룹의 총자산,
+외부 순입금, 손익을 먼저 합산한 뒤 `합산 손익 / 합산 외부 순입금 * 100`으로 계산한다.
+일반적인 계좌의 분포는 별도 `계좌 중앙 수익률`과 `수익 계좌 비율`로 제공한다.
 
 보유 평가 가격은 Redis 캐시를 먼저 보고, 없으면 DB `stock_price`를 사용한다. 가격이 없으면 평균단가를 fallback으로 사용한다.
 
@@ -87,15 +93,22 @@ batch 설정:
 1. 각 계좌의 현금과 순입금액을 읽는다.
 2. 계좌별 보유 row를 한 번 집계해 평가금액, 총 보유량, 예약 매도 보유량, 보유 포지션 수를 계산한다.
 3. 예약 매수·유상증자 청약 현금을 계산한다.
-4. 총자산과 수익률을 계산한다.
-5. 오늘 날짜의 `portfolio_snapshot`에 금액과 보유량 지표를 함께 upsert한다.
+4. 총자산·외부 순입금·누적 손익을 계산하고, 순입금이 양수일 때만 수익률을 계산한다.
+5. 오늘 날짜의 `portfolio_snapshot`에 금액·보유량·수익률 상태를 함께 upsert한다.
+
+`portfolio_snapshot.return_rate_status`는 `DEFINED`,
+`UNDEFINED_ZERO_CONTRIBUTION`, `UNDEFINED_NEGATIVE_CONTRIBUTION`,
+`LEGACY_UNVERIFIED` 중 하나다. 최근 cycle-linked 행은 불변
+`stock_close_account_snapshot.external_net_cash_flow`로 정확히 보정한다. 증명 가능한 입력이 없는
+구형 행은 반올림된 과거 수익률로 원금을 역산하지 않고 `LEGACY_UNVERIFIED`로 남긴다.
 
 과거 snapshot의 보유량 컬럼은 NULL일 수 있다. 관리자 일별 합계는 같은 날짜의 모든 계좌 row에 보유량 지표가 있을 때만 합산하며, 일부만 존재하는 날짜는 0이나 부분합으로 표시하지 않는다.
 정산 reader는 `stock-listing-*` 운영 재고 계좌를 생성 단계에서 제외하고, 관리자 이력 조회도 legacy·수동 snapshot에 같은 계좌가 섞인 경우를 방어적으로 제외한다. 반면 참여자 계좌가 나중에 종료됐다는 이유로 과거 snapshot을 소급 제거하지는 않는다.
 
 ## 랭킹
 
-`MarketService.getRankings()`는 가장 최근 snapshot date를 찾고, 해당 날짜의 상위 20명을 수익률 기준으로 반환한다.
+`MarketService.getRankings()`는 가장 최근 snapshot date를 찾고, 해당 날짜에서 수익률 상태가
+`DEFINED`인 계좌만 상위 20명을 수익률 기준으로 반환한다.
 
 ## 현재 한계
 

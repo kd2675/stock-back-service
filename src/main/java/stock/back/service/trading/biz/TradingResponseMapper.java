@@ -8,6 +8,7 @@ import stock.back.service.database.entity.StockHolding;
 import stock.back.service.database.entity.StockOrder;
 import stock.back.service.database.repository.StockAccountCashFlowRepository;
 import stock.back.service.database.repository.StockExecutionRepository;
+import stock.back.service.market.biz.PortfolioReturnRateStatus;
 import stock.back.service.trading.vo.AccountCashFlowResponse;
 import stock.back.service.trading.vo.AccountResponse;
 import stock.back.service.trading.vo.ExecutionResponse;
@@ -82,13 +83,22 @@ final class TradingResponseMapper {
     }
 
     static PortfolioSnapshotResponse toPortfolioSnapshotResponse(PortfolioSnapshot snapshot) {
+        String returnRateStatus = snapshot.getReturnRateStatus() == null
+                ? PortfolioReturnRateStatus.LEGACY_UNVERIFIED.name()
+                : snapshot.getReturnRateStatus();
+        BigDecimal returnRate = PortfolioReturnRateStatus.DEFINED.name().equals(returnRateStatus)
+                ? snapshot.getReturnRate()
+                : null;
         return new PortfolioSnapshotResponse(
                 snapshot.getSnapshotDate(),
                 snapshot.getTotalAsset(),
                 snapshot.getCashBalance(),
                 snapshot.getPendingSubscriptionAsset(),
                 snapshot.getMarketValue(),
-                snapshot.getReturnRate()
+                snapshot.getNetContribution(),
+                snapshot.getTotalProfit(),
+                returnRate,
+                returnRateStatus
         );
     }
 
@@ -113,12 +123,16 @@ final class TradingResponseMapper {
     ) {
         BigDecimal marketValue = sum(holdings.stream().map(HoldingResponse::marketValue));
         BigDecimal totalAsset = cashBalance.add(reservedBuyCash).add(marketValue);
+        ReturnCalculation returnCalculation = calculateReturn(totalAsset, netCashFlow);
         return new PortfolioResponse(
                 account,
                 marketValue,
                 reservedBuyCash,
                 totalAsset,
-                returnRate(totalAsset, netCashFlow),
+                netCashFlow,
+                returnCalculation.totalProfit(),
+                returnCalculation.returnRate(),
+                returnCalculation.status().name(),
                 pendingCount,
                 holdings
         );
@@ -201,13 +215,16 @@ final class TradingResponseMapper {
         );
     }
 
-    private static BigDecimal returnRate(BigDecimal totalAsset, BigDecimal netCashFlow) {
-        if (netCashFlow.compareTo(BigDecimal.ZERO) <= 0) {
-            return BigDecimal.ZERO;
+    private static ReturnCalculation calculateReturn(BigDecimal totalAsset, BigDecimal netContribution) {
+        BigDecimal totalProfit = totalAsset.subtract(netContribution);
+        PortfolioReturnRateStatus status = PortfolioReturnRateStatus.from(netContribution);
+        if (status != PortfolioReturnRateStatus.DEFINED) {
+            return new ReturnCalculation(totalProfit, null, status);
         }
-        return totalAsset.subtract(netCashFlow)
+        BigDecimal returnRate = totalProfit
                 .multiply(BigDecimal.valueOf(100))
-                .divide(netCashFlow, 4, RoundingMode.HALF_UP);
+                .divide(netContribution, 8, RoundingMode.HALF_UP);
+        return new ReturnCalculation(totalProfit, returnRate, status);
     }
 
     private static BigDecimal sum(Stream<BigDecimal> values) {
@@ -216,5 +233,12 @@ final class TradingResponseMapper {
 
     private static BigDecimal zeroIfNull(BigDecimal value) {
         return value == null ? BigDecimal.ZERO : value;
+    }
+
+    private record ReturnCalculation(
+            BigDecimal totalProfit,
+            BigDecimal returnRate,
+            PortfolioReturnRateStatus status
+    ) {
     }
 }

@@ -734,6 +734,8 @@ class TradingServiceTest {
         assertThat(snapshots.get(0).snapshotDate()).hasToString("2026-06-17");
         assertThat(snapshots.get(0).totalAsset()).isEqualByComparingTo(new BigDecimal("10100000.00"));
         assertThat(snapshots.get(0).pendingSubscriptionAsset()).isEqualByComparingTo(BigDecimal.ZERO);
+        assertThat(snapshots.get(0).returnRate() + ":" + snapshots.get(0).returnRateStatus())
+                .isEqualTo("null:LEGACY_UNVERIFIED");
         assertThat(snapshots.get(1).snapshotDate()).hasToString("2026-06-16");
     }
 
@@ -1262,9 +1264,10 @@ class TradingServiceTest {
                 """
                 insert into portfolio_snapshot(
                     account_id, snapshot_date, total_asset, cash_balance,
-                    pending_subscription_asset, market_value, return_rate, created_at
+                    pending_subscription_asset, market_value, return_rate,
+                    return_rate_status, created_at
                 )
-                values (?, ?, ?, ?, 0, ?, ?, ?)
+                values (?, ?, ?, ?, 0, ?, ?, 'LEGACY_UNVERIFIED', ?)
                 """,
                 accountId,
                 java.time.LocalDate.parse(snapshotDate),

@@ -237,6 +237,7 @@ public class AutoParticipantOverviewQueryService {
                     aggregate.netCashFlow(),
                     assetSummary.totalProfit(),
                     assetSummary.returnRate(),
+                    assetSummary.returnRateStatus().name(),
                     aggregate.holdingCount(),
                     aggregate.totalHoldingQuantity(),
                     aggregate.reservedSellQuantity(),

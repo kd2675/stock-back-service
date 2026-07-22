@@ -9,6 +9,9 @@ public record PortfolioSnapshotResponse(
         BigDecimal cashBalance,
         BigDecimal pendingSubscriptionAsset,
         BigDecimal marketValue,
-        BigDecimal returnRate
+        BigDecimal netContribution,
+        BigDecimal totalProfit,
+        BigDecimal returnRate,
+        String returnRateStatus
 ) {
 }

@@ -8,7 +8,10 @@ public record PortfolioResponse(
         BigDecimal marketValue,
         BigDecimal reservedBuyCash,
         BigDecimal totalAsset,
+        BigDecimal netContribution,
+        BigDecimal totalProfit,
         BigDecimal returnRate,
+        String returnRateStatus,
         long pendingOrderCount,
         List<HoldingResponse> holdings
 ) {

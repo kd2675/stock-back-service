@@ -16,6 +16,8 @@ public interface PortfolioSnapshotRepository extends JpaRepository<PortfolioSnap
               left join stock_post_close_cycle cycle
                 on cycle.id = ps.close_cycle_id
              where ps.snapshot_date = :snapshotDate
+               and ps.return_rate_status = 'DEFINED'
+               and ps.return_rate is not null
                and (
                    (ps.close_cycle_id is null and ps.close_run_id is null)
                    or (

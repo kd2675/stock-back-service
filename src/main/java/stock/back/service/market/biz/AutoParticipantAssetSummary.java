@@ -5,25 +5,33 @@ import java.math.RoundingMode;
 
 record AutoParticipantAssetSummary(
         BigDecimal estimatedTotalAsset,
+        BigDecimal netContribution,
         BigDecimal totalProfit,
-        BigDecimal returnRate
+        BigDecimal returnRate,
+        PortfolioReturnRateStatus returnRateStatus
 ) {
 
     static AutoParticipantAssetSummary from(
             BigDecimal availableCash,
             BigDecimal reservedBuyCash,
             BigDecimal holdingMarketValue,
-            BigDecimal netCashFlow
+            BigDecimal netContribution
     ) {
         BigDecimal estimatedTotalAsset = availableCash.add(reservedBuyCash).add(holdingMarketValue);
-        BigDecimal totalProfit = BigDecimal.ZERO;
-        BigDecimal returnRate = BigDecimal.ZERO;
-        if (netCashFlow.compareTo(BigDecimal.ZERO) > 0) {
-            totalProfit = estimatedTotalAsset.subtract(netCashFlow);
+        BigDecimal totalProfit = estimatedTotalAsset.subtract(netContribution);
+        PortfolioReturnRateStatus returnRateStatus = PortfolioReturnRateStatus.from(netContribution);
+        BigDecimal returnRate = null;
+        if (returnRateStatus == PortfolioReturnRateStatus.DEFINED) {
             returnRate = totalProfit
                     .multiply(BigDecimal.valueOf(100))
-                    .divide(netCashFlow, 4, RoundingMode.HALF_UP);
+                    .divide(netContribution, 8, RoundingMode.HALF_UP);
         }
-        return new AutoParticipantAssetSummary(estimatedTotalAsset, totalProfit, returnRate);
+        return new AutoParticipantAssetSummary(
+                estimatedTotalAsset,
+                netContribution,
+                totalProfit,
+                returnRate,
+                returnRateStatus
+        );
     }
 }

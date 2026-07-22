@@ -41,17 +41,18 @@ class PortfolioSnapshotRepositoryQueryContractTest {
                     close_run_id bigint,
                     account_id bigint not null,
                     snapshot_date date not null,
-                    return_rate decimal(9, 4) not null
+                    return_rate decimal(19, 8),
+                    return_rate_status varchar(40) not null default 'DEFINED'
                 )
                 """);
         schema.update("insert into stock_post_close_cycle values (10, 'FULL_MARKET', 'ALL', 'LEDGER_FROZEN')");
         schema.update("insert into stock_post_close_cycle values (11, 'FULL_MARKET', 'ALL', 'PORTFOLIO_SETTLED')");
         schema.update("insert into stock_post_close_cycle values (12, 'SYMBOL', 'DEMO001', 'PORTFOLIO_SETTLED')");
-        schema.update("insert into portfolio_snapshot values (1, null, null, 1, '2026-01-01', 1.0000)");
-        schema.update("insert into portfolio_snapshot values (2, 10, 100, 1, '2026-01-03', 100.0000)");
-        schema.update("insert into portfolio_snapshot values (3, 11, 101, 1, '2026-01-02', 2.0000)");
-        schema.update("insert into portfolio_snapshot values (4, 12, 102, 1, '2026-01-04', 200.0000)");
-        schema.update("insert into portfolio_snapshot values (5, 11, 101, 2, '2026-01-02', 3.0000)");
+        schema.update("insert into portfolio_snapshot values (1, null, null, 1, '2026-01-01', 1.0000, 'DEFINED')");
+        schema.update("insert into portfolio_snapshot values (2, 10, 100, 1, '2026-01-03', 100.0000, 'DEFINED')");
+        schema.update("insert into portfolio_snapshot values (3, 11, 101, 1, '2026-01-02', 2.0000, 'DEFINED')");
+        schema.update("insert into portfolio_snapshot values (4, 12, 102, 1, '2026-01-04', 200.0000, 'DEFINED')");
+        schema.update("insert into portfolio_snapshot values (5, 11, 101, 2, '2026-01-02', 3.0000, 'DEFINED')");
         jdbcTemplate = new NamedParameterJdbcTemplate(schema);
     }
 

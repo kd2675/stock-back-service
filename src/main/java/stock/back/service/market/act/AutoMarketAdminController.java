@@ -20,6 +20,7 @@ import org.springframework.web.bind.annotation.RestController;
 import stock.back.service.market.biz.AutoMarketConfigService;
 import stock.back.service.market.biz.AutoMarketRegimeHistoryQueryService;
 import stock.back.service.market.biz.AutoParticipantOverviewCacheService;
+import stock.back.service.market.biz.AutoParticipantPerformanceSummaryQueryService;
 import stock.back.service.market.biz.AutoParticipantCashAdjustmentService;
 import stock.back.service.market.biz.AutoParticipantManagementService;
 import stock.back.service.market.biz.AutoParticipantOverviewQueryService;
@@ -34,6 +35,8 @@ import stock.back.service.market.vo.AutoParticipantCashAdjustmentRequest;
 import stock.back.service.market.vo.AutoParticipantCashAdjustmentResponse;
 import stock.back.service.market.vo.AutoParticipantHoldingGroupResponse;
 import stock.back.service.market.vo.AutoParticipantOverviewResponse;
+import stock.back.service.market.vo.AutoParticipantPerformanceBasis;
+import stock.back.service.market.vo.AutoParticipantPerformanceSummaryResponse;
 import stock.back.service.market.vo.AutoParticipantProfileConfigRequest;
 import stock.back.service.market.vo.AutoParticipantProfileConfigResponse;
 import stock.back.service.market.vo.AutoParticipantProfileOverviewResponse;
@@ -59,6 +62,7 @@ public class AutoMarketAdminController {
     private final AutoParticipantManagementService autoParticipantManagementService;
     private final AutoParticipantCashAdjustmentService autoParticipantCashAdjustmentService;
     private final AutoParticipantSymbolConfigService autoParticipantSymbolConfigService;
+    private final AutoParticipantPerformanceSummaryQueryService autoParticipantPerformanceSummaryQueryService;
 
     @GetMapping("/auto-market/participants/overviews")
     public ResponseDataDTO<List<AutoParticipantOverviewResponse>> getAutoParticipantOverviews(
@@ -87,6 +91,13 @@ public class AutoMarketAdminController {
             @RequestParam(defaultValue = "") List<String> profileTypes
     ) {
         return ResponseDataDTO.of(autoParticipantOverviewCacheService.getAutoParticipantProfileOverviews(activityScope, profileTypes));
+    }
+
+    @GetMapping("/auto-market/participants/performance-summary")
+    public ResponseDataDTO<AutoParticipantPerformanceSummaryResponse> getAutoParticipantPerformanceSummary(
+            @RequestParam(defaultValue = "LIVE_ESTIMATE") AutoParticipantPerformanceBasis basis
+    ) {
+        return ResponseDataDTO.of(autoParticipantPerformanceSummaryQueryService.getPerformanceSummary(basis));
     }
 
     @PatchMapping("/auto-market/profile-configs/{profileType}")

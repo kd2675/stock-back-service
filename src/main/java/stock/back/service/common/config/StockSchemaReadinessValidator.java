@@ -41,7 +41,7 @@ public class StockSchemaReadinessValidator implements ApplicationRunner {
     private static final Map<String, Set<String>> REQUIRED_COLUMNS = requiredColumns();
     private static final Map<String, Set<String>> REQUIRED_NOT_NULL_COLUMNS = Map.of(
             "stock_account", Set.of("participant_category"),
-            "portfolio_snapshot", Set.of("pending_subscription_asset"),
+            "portfolio_snapshot", Set.of("pending_subscription_asset", "return_rate_status"),
             "stock_corporate_action_entitlement", Set.of("forfeited_share_quantity"),
             "stock_close_open_order_snapshot", Set.of("source_order_status")
     );
@@ -50,7 +50,13 @@ public class StockSchemaReadinessValidator implements ApplicationRunner {
             "chk_stock_corporate_action_paid_date_order", Set.of("record_date"),
             "chk_stock_corporate_action_paid_schedule_required", Set.of("record_date"),
             "chk_stock_corporate_action_entitlement_status", Set.of("partially_subscribed"),
-            "chk_stock_corporate_action_entitlement_finalized_share_limit", Set.of("forfeited_share_quantity")
+            "chk_stock_corporate_action_entitlement_finalized_share_limit", Set.of("forfeited_share_quantity"),
+            "chk_portfolio_snapshot_return_contract", Set.of(
+                    "defined",
+                    "undefined_zero_contribution",
+                    "undefined_negative_contribution",
+                    "legacy_unverified"
+            )
     );
     private static final Map<String, Set<String>> REQUIRED_INDEXES = Map.of(
             "stock_account_cash_flow",
@@ -95,7 +101,7 @@ public class StockSchemaReadinessValidator implements ApplicationRunner {
     public StockSchemaReadinessValidator(
             @Qualifier("pubMasterDatasource") DataSource dataSource,
             ObjectProvider<BuildProperties> buildPropertiesProvider,
-            @Value("${STOCK_SCHEMA_VERSION:2026-07-22-eod-v3}") String schemaVersion
+            @Value("${STOCK_SCHEMA_VERSION:2026-07-22-portfolio-return-v5}") String schemaVersion
     ) {
         this.dataSource = dataSource;
         this.buildPropertiesProvider = buildPropertiesProvider;
@@ -385,7 +391,8 @@ public class StockSchemaReadinessValidator implements ApplicationRunner {
         requirements.put("portfolio_snapshot", Set.of(
                 "close_cycle_id", "close_run_id", "pending_subscription_asset",
                 "holding_quantity", "reserved_sell_quantity",
-                "holding_position_count", "input_hash", "calculation_version", "data_quality_status",
+                "holding_position_count", "net_contribution", "total_profit", "return_rate_status",
+                "input_hash", "calculation_version", "data_quality_status",
                 "source_build_version"
         ));
         requirements.put("stock_execution_daily_account_snapshot", Set.of(

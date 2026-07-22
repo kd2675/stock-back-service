@@ -97,7 +97,7 @@ class CorporateActionSubscriptionServiceIntegrationTest {
                 new BigDecimal("100.00"),
                 new BigDecimal("100.00"),
                 new BigDecimal("1000.00"),
-                new BigDecimal("0.0000"),
+                new BigDecimal("0.00000000"),
                 BigDecimal.ZERO,
                 new BigDecimal("1000.00")
         ));
