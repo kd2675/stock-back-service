@@ -43,6 +43,7 @@ class StockBackApiSurfaceContractTest {
             "POST /api/stock/v1/markets/order-book-instruments",
             "POST /api/stock/v1/markets/order-book-instruments/{symbol}/corporate-actions",
             "GET /api/stock/v1/markets/order-book-instruments/{symbol}/corporate-actions",
+            "GET /api/stock/v1/markets/order-book-instruments/{symbol}/cash-dividend-guidance",
             "GET /api/stock/v1/markets/order-book-instruments/{symbol}/reports",
             "GET /api/stock/v1/markets/order-book-instruments/{symbol}/market-report",
             "GET /api/stock/v1/markets/order-book-instruments/{symbol}/reports/latest",

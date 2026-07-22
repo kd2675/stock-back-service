@@ -55,9 +55,31 @@ public interface StockCorporateActionEntitlementRepository extends JpaRepository
             @Param("statuses") Collection<StockCorporateActionEntitlementStatus> statuses
     );
 
+    @Query("""
+            select e.actionId as actionId,
+                   coalesce(sum(e.cashAmount), 0) as cashAmount,
+                   coalesce(sum(e.quantity), 0) as eligibleShareQuantity
+              from StockCorporateActionEntitlement e
+             where e.actionId in :actionIds
+               and e.status = :status
+             group by e.actionId
+            """)
+    List<PaidCashAmountSummary> sumCashAmountByActionIdInAndStatus(
+            @Param("actionIds") Collection<Long> actionIds,
+            @Param("status") StockCorporateActionEntitlementStatus status
+    );
+
     interface SubscribedShareQuantitySummary {
         Long getActionId();
 
         Long getSubscribedShareQuantity();
+    }
+
+    interface PaidCashAmountSummary {
+        Long getActionId();
+
+        BigDecimal getCashAmount();
+
+        Long getEligibleShareQuantity();
     }
 }

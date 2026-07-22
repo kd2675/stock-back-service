@@ -15,11 +15,13 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import stock.back.service.database.entity.StockCorporateActionType;
+import stock.back.service.market.biz.CashDividendGuidanceQueryService;
 import stock.back.service.market.biz.CorporateActionCommandService;
 import stock.back.service.market.biz.CorporateActionQueryService;
 import stock.back.service.market.biz.CorporateActionSubscriptionService;
 import stock.back.service.market.biz.InstrumentReportService;
 import stock.back.service.market.vo.CorporateActionEntitlementResponse;
+import stock.back.service.market.vo.CashDividendGuidanceResponse;
 import stock.back.service.market.vo.CorporateActionRequest;
 import stock.back.service.market.vo.CorporateActionResponse;
 import stock.back.service.market.vo.CorporateActionSubscriptionRequest;
@@ -37,6 +39,7 @@ public class MarketCorporateActionController {
 
     private final CorporateActionCommandService corporateActionCommandService;
     private final CorporateActionQueryService corporateActionQueryService;
+    private final CashDividendGuidanceQueryService cashDividendGuidanceQueryService;
     private final CorporateActionSubscriptionService corporateActionSubscriptionService;
     private final InstrumentReportService instrumentReportService;
 
@@ -52,6 +55,11 @@ public class MarketCorporateActionController {
     @GetMapping("/order-book-instruments/{symbol}/corporate-actions")
     public ResponseDataDTO<List<CorporateActionResponse>> getCorporateActions(@PathVariable String symbol) {
         return ResponseDataDTO.of(corporateActionQueryService.getCorporateActions(symbol));
+    }
+
+    @GetMapping("/order-book-instruments/{symbol}/cash-dividend-guidance")
+    public ResponseDataDTO<CashDividendGuidanceResponse> getCashDividendGuidance(@PathVariable String symbol) {
+        return ResponseDataDTO.of(cashDividendGuidanceQueryService.getGuidance(symbol));
     }
 
     @GetMapping("/corporate-actions")
