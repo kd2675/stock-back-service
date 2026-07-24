@@ -40,6 +40,7 @@ public class EodOperationsOverviewService {
                    cycle.last_error_message,
                    cycle.build_version,
                    cycle.schema_version,
+                   cycle.eod_contract_version,
                    cycle.created_at,
                    cycle.updated_at,
                    close_run.status as close_run_status,
@@ -204,6 +205,7 @@ public class EodOperationsOverviewService {
                 rs.getString("last_error_message"),
                 rs.getString("build_version"),
                 rs.getString("schema_version"),
+                rs.getString("eod_contract_version"),
                 rs.getObject("created_at", LocalDateTime.class),
                 rs.getObject("updated_at", LocalDateTime.class),
                 rs.getString("close_run_status"),
@@ -249,7 +251,7 @@ public class EodOperationsOverviewService {
                         """
                         select id, phase, attempt_no, batch_job_execution_id, owner_id, status,
                                started_at, completed_at, error_code, error_message,
-                               build_version, schema_version
+                               build_version, schema_version, eod_contract_version
                           from stock_post_close_phase_attempt
                          where cycle_id = ?
                          order by id desc
@@ -269,7 +271,8 @@ public class EodOperationsOverviewService {
                         rs.getString("error_code"),
                         rs.getString("error_message"),
                         rs.getString("build_version"),
-                        rs.getString("schema_version")
+                        rs.getString("schema_version"),
+                        rs.getString("eod_contract_version")
                 ))
                 .optional();
     }

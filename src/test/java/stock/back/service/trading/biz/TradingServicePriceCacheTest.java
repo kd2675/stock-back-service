@@ -46,6 +46,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -134,7 +135,8 @@ class TradingServicePriceCacheTest {
                 ),
                 new TradingReservationService(stockHoldingRepository),
                 tradingSessionFenceService,
-                orderBookReadySymbolPublisher
+                orderBookReadySymbolPublisher,
+                mock(AutoParticipantFundingBudgetReleaseService.class)
         );
     }
 

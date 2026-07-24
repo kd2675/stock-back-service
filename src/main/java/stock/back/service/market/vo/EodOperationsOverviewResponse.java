@@ -53,6 +53,7 @@ public record EodOperationsOverviewResponse(
             String lastErrorMessage,
             String buildVersion,
             String schemaVersion,
+            String eodContractVersion,
             LocalDateTime createdAt,
             LocalDateTime updatedAt,
             String closeRunStatus,
@@ -100,7 +101,8 @@ public record EodOperationsOverviewResponse(
             String errorCode,
             String errorMessage,
             String buildVersion,
-            String schemaVersion
+            String schemaVersion,
+            String eodContractVersion
     ) {
     }
 

@@ -94,6 +94,127 @@ class StockSchemaReadinessValidatorTest {
                 .hasMessageContaining("chk_stock_corporate_action_entitlement_status CHECK token partially_subscribed");
     }
 
+    @Test
+    void run_nullableProfileExecutionPolicy_failsBeforeApiAcceptsRequests() {
+        DriverManagerDataSource dataSource = new DriverManagerDataSource(
+                "jdbc:h2:mem:back_schema_readiness_nullable_profile_policy;MODE=MySQL;DB_CLOSE_DELAY=-1;DATABASE_TO_UPPER=false",
+                "sa",
+                ""
+        );
+        dataSource.setDriverClassName("org.h2.Driver");
+        new ResourceDatabasePopulator(new FileSystemResource(batchH2Ddl())).execute(dataSource);
+        new JdbcTemplate(dataSource).execute(
+                "alter table stock_auto_participant_profile_config alter column pricing_mode drop not null"
+        );
+        @SuppressWarnings("unchecked")
+        ObjectProvider<BuildProperties> buildPropertiesProvider = mock(ObjectProvider.class);
+        StockSchemaReadinessValidator validator = new StockSchemaReadinessValidator(
+                dataSource,
+                buildPropertiesProvider,
+                "2026-07-23-auto-profile-v2-direct"
+        );
+
+        assertThatThrownBy(() -> validator.run(null))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("stock_auto_participant_profile_config.pricing_mode NOT NULL constraint");
+    }
+
+    @Test
+    void run_partialAutoProfileCheck_failsBeforeApiAcceptsRequests() {
+        DriverManagerDataSource dataSource = new DriverManagerDataSource(
+                "jdbc:h2:mem:back_schema_readiness_partial_profile_check;MODE=MySQL;DB_CLOSE_DELAY=-1;DATABASE_TO_UPPER=false",
+                "sa",
+                ""
+        );
+        dataSource.setDriverClassName("org.h2.Driver");
+        new ResourceDatabasePopulator(new FileSystemResource(batchH2Ddl())).execute(dataSource);
+        JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSource);
+        jdbcTemplate.execute("alter table stock_order drop constraint chk_stock_order_auto_profile_type");
+        jdbcTemplate.execute(
+                """
+                alter table stock_order
+                  add constraint chk_stock_order_auto_profile_type check (
+                    auto_profile_type is null or auto_profile_type in ('MARKET_MAKER', 'OBSERVER')
+                  )
+                """
+        );
+        @SuppressWarnings("unchecked")
+        ObjectProvider<BuildProperties> buildPropertiesProvider = mock(ObjectProvider.class);
+        StockSchemaReadinessValidator validator = new StockSchemaReadinessValidator(
+                dataSource,
+                buildPropertiesProvider,
+                "2026-07-23-auto-profile-v2-direct"
+        );
+
+        assertThatThrownBy(() -> validator.run(null))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("chk_stock_order_auto_profile_type CHECK token news_reactive");
+    }
+
+    @Test
+    void run_missingFundingBudgetActionIndex_failsBeforeApiAcceptsRequests() {
+        DriverManagerDataSource dataSource = new DriverManagerDataSource(
+                "jdbc:h2:mem:back_schema_readiness_funding_action_index;MODE=MySQL;DB_CLOSE_DELAY=-1;DATABASE_TO_UPPER=false",
+                "sa",
+                ""
+        );
+        dataSource.setDriverClassName("org.h2.Driver");
+        new ResourceDatabasePopulator(new FileSystemResource(batchH2Ddl())).execute(dataSource);
+        new JdbcTemplate(dataSource).execute("drop index idx_stock_auto_funding_budget_action");
+        @SuppressWarnings("unchecked")
+        ObjectProvider<BuildProperties> buildPropertiesProvider = mock(ObjectProvider.class);
+        StockSchemaReadinessValidator validator = new StockSchemaReadinessValidator(
+                dataSource,
+                buildPropertiesProvider,
+                "2026-07-23-auto-profile-v2-direct"
+        );
+
+        assertThatThrownBy(() -> validator.run(null))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining(
+                        "stock_auto_participant_funding_budget.idx_stock_auto_funding_budget_action index"
+                );
+    }
+
+    @Test
+    void run_legacyShadowSchema_failsBeforeApiAcceptsRequests() {
+        DriverManagerDataSource dataSource = new DriverManagerDataSource(
+                "jdbc:h2:mem:back_schema_readiness_legacy_shadow;MODE=MySQL;DB_CLOSE_DELAY=-1;DATABASE_TO_UPPER=false",
+                "sa",
+                ""
+        );
+        dataSource.setDriverClassName("org.h2.Driver");
+        new ResourceDatabasePopulator(new FileSystemResource(batchH2Ddl())).execute(dataSource);
+        JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSource);
+        jdbcTemplate.execute("""
+                alter table stock_auto_participant
+                  add column behavior_evaluation_mode varchar(20) not null default 'EXECUTE'
+                """);
+        jdbcTemplate.execute("""
+                alter table stock_auto_participant
+                  add constraint chk_stock_auto_participant_behavior_evaluation
+                    check (behavior_evaluation_mode in ('EXECUTE', 'SHADOW'))
+                """);
+        jdbcTemplate.execute("""
+                create table stock_auto_profile_decision_day_summary(
+                    business_date date not null primary key
+                )
+                """);
+        @SuppressWarnings("unchecked")
+        ObjectProvider<BuildProperties> buildPropertiesProvider = mock(ObjectProvider.class);
+        StockSchemaReadinessValidator validator = new StockSchemaReadinessValidator(
+                dataSource,
+                buildPropertiesProvider,
+                "2026-07-23-auto-profile-v2-direct"
+        );
+
+        assertThatThrownBy(() -> validator.run(null))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("stock_auto_participant.behavior_evaluation_mode legacy column removal")
+                .hasMessageContaining("stock_auto_profile_decision_day_summary legacy table removal")
+                .hasMessageContaining("chk_stock_auto_participant_behavior_evaluation legacy CHECK removal");
+    }
+
     private Path batchH2Ddl() {
         Path workingDirectory = Path.of(System.getProperty("user.dir"));
         Path moduleRelative = workingDirectory

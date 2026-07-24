@@ -114,10 +114,13 @@ class StockTestEodSchemaInitializer implements ApplicationRunner {
                     last_error_message varchar(1000),
                     build_version varchar(100),
                     schema_version varchar(100),
+                    eod_contract_version varchar(100) not null default 'UNDECLARED',
                     created_at timestamp not null,
                     updated_at timestamp not null,
                     constraint uk_stock_post_close_cycle_scope
-                        unique (business_date, scope_type, scope_key)
+                        unique (business_date, scope_type, scope_key),
+                    constraint chk_stock_post_close_cycle_eod_contract
+                        check (eod_contract_version <> '')
                 )
                 """
         );

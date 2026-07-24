@@ -116,7 +116,7 @@ scripts/stock-smoke.sh
 - 자동참여자 등록, 프로필, 참여자별 전략, 종목, 자동장 설정은 남기고 실제시간으로 쌓인 주문/체결/차트/원장 히스토리만 새로 시작하려면 `src/main/resources/db/maintenance/stock_clear_runtime_history_keep_participants.sql`을 사용합니다. 이 파일은 계좌 식별 row는 보존하되 현금과 일반 보유를 0으로 리셋하고, 시뮬레이션 clock의 기준일과 1일 길이는 유지한 채 누적 시간을 0으로 되돌립니다. enabled 주문장 종목 가격은 초기 상장가와 시뮬레이션 기준일 00:00으로 되돌린 뒤, 자동장 batch가 거래 가능한 `OPEN` 종목의 `SELL_ONLY` 상장주관 자동계정에는 현재 유통주식수만큼 공급 보유분을 다시 만들어 삭제된 현금 원장과 손익/수익률 기준이 어긋나지 않게 합니다.
 - maintenance SQL은 실행 전 stock-back과 stock-batch 스케줄러를 멈춘 뒤 적용합니다.
 - EOD v1 운영 ALTER는 `../stock-batch-service/docs/stock-eod-refactoring-plan-2026-07-15.md`에 적힌 11개 파일 순서와 서버 종료·백업·전후 대사 절차를 따릅니다. MySQL DDL은 문장 단위로만 원자적이므로 여러 ALTER를 하나의 트랜잭션처럼 간주하지 않습니다.
-- 구버전 애플리케이션으로 긴급 복귀할 때는 `src/main/resources/db/ddl/stock_eod_application_rollback_alter.sql`을 사용합니다. 이 파일은 EOD 테이블·컬럼·인덱스와 감사 데이터를 삭제하지 않고, 구버전 signal INSERT를 위해 `next_attempt_at`만 nullable로 되돌립니다. 구버전이 phase/lease를 이해하지 못하므로 신규 앱에서 생성된 eligible·deferred·processing·dead-letter 신호는 자동 재실행하지 않고 `FAILED`로 종결합니다. 정확한 이전 스키마 복원은 ALTER 전 dump로만 수행하며 이 호환 롤백과 혼동하지 않습니다.
+- 구버전 애플리케이션 호환용 rollback ALTER는 제공하지 않습니다. 적용 오류는 마지막 성공 지점을 확인한 뒤 멱등 정방향 ALTER로 보정하며, 정확한 이전 스키마와 데이터가 필요할 때만 적용 전 schema·영향 테이블 dump를 복원합니다.
 - stock-back과 stock-batch는 물리적으로 분리된 서버로 본다. stock-back은 stock-batch 내부 HTTP API를 호출하지 않고 `STOCK_SERVICE.stock_batch_job_signal`에 실행 신호를 적재한다.
 - batch 스케줄러 runtime 제어는 stock-back이 `stock_batch_job_control.runtime_enabled`를 직접 읽고 쓰며, stock-batch는 자신의 실제 `enabled` 설정을 `scheduler_configured`에 동기화한 뒤 두 값을 함께 읽어 자동 실행 여부를 판단한다.
 - batch 수동 실행, 종목 장마감 롤오버, 거래정지/서킷브레이크 미체결 정리는 stock-back이 `PENDING` signal row를 만들고 stock-batch가 폴링해 기존 batch job launcher로 실행한다.

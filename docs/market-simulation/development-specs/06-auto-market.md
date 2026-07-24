@@ -26,7 +26,7 @@
 7. 주 압력 70%와 보조 압력 30%를 항목별로 합성한다.
 8. 참여자별-종목별 주문 활동 강도와 최신 활성 평가 보고서 점수, 프로필 정책을 함께 읽는다. 명시 강도가 없으면 5를 쓰며 보고서 점수는 활동 강도를 바꾸지 않는다.
 9. 자동 참여자 `profile_type`에 맞는 `AutoProfileBehavior` 구현체가 주문 수, 매수/매도 방향, 수량 상한, TTL을 결정한다.
-10. 현재가, 전일종가, 최우선 매수/매도, 호가 잔량, 평균단가, 시장·가격대별 호가단위 기준으로 자동 주문 방향과 가격을 만든다. 일반 자동 참여자의 방향 가격은 가격 압력을 현재가 비율로 반영하고 기본 0.6%, 변동성 반영 후 최대 0.8%로 제한한다. 중립 압력에서는 매수를 중심가 아래, 매도를 중심가 위에 두고 압력이 강해질수록 우세 방향 호가가 중심가에 접근한다. 별도 교차 추첨은 상승 압력에서 매수를 높이고 매도를 낮추며 하락 압력에서는 반대로 적용한다. 생성 단계에서는 상대 또는 자기 반대 호가를 피해 한 틱 밖으로 재가격하지 않는다. 시장조성 프로필은 최우선 동측 호가부터 변동성에 따라 0~3틱 깊이에 분산하고 압력 방향으로 양쪽 중심을 이동한다.
+10. 현재가, 전일종가, 최우선 매수/매도, 호가 잔량, 평균단가, 시장·가격대별 호가단위 기준으로 자동 주문 방향과 가격을 만든다. 일반 자동 참여자의 방향 가격은 가격 압력을 현재가 비율로 반영하고 기본 0.6%, 변동성 반영 후 최대 0.8%로 제한한다. 중립 압력에서는 매수를 중심가 아래, 매도를 중심가 위에 두고 압력이 강해질수록 우세 방향 호가가 중심가에 접근한다. 별도 교차 추첨은 상승 압력에서 매수를 높이고 매도를 낮추며 하락 압력에서는 반대로 적용한다. 생성 단계에서는 상대 또는 자기 반대 호가를 피해 한 틱 밖으로 재가격하지 않는다. V2 시장조성은 명시적 시장조성 가격 모드와 목표 재고 모드가 모두 설정된 경우에만 동작하며, 종목별 재고 목표를 기준으로 양방향 수동 호가를 만든다. 일일 가격 제한으로 수동 호가를 만들 수 없으면 상대 호가를 교차시키지 않고 해당 주문을 생략한다.
 11. 자동 주문을 `stock_order`에 넣고 ready-symbol 큐에 종목을 등록한다.
 12. 상시 체결 worker가 큐를 받아 주문장 매칭을 시도한다.
 
@@ -41,6 +41,7 @@
 - 자동 참여자 입금/회수 이력: `stock_account_cash_flow`
 - 배치 자동 실행 중지/재개 상태는 yml 런타임 토글 설정이 아니라 `stock_batch_job_control.runtime_enabled` DB 행만 기준으로 한다. 행이 없으면 batch 서버가 최초 조회 시 `runtime_enabled=true`로 생성한다.
 - 자동 참여자 주기 입금은 주문 생성 job과 분리된 `auto-participant-cash-flow` job에서 처리한다. 어드민은 stock-back 프록시 API를 통해 batch의 `auto-participant-cash-flow/status`를 조회/변경하고, `auto-participant-cash-flow/run`을 수동 실행한다. `runtime_enabled=false`는 스케줄러 자동 실행을 건너뛰게 하는 운영 제어값이며, 수동 run API는 관리자 명시 실행으로 별도 허용한다.
+- `behavior_model_version`은 `stock_auto_participant_profile_config`에만 저장하며 `V1` 또는 `V2`를 가진다. 같은 프로필의 모든 자동 참여자는 동일 모델을 사용하고 참여자 행에는 개인별 모델 선택 컬럼을 두지 않는다. 현재 프로필 설정은 모두 V2로 전환하며, 운영 지표가 기준을 벗어날 때만 해당 프로필 전체를 V1으로 되돌린다. 이미 생성된 주문은 `stock_order.auto_behavior_model_version` 스냅샷을 유지해 설정 변경 중에도 실행 의미가 바뀌지 않는다. 판단 비교 전용 저장 테이블이나 주문 hot path의 추가 DB 쓰기는 두지 않는다.
 - stock-batch job 중복 실행 방지는 JVM 메모리 락이 아니라 `stock_batch_job_lock` DB 테이블 기준으로 처리한다. 배치 서버가 여러 대 떠도 같은 job은 하나만 실행되어야 한다.
 - 자동 참여자 심리 프로필: `stock_auto_participant.profile_type`
 - 참여자별-종목별 가동/주문 활동 강도: `stock_auto_participant_symbol_config`
@@ -55,31 +56,31 @@
 | 프로필 | 실제 반영 신호 |
 | --- | --- |
 | `NEWS_REACTIVE` | 최신 종목 평가 보고서의 호재·악재 방향을 첫 주문과 가격 압력에 강하게 반영한다. |
-| `MOMENTUM_FOLLOWER` | 현재가가 전일종가보다 오르면 매수 쪽, 내리면 매도 쪽으로 따라간다. |
-| `CONTRARIAN` | 상승 후 매수 편향을 줄이고 하락 후 매수 편향을 키운다. |
+| `MOMENTUM_FOLLOWER` | 1시간 모멘텀과 직전 거래일 수익률의 방향이 일치할 때만 추세를 따라간다. |
+| `CONTRARIAN` | 3·5거래일 수익률이 함께 과도하게 움직일 때 반대 방향으로 대응한다. |
 | `LOSS_AVERSE` | 손실 구간에서 강제 물타기나 매도 대신 주문을 쉬어 손실 확정을 미룬다. |
-| `OVERCONFIDENT` | 평가손익이 플러스일수록 주문 수가 늘고 공격성이 올라간다. |
-| `HERD_FOLLOWER` | 미체결 매수/매도 잔량이 한쪽으로 몰리면 그 방향을 따라간다. |
-| `MARKET_MAKER` | 주식 재고 비중 40~60% 밴드 안에서는 양방향 주문을 번갈아 공급하고 밴드 밖에서는 재고를 밴드 쪽으로 되돌리는 방향을 우선한다. |
+| `OVERCONFIDENT` | 미실현 이익 또는 최근 5거래일 실현 성과와 1시간·1거래일 상승이 함께 확인되면 위험을 늘린다. |
+| `HERD_FOLLOWER` | 호가 깊이, 5분 모멘텀, 최근 5분 실제 체결량·참여 계좌가 같은 방향을 확인할 때만 따라간다. |
+| `MARKET_MAKER` | 전체 주식 목표 50%를 해당 계좌의 활성 자동장 종목 수로 나눈 종목별 목표와 ±20% 밴드 안에서는 수동 양방향 호가를 쌍으로 공급하고, 밴드 밖에서는 재고를 목표로 되돌리는 방향만 유지한다. |
 | `NOISE_TRADER` | 랜덤 노이즈가 크지만 현금이 없으면 매수하지 않고 보유가 없으면 매도하지 않는다. |
-| `VALUE_ANCHOR` | 현재가와 전일종가 괴리를 기준으로 기준가보다 싸면 사고 비싸면 팔아 차익을 줄인다. |
-| `SCALPER` | 주문 빈도와 호가 공격성이 높고 짧은 흐름에 자주 반응한다. |
-| `DAY_TRADER` | 단타형보다 더 높은 주문 빈도와 공격성으로 하루 안 가격 흐름을 따라간다. |
-| `SWING_TRADER` | 추세추종과 역추세를 섞어 며칠 단위 가격 흐름처럼 움직인다. |
-| `LONG_TERM_HOLDER` | 중립 신호에서는 주문을 쉬고, 큰 손실과 큰 수익 모두에서 성급한 매도 회피가 강하다. |
-| `PAYDAY_ACCUMULATOR` | 설정한 입금 주기마다 자동 현금 유입 후 매수 편향을 가진다. |
-| `DIVIDEND_REINVESTOR` | 월급 지급 대상이 아니며, 배당 이벤트로 들어온 현금을 다시 매수에 쓰고 장기 보유 성향을 함께 가진다. |
-| `LIMIT_DOWN_TRAPPED` | 깊은 손실 구간에서 현금이 부족해도 강제 손절 매도를 하지 않는다. |
-| `AVERAGE_DOWN_BUYER` | 손실 구간과 급락 구간에서 평균단가를 낮추기 위해 추가 매수한다. |
+| `VALUE_ANCHOR` | 펀더멘털 적정가가 아니라 20거래일 수익률 괴리를 천천히 되돌리는 중기 기준가 회귀형이다. |
+| `SCALPER` | 5분 신호, 3~5분 최대 보유시간, 작은 익절·손절과 장 마감 청산을 사용한다. |
+| `DAY_TRADER` | 마감 90~150분 전 신규 행동을 멈추고 마지막 45~75분에 보유량을 분할 청산한다. |
+| `SWING_TRADER` | 3·5·10거래일 신호와 2~10거래일 보유기간을 사용한다. 진입보다 완화된 청산 조건과 최소 보유기간으로 신호 히스테리시스를 둔다. |
+| `LONG_TERM_HOLDER` | 15~25거래일 최소 보유기간과 계좌별 5거래일 리밸런싱 창을 사용한다. |
+| `PAYDAY_ACCUMULATOR` | 실제 정기 입금에서 아직 예약·체결에 쓰이지 않은 전용 예산 안에서만 매수한다. |
+| `DIVIDEND_REINVESTOR` | 배당 원천 종목별 전용 예산의 발생·예약·체결·취소 반환을 대사하며 남은 예산 안에서만 재투자한다. |
+| `LIMIT_DOWN_TRAPPED` | 하한가에서는 보유분 매도를 시도하지만 유동성 부족으로 미체결될 수 있고, 하한가가 아닌 깊은 손실에서는 보유한다. |
+| `AVERAGE_DOWN_BUYER` | 거래일당 1회·최대 3회·예상 종목 비중 25% 안에서만 평균단가 낮추기를 시도한다. |
 | `STOP_LOSS_TRADER` | 수익률 -5% 이하 또는 매우 강한 하락 모멘텀에서 매도하며 작은 손실에서는 주문을 쉰다. |
-| `FOMO_BUYER` | 급등과 매수 군중 신호를 강하게 따라가며 주문 빈도와 호가 공격성이 높다. |
-| `PANIC_SELLER` | 급락과 군중 신호에 민감하게 매도 쪽으로 움직인다. |
-| `DIP_BUYER` | 종목의 단기 급락 구간에서 저점매수 편향이 강하며 개인 손실만으로 강제 매수하지 않는다. |
-| `PROFIT_LOCKER` | 수익 구간에서 빠르게 매도해 이익 확정을 우선한다. |
-| `LIQUIDITY_AVOIDANT` | 중립 신호에서는 주문을 쉬고, 강한 신호에서도 낮은 주문 빈도와 작은 수량으로 반응한다. |
-| `CASH_DEFENSIVE` | 현금 보유를 선호해 중립 신호에서는 쉬고 강한 신호에서도 작은 주문만 낸다. |
-| `WHALE` | 주문 수보다 주문 크기를 크게 가져간다. |
-| `SMALL_DIVERSIFIER` | 작은 주문을 여러 번 나눠 분산한다. |
+| `FOMO_BUYER` | 5분·1시간 상승, 매수 호가 깊이, 최근 5분 실제 체결량·참여 계좌가 함께 확인될 때만 추격한다. |
+| `PANIC_SELLER` | 5분·1시간 하락, 매도 호가 깊이, 최근 5분 실제 체결량·참여 계좌가 함께 확인될 때 보유분을 판다. |
+| `DIP_BUYER` | 1시간 급락 뒤 5분 반전이 확인될 때만 저점매수를 시도한다. |
+| `PROFIT_LOCKER` | 계좌별 +4~6% 임계값에서 가용 보유량의 35%를 부분 익절한다. |
+| `LIQUIDITY_AVOIDANT` | 실제 스프레드·가시 깊이와 관측 가능한 최근 체결량·참여 계좌가 부족하면 주문하지 않는다. |
+| `CASH_DEFENSIVE` | 현금 비중 60~70% 범위를 목표로 매도·제한 매수를 결정한다. |
+| `WHALE` | 큰 주문을 내되 평균 거래량·반대 호가 깊이·계좌 위험 상한으로 제한한다. |
+| `SMALL_DIVERSIFIER` | 종목 비중 15~25%와 최소 보유 종목 수를 기준으로 작은 주문을 내며, due 계좌의 현재 보유와 미체결 매수 노출이 낮은 활성 종목을 우선한다. |
 | `OBSERVER` | 중립 신호에서는 주문을 쉬고 강한 신호에서만 작은 수량으로 반응한다. |
 
 ## 현재 불변식
@@ -90,10 +91,11 @@
 - 자동 참여자 성향은 항상 주된 기준이다. 평가 보고서는 종목별 최신 관리 신호로만 섞이며, 보고서가 없어도 자동장은 동작한다.
 - 자동 참여자 profile type은 실제 회원 식별 구조를 바꾸지 않고, 같은 `user_key` 기반 자동참여자에 심리/행동 정책만 부여한다.
 - `AutoParticipantProfileType` 값 하나에는 반드시 같은 타입을 반환하는 `*Behavior` 클래스 하나가 있어야 하며, `AutoProfileBehaviorRegistry.createDefault()`에 등록해야 한다.
-- 프로필 설정의 `order_multiplier`, `quantity_multiplier`, `profit_taking_weight`는 실제 자동 주문 수, 종목 절대 상한 안의 추첨 주문 수량, 보유 수익 구간의 매도 전환에 반영된다. 주문·수량 배율 0은 주문 생성 중지를 뜻한다.
+- `order_multiplier`는 V1 재현과 기존 설정 마이그레이션용 호환 필드다. V2에서는 `decision_frequency_multiplier`, `orders_per_decision_multiplier`, `order_ttl_multiplier`, `quantity_multiplier`가 각각 의사결정 빈도·결정당 주문 수·TTL·수량만 제어한다. 구형 API가 V2 필드를 생략해도 변경된 `order_multiplier`나 행동 가중치에서 새 실행 정책을 다시 추론하지 않고 프로필별 명시 기본값을 사용한다. 빈도 또는 결정당 주문 수가 0이면 주문 결정을 중지한다.
+- V2의 `pricing_mode`, `exit_mode`, `inventory_mode` 기본값은 프로필 유형별 명시 정책이다. 연속 행동 가중치의 0.8/0.85/0.9 경계로 모드를 바꾸는 계산은 V1 재현과 1회성 마이그레이션에만 남긴다.
 - 프로필 설정의 핵심 행동 가중치가 저장되어 있지 않으면 해당 프로필의 기본 심리 성향을 유지한다. 기존 커스텀 설정 행이 있어도 새 행동 가중치가 비어 있으면 기본 성향을 0으로 덮어쓰지 않는다.
-- `PAYDAY_ACCUMULATOR`는 프로필 설정의 `recurring_deposit_amount`, `recurring_deposit_interval_value`, `recurring_deposit_interval_unit` 기준으로 `AUTO_PROFILE_RECURRING_DEPOSIT` 현금 유입을 만들고, 설정 주기 안의 원장 기록으로 중복 입금을 막는다. `recurring_deposit_interval_days`는 기존 일 단위 설정 호환용으로만 유지한다.
-- `DIVIDEND_REINVESTOR`는 `AUTO_PROFILE_RECURRING_DEPOSIT` 월급/정기 현금 유입을 쓰지 않는다. 배당 지급 기능이 만든 `DIVIDEND_PAYMENT` 현금 흐름이 있을 때 장기 보유와 재매수 성향으로 현금을 다시 주문장에 투입한다.
+- `PAYDAY_ACCUMULATOR`의 거래 행동과 정기 자금 공급은 별도 계약이다. API는 프로필 행동 가중치와 독립된 `fundingPolicy`의 `recurringDepositAmount`, `recurringDepositIntervalValue`, `recurringDepositIntervalUnit`를 사용한다. 배치는 이 자금 정책으로 `AUTO_PROFILE_RECURRING_DEPOSIT` 현금 유입과 같은 금액의 전용 funding budget을 만들고, 아직 예약·체결되지 않은 가용 예산 안에서만 매수한다. 저장 컬럼 `recurring_deposit_amount`, `recurring_deposit_interval_value`, `recurring_deposit_interval_unit`는 호환을 위해 기존 프로필 설정 테이블에 유지하지만 `ProfilePolicy`의 행동 가중치에는 포함하지 않는다. `recurring_deposit_interval_days`는 기존 일 단위 설정 호환용으로만 유지한다.
+- `DIVIDEND_REINVESTOR`는 `AUTO_PROFILE_RECURRING_DEPOSIT` 월급/정기 현금 유입을 쓰지 않는다. `DIVIDEND_PAYMENT`가 만든 배당 원천 종목별 전용 예산을 주문 예약·체결·취소와 대사하며 남은 금액 안에서만 매수한다.
 - `LONG_TERM_HOLDER`는 주문 빈도와 호가 공격성이 낮고 보유 인내도가 높아 매도를 늦춘다.
 - `LIMIT_DOWN_TRAPPED`는 큰 손실 구간에서 매도 회피가 강해 하락 중에도 쉽게 손절하지 않는다.
 - `AVERAGE_DOWN_BUYER`는 손실 구간에서 보유를 줄이기보다 추가 매수와 수량 확대를 통해 평균단가를 낮추려 한다.
@@ -105,6 +107,8 @@
 - `CASH_DEFENSIVE`는 관망형처럼 쉬는 구간이 있고, 강한 신호에서도 낮은 주문 빈도와 작은 수량으로 현금 여력을 남긴다.
 - 자동 주문 TTL은 종목별 `stock_auto_market_config.order_ttl_seconds`에 프로필 설정의 `order_ttl_multiplier`를 곱해 계산한다. `SCALPER`, `DAY_TRADER`, `PANIC_SELLER`는 짧게, `LONG_TERM_HOLDER`, `LIMIT_DOWN_TRAPPED`, `OBSERVER`는 길게 유지한다.
 - 자동 주문은 open order로 남을 수 있고 TTL로 취소된다.
+- V2 시장조성형의 기존 수동 호가는 최소 30시뮬레이션 초를 유지하고 동일 방향 최우선 호가에서 기본 2틱보다 멀어진 경우에만 TTL 전에 교체 대상으로 삼는다. TTL 만료를 포함한 취소·재등록은 방향별 한 실행 10건으로 제한하고 후보도 종목별 bounded 조회한다.
+- 소액분산형의 종목 노출 선택은 profile shard마다 due 계좌·활성 후보 종목을 한 번에 조회한다. 보유수량과 열린 매수 잔량을 현재가로 평가해 미보유·저비중 종목을 우선하되 주문 수·주기·수량 상한은 바꾸지 않는다. 계좌별 또는 주문별 추가 조회는 금지하며 실제 MySQL에서 기존 계좌·종목/주문 인덱스 선택과 p95를 별도로 확인한다.
 - 한 실행에서 여러 주문을 계획할 때 계좌 가용 현금·보유 수량과 미체결 잔량은 이미 계획한 주문을 메모리에서 반영해 다음 판단에 사용한다. 가격 기준 최우선 호가는 실행 시작 시점의 주문장으로 고정해 아직 저장되지 않은 자기 계획 주문이 다음 가격을 틱 단위로 연쇄 이동시키지 않는다. 이를 위해 주문마다 DB를 다시 조회하지 않는다.
 - 자동 주문 생성 단계에는 상대·자기 반대 호가 교차 방지 재가격이 없다. 합법적인 가격대와 호가단위 안의 시장성 지정가는 그대로 주문 원장에 들어간다. 실제 동일 계좌 자기체결은 후보 조회와 주문 잠금 후 재검증에서 차단하며, 상위 후보가 한 계좌 주문으로 가득 차도 최우선 다른 계좌 후보를 bounded 보강 조회해 뒤쪽의 정상 체결을 놓치지 않는다.
 - 자동장은 수요/공급 시장의 보조 기능이지 현재가 시장 기능이 아니다.
@@ -113,7 +117,7 @@
 
 - 발행자/시장공급자 매도 주문 정책 고도화.
 - 자동 주문이 사용자 주문에 미치는 영향을 모니터링하는 지표.
-- 프로필별 행동 성과 지표: 주문 수, 체결률, 매수/매도 비율, 평가손익, 평균 보유 시간.
+- 프로필별 행동 성과 지표 중 결정·HOLD·V1/V2 행동 일치율, 주문 수, 체결률, 매수/매도 비율, 현재 보유일은 검증 보고서에서 확인한다. 평가손익과 완결 포지션 기준 평균 보유 시간은 후속 성과 원장 범위다.
 - 시장 심리 확장: 뉴스 이벤트, 급등락, 유동성 부족, 연속 손실/연속 수익에 따른 프로필별 민감도 추가.
 
 ## 바꿀 때 순서
@@ -127,7 +131,7 @@
 
 ## 검증
 
-- `node scripts/verify-stock-auto-profiles.mjs`
+- `node scripts/verify-stock-auto-profiles.mjs`: 27개 enum/Behavior/DDL/UI 계약뿐 아니라 배치 `ProfileExecutionPolicy.v2Default()`와 백엔드의 프로필별 `pricing/exit/inventory` 명시 기본값을 직접 읽어 비교한다. 과거 가중치 임계값으로 V2 모드를 재추론해 일치로 오판하지 않는다.
 - `./gradlew :stock-batch-service:test --tests '*AutoMarketServiceTest*'`
 - `./gradlew :stock-batch-service:test --tests '*InternalOrderBookExecutionServiceTest*'`
 - `cd stock-front-service && npm run build`

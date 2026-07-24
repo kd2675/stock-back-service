@@ -14,9 +14,9 @@ import stock.back.service.database.entity.StockAutoParticipant;
 import stock.back.service.database.repository.StockAccountCashFlowRepository;
 import stock.back.service.database.repository.StockAccountRepository;
 import stock.back.service.database.repository.StockAutoParticipantRepository;
+import stock.back.service.database.repository.StockAutoParticipantProfileConfigRepository;
 import stock.back.service.market.vo.AutoParticipantRequest;
 import stock.back.service.market.vo.AutoParticipantResponse;
-import stock.back.service.trading.biz.AccountOrderCleanupService;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -29,9 +29,10 @@ public class AutoParticipantManagementService {
     private static final String AUTO_PARTICIPANT_GENERATE_CREATED_BY = "AUTO_PARTICIPANT_GENERATE";
 
     private final StockAutoParticipantRepository stockAutoParticipantRepository;
+    private final StockAutoParticipantProfileConfigRepository stockAutoParticipantProfileConfigRepository;
     private final StockAccountRepository stockAccountRepository;
     private final StockAccountCashFlowRepository stockAccountCashFlowRepository;
-    private final AccountOrderCleanupService accountOrderCleanupService;
+    private final AutoParticipantStrategyTransitionService strategyTransitionService;
     private final SimulationClockService simulationClockService;
     private final MarketLedgerFreezeGuard marketLedgerFreezeGuard;
 
@@ -57,6 +58,7 @@ public class AutoParticipantManagementService {
             throw StockException.badRequest("Auto participant display name must be 80 characters or less");
         }
         AutoParticipantProfileType profileType = parseAutoParticipantProfileType(request == null ? null : request.profileType());
+        Long behaviorSeed = normalizeBehaviorSeed(request == null ? null : request.behaviorSeed());
         BigDecimal recurringCashAmount = RecurringCashPolicy.normalizeAmount(request == null ? null : request.recurringCashAmount());
         BigDecimal recurringCashIntervalValue = RecurringCashPolicy.normalizeIntervalValue(
                 request == null ? null : request.recurringCashIntervalValue(),
@@ -66,27 +68,47 @@ public class AutoParticipantManagementService {
                 request == null ? null : request.recurringCashIntervalUnit(),
                 recurringCashAmount
         );
-        StockAutoParticipant participant = stockAutoParticipantRepository.findById(normalizedUserKey)
+        var existingParticipant = stockAutoParticipantRepository.findById(normalizedUserKey);
+        retirePreviousStrategyIfChanged(
+                normalizedUserKey,
+                existingParticipant.orElse(null),
+                request,
+                profileType
+        );
+        StockAutoParticipant participant = existingParticipant
                 .map(existing -> {
                     existing.update(
                             displayName,
                             request == null ? null : request.enabled(),
                             profileType,
+                            behaviorSeed,
                             recurringCashAmount,
                             recurringCashIntervalValue,
                             recurringCashIntervalUnit
                     );
                     return existing;
                 })
-                .orElseGet(() -> StockAutoParticipant.create(
-                        normalizedUserKey,
-                        displayName,
-                        request == null || request.enabled() == null || request.enabled(),
-                        profileType,
-                        recurringCashAmount,
-                        recurringCashIntervalValue,
-                        recurringCashIntervalUnit
-                ));
+                .orElseGet(() -> {
+                    StockAutoParticipant created = StockAutoParticipant.create(
+                            normalizedUserKey,
+                            displayName,
+                            request == null || request.enabled() == null || request.enabled(),
+                            profileType,
+                            recurringCashAmount,
+                            recurringCashIntervalValue,
+                            recurringCashIntervalUnit
+                    );
+                    created.update(
+                            displayName,
+                            request == null ? null : request.enabled(),
+                            profileType,
+                            behaviorSeed,
+                            recurringCashAmount,
+                            recurringCashIntervalValue,
+                            recurringCashIntervalUnit
+                    );
+                    return created;
+                });
         StockAutoParticipant savedParticipant = stockAutoParticipantRepository.save(participant);
         StockAccount account = ensureAccountAndInitialCash(normalizedUserKey, request, adminUserKey);
         return toAutoParticipantResponse(
@@ -104,14 +126,46 @@ public class AutoParticipantManagementService {
         StockAutoParticipant participant = stockAutoParticipantRepository.findById(normalizedUserKey)
                 .orElseThrow(() -> StockException.notFound("Unknown auto participant: " + normalizedUserKey));
         marketLedgerFreezeGuard.acquireMutationPermit("auto-participant withdrawal");
-        cancelOpenAutoParticipantOrders(normalizedUserKey);
+        retireCurrentStrategy(normalizedUserKey);
         participant.withdraw();
         return toAutoParticipantResponse(stockAutoParticipantRepository.save(participant));
     }
 
-    private void cancelOpenAutoParticipantOrders(String userKey) {
+    private void retireCurrentStrategy(String userKey) {
         stockAccountRepository.findByUserKeyAndStatusForUpdate(userKey, StockAccountStatus.ACTIVE)
-                .ifPresent(accountOrderCleanupService::cancelOpenOrderBookOrders);
+                .ifPresent(account -> strategyTransitionService.retireOpenOrdersAndFundingBudgets(
+                        account,
+                        simulationClockService.currentMarketDateTime()
+                ));
+    }
+
+    private void retirePreviousStrategyIfChanged(
+            String userKey,
+            StockAutoParticipant existing,
+            AutoParticipantRequest request,
+            AutoParticipantProfileType nextProfileType
+    ) {
+        if (existing == null || !strategyChanged(
+                existing,
+                request,
+                nextProfileType
+        )) {
+            return;
+        }
+        marketLedgerFreezeGuard.acquireMutationPermit("auto-participant strategy transition");
+        retireCurrentStrategy(userKey);
+    }
+
+    private boolean strategyChanged(
+            StockAutoParticipant existing,
+            AutoParticipantRequest request,
+            AutoParticipantProfileType nextProfileType
+    ) {
+        boolean nextEnabled = request == null || request.enabled() == null
+                ? Boolean.TRUE.equals(existing.getEnabled())
+                : request.enabled();
+        return !nextEnabled
+                || existing.getProfileType() != nextProfileType;
     }
 
     private StockAccount ensureAccountAndInitialCash(String userKey, AutoParticipantRequest request, String adminUserKey) {
@@ -180,6 +234,12 @@ public class AutoParticipantManagementService {
                 participant.getProfileType() == null
                         ? AutoParticipantProfileType.defaultType().name()
                         : participant.getProfileType().name(),
+                stockAutoParticipantProfileConfigRepository.findById(participant.getProfileType())
+                        .map(config -> config.getBehaviorModelVersion() == null
+                                ? "V2"
+                                : config.getBehaviorModelVersion().name())
+                        .orElse("V2"),
+                participant.getBehaviorSeed() == null ? null : participant.getBehaviorSeed().toString(),
                 participant.getRecurringCashAmount(),
                 participant.getRecurringCashIntervalValue(),
                 participant.getRecurringCashIntervalUnit() == null ? null : participant.getRecurringCashIntervalUnit().name(),
@@ -201,6 +261,22 @@ public class AutoParticipantManagementService {
             return AutoParticipantProfileType.valueOf(normalized.toUpperCase(Locale.ROOT));
         } catch (IllegalArgumentException exception) {
             throw StockException.badRequest("Unknown auto participant profile type: " + value);
+        }
+    }
+
+    private Long normalizeBehaviorSeed(String value) {
+        String normalized = MarketTextNormalizer.text(value);
+        if (normalized.isBlank()) {
+            return null;
+        }
+        try {
+            long parsed = Long.parseLong(normalized);
+            if (parsed < 0) {
+                throw StockException.badRequest("Behavior seed must be zero or greater");
+            }
+            return parsed;
+        } catch (NumberFormatException exception) {
+            throw StockException.badRequest("Behavior seed must be a 64-bit integer");
         }
     }
 

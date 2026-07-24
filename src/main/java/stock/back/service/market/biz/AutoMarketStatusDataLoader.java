@@ -47,6 +47,8 @@ public class AutoMarketStatusDataLoader {
                        p.display_name,
                        p.enabled,
                        p.profile_type,
+                       coalesce(pc.behavior_model_version, 'V2') as behavior_model_version,
+                       p.behavior_seed,
                        p.recurring_cash_amount,
                        p.recurring_cash_interval_value,
                        p.recurring_cash_interval_unit,
@@ -55,9 +57,75 @@ public class AutoMarketStatusDataLoader {
                        p.withdrawn_at,
                        a.id as account_id,
                        a.status as account_status,
-                       a.cash_balance
+                       a.cash_balance,
+                       coalesce(b.payday_available_budget, 0) as payday_available_budget,
+                       coalesce(b.dividend_available_budget, 0) as dividend_available_budget,
+                       coalesce(b.funding_reserved_amount, 0) as funding_reserved_amount,
+                       coalesce(b.funding_spent_amount, 0) as funding_spent_amount,
+                       coalesce(b.active_funding_budget_count, 0) as active_funding_budget_count,
+                       coalesce(s.tracked_position_count, 0) as tracked_position_count,
+                       coalesce(s.average_holding_trading_days, 0) as average_holding_trading_days,
+                       coalesce(s.average_down_round_count, 0) as average_down_round_count
                   from stock_auto_participant p
+                  left join stock_auto_participant_profile_config pc
+                    on pc.profile_type = p.profile_type
                   left join stock_account a on a.user_key = p.user_key
+	              left join (
+	                   select account_id,
+	                          sum(case
+	                                  when budget_type = 'PAYDAY'
+	                                   and status = 'ACTIVE'
+	                                   and (
+	                                        expires_business_date is null
+	                                        or expires_business_date >= (
+	                                            select active_business_date
+	                                              from stock_market_business_state
+	                                             where state_id = 'DEFAULT'
+	                                        )
+	                                   )
+	                                  then available_amount
+	                                  else 0
+	                              end) as payday_available_budget,
+	                          sum(case
+	                                  when budget_type = 'DIVIDEND'
+	                                   and status = 'ACTIVE'
+	                                   and (
+	                                        expires_business_date is null
+	                                        or expires_business_date >= (
+	                                            select active_business_date
+	                                              from stock_market_business_state
+	                                             where state_id = 'DEFAULT'
+	                                        )
+	                                   )
+	                                  then available_amount
+	                                  else 0
+	                              end) as dividend_available_budget,
+	                          sum(reserved_amount) as funding_reserved_amount,
+	                          sum(spent_amount) as funding_spent_amount,
+	                          sum(case
+	                                  when status = 'ACTIVE'
+	                                   and (
+	                                        expires_business_date is null
+	                                        or expires_business_date >= (
+	                                            select active_business_date
+	                                              from stock_market_business_state
+	                                             where state_id = 'DEFAULT'
+	                                        )
+	                                   )
+	                                  then 1
+	                                  else 0
+	                              end) as active_funding_budget_count
+	                     from stock_auto_participant_funding_budget
+	                    group by account_id
+	              ) b on b.account_id = a.id
+	              left join (
+	                   select account_id,
+	                          count(*) as tracked_position_count,
+	                          avg(holding_trading_days) as average_holding_trading_days,
+	                          sum(average_down_rounds) as average_down_round_count
+	                     from stock_auto_participant_position_state
+	                    group by account_id
+	              ) s on s.account_id = a.id
 	                 where p.withdrawn_at is null
 	                 order by p.user_key asc
 	                """;

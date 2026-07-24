@@ -200,6 +200,10 @@ class StockMysqlDdlContractTest {
             "TRUNCATE TABLE stock_execution;",
             "TRUNCATE TABLE stock_account_cash_flow;",
             "TRUNCATE TABLE stock_auto_participant_cash_flow_run;",
+            "TRUNCATE TABLE stock_auto_participant_order_budget;",
+            "TRUNCATE TABLE stock_auto_participant_funding_budget;",
+            "TRUNCATE TABLE stock_auto_participant_position_state;",
+            "TRUNCATE TABLE stock_auto_participant_performance_state;",
             "TRUNCATE TABLE stock_price_tick;",
             "TRUNCATE TABLE stock_order;",
             "TRUNCATE TABLE stock_auto_participant_order_schedule;",
@@ -230,6 +234,10 @@ class StockMysqlDdlContractTest {
             "TRUNCATE TABLE stock_execution;",
             "TRUNCATE TABLE stock_account_cash_flow;",
             "TRUNCATE TABLE stock_auto_participant_cash_flow_run;",
+            "TRUNCATE TABLE stock_auto_participant_order_budget;",
+            "TRUNCATE TABLE stock_auto_participant_funding_budget;",
+            "TRUNCATE TABLE stock_auto_participant_position_state;",
+            "TRUNCATE TABLE stock_auto_participant_performance_state;",
             "TRUNCATE TABLE stock_holding_snapshot;",
             "TRUNCATE TABLE stock_close_open_order_snapshot;",
             "TRUNCATE TABLE stock_close_open_order_summary;",
@@ -301,6 +309,7 @@ class StockMysqlDdlContractTest {
         assertThat(ddl).contains("KEY idx_stock_execution_candle (source, symbol, side, executed_at, id, price, quantity, gross_amount)");
         assertThat(ddl).contains("KEY idx_stock_order_order_book_match (market_type, symbol, side, status, order_type, limit_price, created_at, id)");
         assertThat(ddl).contains("KEY idx_stock_order_order_book_expiry (market_type, symbol, created_at, id, status, account_id)");
+        assertThat(ddl).doesNotContain("KEY idx_stock_order_auto_reprice");
         assertThat(ddl).contains(ADMIN_QUERY_INDEX_MARKERS.toArray(String[]::new));
         assertThat(ddl).contains(BATCH_OPERATION_TABLE_MARKERS.toArray(String[]::new));
         assertThat(ddl).contains(SIMULATION_CLOCK_TABLE_MARKERS.toArray(String[]::new));
@@ -321,6 +330,13 @@ class StockMysqlDdlContractTest {
                 "chk_stock_listing_auto_account_target_sell",
                 "chk_stock_listing_auto_account_target_holding",
                 "chk_stock_listing_auto_account_inventory_band"
+        );
+        assertThat(ddl).contains(
+                "decision_frequency_multiplier DECIMAL(8,4) NOT NULL DEFAULT 1.0000",
+                "orders_per_decision_multiplier DECIMAL(8,4) NOT NULL DEFAULT 1.0000",
+                "pricing_mode VARCHAR(30) NOT NULL DEFAULT 'DIRECTIONAL'",
+                "exit_mode VARCHAR(30) NOT NULL DEFAULT 'SIGNAL_DRIVEN'",
+                "inventory_mode VARCHAR(30) NOT NULL DEFAULT 'SIGNAL_DRIVEN'"
         );
         assertThat(ddl).doesNotContain(
                 DEFAULT_SEED_MARKERS.toArray(String[]::new)
@@ -385,6 +401,35 @@ class StockMysqlDdlContractTest {
                 "'ALL'",
                 "symbol IS NULL",
                 "ON DUPLICATE KEY UPDATE"
+        );
+    }
+
+    @Test
+    void eodRuntimeContractAlterDdl_separatesSchemaRevisionAndRestartContract() throws IOException {
+        String backDdl = Files.readString(
+                Path.of("src/main/resources/db/ddl/stock_eod_runtime_contract_alter.sql"),
+                StandardCharsets.UTF_8
+        );
+        String batchDdl = Files.readString(
+                Path.of("../stock-batch-service/src/main/resources/db/ddl/stock_eod_runtime_contract_alter.sql"),
+                StandardCharsets.UTF_8
+        );
+
+        assertThat(normalizeSqlBlock(backDdl)).isEqualTo(normalizeSqlBlock(batchDdl));
+        assertThat(firstExecutableSqlLine(backDdl)).isEqualTo("USE STOCK_SERVICE;");
+        assertThat(backDdl).contains(
+                "ADD COLUMN eod_contract_version VARCHAR(100) NULL AFTER schema_version",
+                "THEN 'EOD_V1'",
+                "WHEN status = 'COMPLETED' THEN 'LEGACY_COMPLETED'",
+                "ELSE 'UNDECLARED'",
+                "DEFAULT ''UNDECLARED''",
+                "chk_stock_post_close_cycle_eod_contract",
+                "chk_stock_post_close_phase_attempt_eod_contract"
+        );
+        assertThat(backDdl).doesNotContain(
+                "stock_order",
+                "stock_execution",
+                "stock_holding"
         );
     }
 
@@ -612,6 +657,256 @@ class StockMysqlDdlContractTest {
     }
 
     @Test
+    void autoParticipantBehaviorStateAlter_matchesBatchCopyAndBackfillsOnlyCurrentHoldings() throws IOException {
+        String backDdl = Files.readString(
+                Path.of("src/main/resources/db/ddl/stock_auto_participant_behavior_state_alter.sql"),
+                StandardCharsets.UTF_8
+        );
+        String batchDdl = Files.readString(
+                Path.of("../stock-batch-service/src/main/resources/db/ddl/stock_auto_participant_behavior_state_alter.sql"),
+                StandardCharsets.UTF_8
+        );
+
+        assertThat(normalizeSqlBlock(backDdl)).isEqualTo(normalizeSqlBlock(batchDdl));
+        assertThat(firstExecutableSqlLine(backDdl)).isEqualTo("USE STOCK_SERVICE;");
+        assertThat(backDdl).contains(
+                "CREATE TABLE IF NOT EXISTS stock_auto_participant_position_state",
+                "CREATE TABLE IF NOT EXISTS stock_auto_participant_performance_state",
+                "CREATE TABLE IF NOT EXISTS stock_auto_participant_funding_budget",
+                "CREATE TABLE IF NOT EXISTS stock_auto_participant_order_budget",
+                "INSERT IGNORE INTO stock_auto_participant_position_state",
+                "FROM stock_holding h",
+                "JOIN stock_account a",
+                "JOIN stock_auto_participant p",
+                "LEFT JOIN stock_market_business_state bs",
+                "ON bs.state_id = 'DEFAULT'",
+                "WHERE h.quantity > 0"
+        );
+        assertThat(backDdl).doesNotContain(
+                "ON bs.state_id = 'GLOBAL'",
+                "UPDATE stock_order ",
+                "FROM stock_order ",
+                "JOIN stock_order ",
+                "UPDATE stock_execution ",
+                "FROM stock_execution ",
+                "JOIN stock_execution "
+        );
+    }
+
+    @Test
+    void autoParticipantRealizedPerformanceAlter_matchesBatchCopyAndAvoidsHotLedgers() throws IOException {
+        String backDdl = Files.readString(
+                Path.of("src/main/resources/db/ddl/stock_auto_participant_realized_performance_alter.sql"),
+                StandardCharsets.UTF_8
+        );
+        String batchDdl = Files.readString(
+                Path.of("../stock-batch-service/src/main/resources/db/ddl/stock_auto_participant_realized_performance_alter.sql"),
+                StandardCharsets.UTF_8
+        );
+
+        assertThat(normalizeSqlBlock(backDdl)).isEqualTo(normalizeSqlBlock(batchDdl));
+        assertThat(firstExecutableSqlLine(backDdl)).isEqualTo("USE STOCK_SERVICE;");
+        assertThat(backDdl).contains(
+                "CREATE TABLE IF NOT EXISTS stock_auto_participant_performance_state",
+                "recent_profitable_trading_days",
+                "recent_closed_trading_days",
+                "chk_stock_auto_performance_recent_days"
+        );
+        assertThat(backDdl).doesNotContain(
+                "stock_order ",
+                "stock_execution "
+        );
+    }
+
+    @Test
+    void autoParticipantProfileExecutionPolicyAlter_matchesBatchCopy() throws IOException {
+        String backDdl = Files.readString(
+                Path.of("src/main/resources/db/ddl/stock_auto_participant_profile_execution_policy_alter.sql"),
+                StandardCharsets.UTF_8
+        );
+        String batchDdl = Files.readString(
+                Path.of("../stock-batch-service/src/main/resources/db/ddl/stock_auto_participant_profile_execution_policy_alter.sql"),
+                StandardCharsets.UTF_8
+        );
+
+        assertThat(normalizeSqlBlock(backDdl)).isEqualTo(normalizeSqlBlock(batchDdl));
+        assertThat(firstExecutableSqlLine(backDdl)).isEqualTo("USE STOCK_SERVICE;");
+        assertThat(backDdl).contains(
+                "decision_frequency_multiplier",
+                "orders_per_decision_multiplier",
+                "pricing_mode",
+                "exit_mode",
+                "inventory_mode"
+        );
+        assertThat(backDdl).doesNotContain(
+                "stock_order ",
+                "stock_execution "
+        );
+    }
+
+    @Test
+    void autoParticipantShadowCleanupAlter_matchesBatchCopyAndRemovesLegacyContractSafely() throws IOException {
+        String backDdl = Files.readString(
+                Path.of("src/main/resources/db/ddl/stock_auto_participant_shadow_cleanup_alter.sql"),
+                StandardCharsets.UTF_8
+        );
+        String batchDdl = Files.readString(
+                Path.of("../stock-batch-service/src/main/resources/db/ddl/stock_auto_participant_shadow_cleanup_alter.sql"),
+                StandardCharsets.UTF_8
+        );
+
+        assertThat(normalizeSqlBlock(backDdl)).isEqualTo(normalizeSqlBlock(batchDdl));
+        assertThat(firstExecutableSqlLine(backDdl)).isEqualTo("USE STOCK_SERVICE;");
+        assertThat(backDdl).contains(
+                "DROP CHECK chk_stock_auto_participant_funding_shadow",
+                "DROP CHECK chk_stock_auto_participant_behavior_rollout_pair",
+                "DROP CHECK chk_stock_auto_participant_behavior_evaluation",
+                "SET behavior_model_version = ''V1'' WHERE behavior_evaluation_mode = ''SHADOW''",
+                "DROP COLUMN behavior_evaluation_mode",
+                "DROP TABLE IF EXISTS stock_auto_profile_decision_day_summary"
+        );
+        assertThat(backDdl.indexOf("DROP CHECK chk_stock_auto_participant_behavior_rollout_pair"))
+                .isLessThan(backDdl.indexOf("SET behavior_model_version = ''V1''"));
+        assertThat(backDdl).doesNotContain(
+                "ALTER TABLE stock_order",
+                "ALTER TABLE stock_execution"
+        );
+    }
+
+    @Test
+    void autoOrderPolicySnapshotAlter_matchesBatchCopyAndDoesNotAddHotLedgerIndex() throws IOException {
+        String backDdl = Files.readString(
+                Path.of("src/main/resources/db/ddl/stock_auto_order_policy_snapshot_alter.sql"),
+                StandardCharsets.UTF_8
+        );
+        String batchDdl = Files.readString(
+                Path.of("../stock-batch-service/src/main/resources/db/ddl/stock_auto_order_policy_snapshot_alter.sql"),
+                StandardCharsets.UTF_8
+        );
+
+        assertThat(normalizeSqlBlock(backDdl)).isEqualTo(normalizeSqlBlock(batchDdl));
+        assertThat(firstExecutableSqlLine(backDdl)).isEqualTo("USE STOCK_SERVICE;");
+        assertThat(backDdl).contains(
+                "expires_at", "auto_profile_type", "auto_behavior_model_version",
+                "ALGORITHM=INSTANT"
+        );
+        assertThat(backDdl).doesNotContain("ALGORITHM=INSTANT, LOCK=NONE");
+        assertThat(backDdl.toLowerCase()).doesNotContain("add index", "add key", "create index");
+    }
+
+    @Test
+    void autoMarketRepriceIndexAlter_matchesBatchCopyAndRemovesWriteAmplifyingIndex() throws IOException {
+        String backDdl = Files.readString(
+                Path.of("src/main/resources/db/ddl/stock_auto_market_reprice_index_alter.sql"),
+                StandardCharsets.UTF_8
+        );
+        String batchDdl = Files.readString(
+                Path.of("../stock-batch-service/src/main/resources/db/ddl/stock_auto_market_reprice_index_alter.sql"),
+                StandardCharsets.UTF_8
+        );
+
+        assertThat(normalizeSqlBlock(backDdl)).isEqualTo(normalizeSqlBlock(batchDdl));
+        assertThat(firstExecutableSqlLine(backDdl)).isEqualTo("USE STOCK_SERVICE;");
+        assertThat(backDdl).contains(
+                "information_schema.statistics",
+                "idx_stock_order_auto_reprice",
+                "DROP INDEX idx_stock_order_auto_reprice",
+                "ALGORITHM=INPLACE",
+                "LOCK=NONE"
+        );
+        assertThat(backDdl.toLowerCase()).doesNotContain("add index idx_stock_order_auto_reprice");
+        assertThat(backDdl).doesNotContain("stock_execution");
+    }
+
+    @Test
+    void closeAccountProfileSnapshotAlter_freezesFutureProfilesWithoutReclassifyingHistory()
+            throws IOException {
+        String backDdl = Files.readString(
+                Path.of("src/main/resources/db/ddl/stock_close_account_profile_snapshot_alter.sql"),
+                StandardCharsets.UTF_8
+        );
+        String batchDdl = Files.readString(
+                Path.of("../stock-batch-service/src/main/resources/db/ddl/stock_close_account_profile_snapshot_alter.sql"),
+                StandardCharsets.UTF_8
+        );
+
+        assertThat(normalizeSqlBlock(backDdl)).isEqualTo(normalizeSqlBlock(batchDdl));
+        assertThat(firstExecutableSqlLine(backDdl)).isEqualTo("USE STOCK_SERVICE;");
+        assertThat(backDdl).contains(
+                "ADD COLUMN participant_profile_type VARCHAR(40) NULL",
+                "chk_stock_close_account_snapshot_profile_type",
+                "Historical rows are",
+                "intentionally left NULL"
+        );
+        assertThat(backDdl).doesNotContain(
+                "UPDATE stock_close_account_snapshot",
+                "FROM stock_order",
+                "JOIN stock_order",
+                "FROM stock_execution",
+                "JOIN stock_execution"
+        );
+    }
+
+    @Test
+    void autoParticipantBehaviorModel_isOwnedByProfileAndDefaultsToV2() throws IOException {
+        String canonicalDdl = Files.readString(
+                Path.of("src/main/resources/db/ddl/stock_all.sql"),
+                StandardCharsets.UTF_8
+        );
+        String alterDdl = Files.readString(
+                Path.of("src/main/resources/db/ddl/stock_auto_participant_profile_behavior_model_alter.sql"),
+                StandardCharsets.UTF_8
+        );
+        String batchAlterDdl = Files.readString(
+                Path.of("../stock-batch-service/src/main/resources/db/ddl/stock_auto_participant_profile_behavior_model_alter.sql"),
+                StandardCharsets.UTF_8
+        );
+        String h2Ddl = Files.readString(
+                Path.of("../stock-batch-service/src/main/resources/db/ddl/stock_h2.sql"),
+                StandardCharsets.UTF_8
+        );
+
+        assertThat(extractCreateTableBlock(canonicalDdl, "stock_auto_participant"))
+                .contains("behavior_seed BIGINT NULL")
+                .doesNotContain("behavior_model_version");
+        assertThat(extractCreateTableBlock(canonicalDdl, "stock_auto_participant_profile_config"))
+                .contains(
+                        "behavior_model_version VARCHAR(20) NOT NULL DEFAULT 'V2'",
+                        "CONSTRAINT chk_stock_auto_profile_behavior_model CHECK"
+                );
+        assertThat(extractCreateTableBlock(h2Ddl, "stock_auto_participant"))
+                .contains("behavior_seed BIGINT")
+                .doesNotContain("behavior_model_version");
+        assertThat(extractCreateTableBlock(h2Ddl, "stock_auto_participant_profile_config"))
+                .contains(
+                        "behavior_model_version VARCHAR(20) NOT NULL DEFAULT 'V2'",
+                        "CONSTRAINT chk_stock_auto_profile_behavior_model CHECK"
+                );
+        assertThat(alterDdl).contains(
+                "ADD COLUMN behavior_model_version VARCHAR(20) NOT NULL DEFAULT ''V2''",
+                "UPDATE stock_auto_participant_profile_config",
+                "SET behavior_model_version = 'V2'",
+                "ALTER TABLE stock_auto_participant DROP COLUMN behavior_model_version"
+        );
+        assertThat(normalizeSqlBlock(alterDdl)).isEqualTo(normalizeSqlBlock(batchAlterDdl));
+        assertThat(canonicalDdl).doesNotContain(
+                "behavior_evaluation_mode",
+                "chk_stock_auto_participant_behavior_rollout_pair",
+                "chk_stock_auto_participant_funding_shadow"
+        );
+        assertThat(h2Ddl).doesNotContain(
+                "behavior_evaluation_mode",
+                "chk_stock_auto_participant_behavior_rollout_pair",
+                "chk_stock_auto_participant_funding_shadow"
+        );
+        assertThat(alterDdl).doesNotContain(
+                "behavior_evaluation_mode",
+                "chk_stock_auto_participant_behavior_rollout_pair",
+                "chk_stock_auto_participant_funding_shadow"
+        );
+    }
+
+    @Test
     void portfolioPostCloseCashDataFix_isGuardedIdempotentAndMatchesBatchCopy() throws IOException {
         String backDdl = Files.readString(
                 Path.of("src/main/resources/db/ddl/stock_portfolio_snapshot_post_close_cash_data_fix.sql"),
@@ -731,38 +1026,6 @@ class StockMysqlDdlContractTest {
         assertThat(backDdl)
                 .doesNotContain("UPDATE stock_batch_job_signal signal")
                 .doesNotContain("ADD COLUMN IF NOT EXISTS");
-    }
-
-    @Test
-    void eodApplicationRollbackAlterDdl_isFailClosedNonDestructiveAndSyncedWithBatchCopy()
-            throws IOException {
-        String backDdl = Files.readString(
-                Path.of("src/main/resources/db/ddl/stock_eod_application_rollback_alter.sql"),
-                StandardCharsets.UTF_8
-        );
-        String batchDdl = Files.readString(
-                Path.of("../stock-batch-service/src/main/resources/db/ddl/stock_eod_application_rollback_alter.sql"),
-                StandardCharsets.UTF_8
-        );
-
-        assertThat(normalizeSqlBlock(backDdl)).isEqualTo(normalizeSqlBlock(batchDdl));
-        assertThat(firstExecutableSqlLine(backDdl)).isEqualTo("USE STOCK_SERVICE;");
-        assertThat(backDdl).contains(
-                "status IN (''DEFERRED'', ''PROCESSING'', ''DEAD_LETTER'')",
-                "status = ''PENDING'' AND eligible_at IS NOT NULL",
-                "EOD_APPLICATION_ROLLBACK",
-                "failure_class = ''APPLICATION_ROLLBACK''",
-                "DROP CHECK chk_stock_batch_job_signal_status",
-                "MODIFY COLUMN next_attempt_at DATETIME NULL"
-        );
-        assertThat(backDdl).doesNotContain(
-                "DROP TABLE",
-                "DROP COLUMN",
-                "ALTER TABLE stock_order",
-                "ALTER TABLE stock_execution",
-                "FROM stock_order",
-                "FROM stock_execution"
-        );
     }
 
     @Test
@@ -1127,6 +1390,37 @@ class StockMysqlDdlContractTest {
         assertThat(firstExecutableSqlLine(maintenanceSql)).isEqualTo("USE STOCK_SERVICE;");
         assertThat(maintenanceSql).contains(CLEAR_RUNTIME_HISTORY_KEEP_PARTICIPANTS_REQUIRED_MARKERS.toArray(String[]::new));
         assertThat(maintenanceSql).doesNotContain(CLEAR_RUNTIME_HISTORY_KEEP_PARTICIPANTS_FORBIDDEN_TRUNCATES.toArray(String[]::new));
+    }
+
+    @Test
+    void autoParticipantV2ValidationReport_isReadOnlyAndUsesBoundedLedgerRanges() throws IOException {
+        String reportSql = Files.readString(
+                Path.of("src/main/resources/db/maintenance/stock_auto_participant_profile_v2_validation_report.sql"),
+                StandardCharsets.UTF_8
+        );
+        String executableSql = reportSql.lines()
+                .filter(line -> !line.trim().startsWith("--"))
+                .reduce((left, right) -> left + "\n" + right)
+                .orElse("");
+
+        assertThat(firstExecutableSqlLine(reportSql)).isEqualTo("USE STOCK_SERVICE;");
+        assertThat(reportSql).contains(AUTO_PARTICIPANT_PROFILE_TYPES.toArray(String[]::new));
+        assertThat(reportSql).contains(
+                "stock_order.created_at >=",
+                "stock_order.created_at <",
+                "PROFILE_CONTRACT",
+                "PARTICIPANT_MODEL_EXPORT",
+                "ORDER_CANARY",
+                "FUNDING_RECONCILIATION",
+                "behavior_model_version"
+        );
+        assertThat(reportSql).doesNotContain(
+                "behavior_evaluation_mode",
+                "stock_auto_profile_decision_day_summary"
+        );
+        assertThat(Pattern.compile(
+                "(?im)^\\s*(INSERT|UPDATE|DELETE|ALTER|CREATE|DROP|TRUNCATE|CALL)\\b"
+        ).matcher(executableSql).find()).isFalse();
     }
 
     private String readStockAllSql() throws IOException {

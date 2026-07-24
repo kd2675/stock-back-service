@@ -63,9 +63,10 @@ class EodOperationsOverviewServiceTest {
                 insert into stock_post_close_cycle(
                     business_date, scope_type, scope_key, cycle_kind, phase, status,
                     phase_revision, version, close_run_id, settlement_eligible_at,
-                    next_retry_at, attempt_count, started_at, build_version, schema_version, created_at, updated_at
+                    next_retry_at, attempt_count, started_at, build_version, schema_version,
+                    eod_contract_version, created_at, updated_at
                 ) values (?, 'FULL_MARKET', 'ALL', 'TRADING', 'LEDGER_FROZEN', 'FAILED',
-                          1, 1, ?, ?, ?, 1, ?, 'build-test', 'schema-test', ?, ?)
+                          1, 1, ?, ?, ?, 1, ?, 'build-test', 'schema-test', 'EOD_V1', ?, ?)
                 """,
                 BUSINESS_DATE,
                 closeRunId,
@@ -98,9 +99,9 @@ class EodOperationsOverviewServiceTest {
                 """
                 insert into stock_post_close_phase_attempt(
                     cycle_id, phase, attempt_no, owner_id, status, started_at,
-                    build_version, schema_version, created_at, updated_at
+                    build_version, schema_version, eod_contract_version, created_at, updated_at
                 ) values (?, 'CLOSE_REQUESTED', 1, 'test-owner', 'COMPLETED', ?,
-                          'build-test', 'schema-test', ?, ?)
+                          'build-test', 'schema-test', 'EOD_V1', ?, ?)
                 """,
                 cycleId,
                 CLOSED_AT,
@@ -126,26 +127,30 @@ class EodOperationsOverviewServiceTest {
                         value -> value.businessState().rawSimulationDateTime(),
                         value -> value.marketState().orderEntryOpen(),
                         value -> value.cycle().phase(),
+                        value -> value.cycle().eodContractVersion(),
                         value -> value.cycle().nextRetryAt(),
                         value -> value.metrics().capturedOpenOrderCount(),
                         value -> value.metrics().releasedBuyCash(),
                         value -> value.metrics().releasedSellQuantity(),
                         value -> value.metrics().settlementMissingAccountCount(),
                         value -> value.readinessChecks().getFirst().failureCount(),
-                        value -> value.latestAttempt().status()
+                        value -> value.latestAttempt().status(),
+                        value -> value.latestAttempt().eodContractVersion()
                 )
                 .containsExactly(
                         BUSINESS_DATE,
                         CLOSED_AT,
                         false,
                         "LEDGER_FROZEN",
+                        "EOD_V1",
                         CLOSED_AT.plusMinutes(11),
                         12L,
                         new BigDecimal("147000.00"),
                         4L,
                         100L,
                         2L,
-                        "COMPLETED"
+                        "COMPLETED",
+                        "EOD_V1"
                 );
     }
 
@@ -301,6 +306,7 @@ class EodOperationsOverviewServiceTest {
                     last_error_message varchar(1000),
                     build_version varchar(100),
                     schema_version varchar(100),
+                    eod_contract_version varchar(100) not null default 'UNDECLARED',
                     created_at timestamp not null,
                     updated_at timestamp not null
                 )
@@ -339,6 +345,7 @@ class EodOperationsOverviewServiceTest {
                     error_message varchar(1000),
                     build_version varchar(100),
                     schema_version varchar(100),
+                    eod_contract_version varchar(100) not null default 'UNDECLARED',
                     created_at timestamp not null,
                     updated_at timestamp not null
                 )

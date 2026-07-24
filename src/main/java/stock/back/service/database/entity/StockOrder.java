@@ -69,6 +69,9 @@ public class StockOrder {
     @Column(name = "reserved_cash", nullable = false, precision = 19, scale = 2)
     private BigDecimal reservedCash;
 
+    @Column(name = "funding_budget_type", length = 20)
+    private String fundingBudgetType;
+
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
 

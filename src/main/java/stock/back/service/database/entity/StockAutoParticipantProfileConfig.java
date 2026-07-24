@@ -24,6 +24,10 @@ public class StockAutoParticipantProfileConfig {
     @Column(name = "profile_type", nullable = false, length = 40)
     private AutoParticipantProfileType profileType;
 
+    @Enumerated(EnumType.STRING)
+    @Column(name = "behavior_model_version", nullable = false, length = 20)
+    private AutoParticipantBehaviorModelVersion behaviorModelVersion;
+
     @Column(name = "news_weight", precision = 8, scale = 4)
     private BigDecimal newsWeight;
 
@@ -57,6 +61,12 @@ public class StockAutoParticipantProfileConfig {
     @Column(name = "order_multiplier", nullable = false, precision = 8, scale = 4)
     private BigDecimal orderMultiplier;
 
+    @Column(name = "decision_frequency_multiplier", nullable = false, precision = 8, scale = 4)
+    private BigDecimal decisionFrequencyMultiplier;
+
+    @Column(name = "orders_per_decision_multiplier", nullable = false, precision = 8, scale = 4)
+    private BigDecimal ordersPerDecisionMultiplier;
+
     @Column(name = "aggression_multiplier", nullable = false, precision = 8, scale = 4)
     private BigDecimal aggressionMultiplier;
 
@@ -77,6 +87,18 @@ public class StockAutoParticipantProfileConfig {
 
     @Column(name = "profit_taking_weight", nullable = false, precision = 8, scale = 4)
     private BigDecimal profitTakingWeight;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "pricing_mode", nullable = false, length = 30)
+    private AutoParticipantProfilePricingMode pricingMode;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "exit_mode", nullable = false, length = 30)
+    private AutoParticipantProfileExitMode exitMode;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "inventory_mode", nullable = false, length = 30)
+    private AutoParticipantProfileInventoryMode inventoryMode;
 
     @Column(name = "recurring_deposit_amount", nullable = false, precision = 19, scale = 2)
     private BigDecimal recurringDepositAmount;
@@ -130,6 +152,8 @@ public class StockAutoParticipantProfileConfig {
                 panicSellWeight,
                 dipBuyWeight,
                 orderMultiplier,
+                legacyDecisionFrequency(orderMultiplier, orderTtlMultiplier),
+                orderMultiplier,
                 aggressionMultiplier,
                 pricePressureSensitivity,
                 orderTtlMultiplier,
@@ -137,6 +161,9 @@ public class StockAutoParticipantProfileConfig {
                 holdingPatienceWeight,
                 deepLossHoldWeight,
                 profitTakingWeight,
+                legacyPricingMode(marketMakingWeight),
+                legacyExitMode(profitTakingWeight, holdingPatienceWeight),
+                legacyInventoryMode(marketMakingWeight),
                 recurringDepositAmount,
                 BigDecimal.valueOf(recurringDepositIntervalDays == null ? 30 : recurringDepositIntervalDays),
                 RecurringCashIntervalUnit.DAY
@@ -167,8 +194,69 @@ public class StockAutoParticipantProfileConfig {
             BigDecimal recurringDepositIntervalValue,
             RecurringCashIntervalUnit recurringDepositIntervalUnit
     ) {
+        return create(
+                profileType,
+                newsWeight,
+                momentumWeight,
+                contrarianWeight,
+                lossAversionWeight,
+                herdingWeight,
+                marketMakingWeight,
+                overconfidenceWeight,
+                noiseWeight,
+                panicSellWeight,
+                dipBuyWeight,
+                orderMultiplier,
+                legacyDecisionFrequency(orderMultiplier, orderTtlMultiplier),
+                orderMultiplier,
+                aggressionMultiplier,
+                pricePressureSensitivity,
+                orderTtlMultiplier,
+                quantityMultiplier,
+                holdingPatienceWeight,
+                deepLossHoldWeight,
+                profitTakingWeight,
+                legacyPricingMode(marketMakingWeight),
+                legacyExitMode(profitTakingWeight, holdingPatienceWeight),
+                legacyInventoryMode(marketMakingWeight),
+                recurringDepositAmount,
+                recurringDepositIntervalValue,
+                recurringDepositIntervalUnit
+        );
+    }
+
+    public static StockAutoParticipantProfileConfig create(
+            AutoParticipantProfileType profileType,
+            BigDecimal newsWeight,
+            BigDecimal momentumWeight,
+            BigDecimal contrarianWeight,
+            BigDecimal lossAversionWeight,
+            BigDecimal herdingWeight,
+            BigDecimal marketMakingWeight,
+            BigDecimal overconfidenceWeight,
+            BigDecimal noiseWeight,
+            BigDecimal panicSellWeight,
+            BigDecimal dipBuyWeight,
+            BigDecimal orderMultiplier,
+            BigDecimal decisionFrequencyMultiplier,
+            BigDecimal ordersPerDecisionMultiplier,
+            BigDecimal aggressionMultiplier,
+            BigDecimal pricePressureSensitivity,
+            BigDecimal orderTtlMultiplier,
+            BigDecimal quantityMultiplier,
+            BigDecimal holdingPatienceWeight,
+            BigDecimal deepLossHoldWeight,
+            BigDecimal profitTakingWeight,
+            AutoParticipantProfilePricingMode pricingMode,
+            AutoParticipantProfileExitMode exitMode,
+            AutoParticipantProfileInventoryMode inventoryMode,
+            BigDecimal recurringDepositAmount,
+            BigDecimal recurringDepositIntervalValue,
+            RecurringCashIntervalUnit recurringDepositIntervalUnit
+    ) {
         StockAutoParticipantProfileConfig config = new StockAutoParticipantProfileConfig();
         config.profileType = profileType;
+        config.behaviorModelVersion = AutoParticipantBehaviorModelVersion.V2;
         config.update(
                 newsWeight,
                 momentumWeight,
@@ -181,6 +269,8 @@ public class StockAutoParticipantProfileConfig {
                 panicSellWeight,
                 dipBuyWeight,
                 orderMultiplier,
+                decisionFrequencyMultiplier,
+                ordersPerDecisionMultiplier,
                 aggressionMultiplier,
                 pricePressureSensitivity,
                 orderTtlMultiplier,
@@ -188,6 +278,9 @@ public class StockAutoParticipantProfileConfig {
                 holdingPatienceWeight,
                 deepLossHoldWeight,
                 profitTakingWeight,
+                pricingMode,
+                exitMode,
+                inventoryMode,
                 recurringDepositAmount,
                 recurringDepositIntervalValue,
                 recurringDepositIntervalUnit
@@ -229,6 +322,8 @@ public class StockAutoParticipantProfileConfig {
                 panicSellWeight,
                 dipBuyWeight,
                 orderMultiplier,
+                legacyDecisionFrequency(orderMultiplier, orderTtlMultiplier),
+                orderMultiplier,
                 aggressionMultiplier,
                 pricePressureSensitivity,
                 orderTtlMultiplier,
@@ -236,6 +331,9 @@ public class StockAutoParticipantProfileConfig {
                 holdingPatienceWeight,
                 deepLossHoldWeight,
                 profitTakingWeight,
+                legacyPricingMode(marketMakingWeight),
+                legacyExitMode(profitTakingWeight, holdingPatienceWeight),
+                legacyInventoryMode(marketMakingWeight),
                 recurringDepositAmount,
                 BigDecimal.valueOf(recurringDepositIntervalDays == null ? 30 : recurringDepositIntervalDays),
                 RecurringCashIntervalUnit.DAY
@@ -265,6 +363,64 @@ public class StockAutoParticipantProfileConfig {
             BigDecimal recurringDepositIntervalValue,
             RecurringCashIntervalUnit recurringDepositIntervalUnit
     ) {
+        update(
+                newsWeight,
+                momentumWeight,
+                contrarianWeight,
+                lossAversionWeight,
+                herdingWeight,
+                marketMakingWeight,
+                overconfidenceWeight,
+                noiseWeight,
+                panicSellWeight,
+                dipBuyWeight,
+                orderMultiplier,
+                legacyDecisionFrequency(orderMultiplier, orderTtlMultiplier),
+                orderMultiplier,
+                aggressionMultiplier,
+                pricePressureSensitivity,
+                orderTtlMultiplier,
+                quantityMultiplier,
+                holdingPatienceWeight,
+                deepLossHoldWeight,
+                profitTakingWeight,
+                legacyPricingMode(marketMakingWeight),
+                legacyExitMode(profitTakingWeight, holdingPatienceWeight),
+                legacyInventoryMode(marketMakingWeight),
+                recurringDepositAmount,
+                recurringDepositIntervalValue,
+                recurringDepositIntervalUnit
+        );
+    }
+
+    public void update(
+            BigDecimal newsWeight,
+            BigDecimal momentumWeight,
+            BigDecimal contrarianWeight,
+            BigDecimal lossAversionWeight,
+            BigDecimal herdingWeight,
+            BigDecimal marketMakingWeight,
+            BigDecimal overconfidenceWeight,
+            BigDecimal noiseWeight,
+            BigDecimal panicSellWeight,
+            BigDecimal dipBuyWeight,
+            BigDecimal orderMultiplier,
+            BigDecimal decisionFrequencyMultiplier,
+            BigDecimal ordersPerDecisionMultiplier,
+            BigDecimal aggressionMultiplier,
+            BigDecimal pricePressureSensitivity,
+            BigDecimal orderTtlMultiplier,
+            BigDecimal quantityMultiplier,
+            BigDecimal holdingPatienceWeight,
+            BigDecimal deepLossHoldWeight,
+            BigDecimal profitTakingWeight,
+            AutoParticipantProfilePricingMode pricingMode,
+            AutoParticipantProfileExitMode exitMode,
+            AutoParticipantProfileInventoryMode inventoryMode,
+            BigDecimal recurringDepositAmount,
+            BigDecimal recurringDepositIntervalValue,
+            RecurringCashIntervalUnit recurringDepositIntervalUnit
+    ) {
         this.newsWeight = newsWeight;
         this.momentumWeight = momentumWeight;
         this.contrarianWeight = contrarianWeight;
@@ -276,6 +432,8 @@ public class StockAutoParticipantProfileConfig {
         this.panicSellWeight = panicSellWeight;
         this.dipBuyWeight = dipBuyWeight;
         this.orderMultiplier = orderMultiplier;
+        this.decisionFrequencyMultiplier = decisionFrequencyMultiplier;
+        this.ordersPerDecisionMultiplier = ordersPerDecisionMultiplier;
         this.aggressionMultiplier = aggressionMultiplier;
         this.pricePressureSensitivity = pricePressureSensitivity;
         this.orderTtlMultiplier = orderTtlMultiplier;
@@ -283,6 +441,9 @@ public class StockAutoParticipantProfileConfig {
         this.holdingPatienceWeight = holdingPatienceWeight;
         this.deepLossHoldWeight = deepLossHoldWeight;
         this.profitTakingWeight = profitTakingWeight;
+        this.pricingMode = pricingMode;
+        this.exitMode = exitMode;
+        this.inventoryMode = inventoryMode;
         this.recurringDepositAmount = recurringDepositAmount;
         this.recurringDepositIntervalValue = recurringDepositIntervalValue;
         this.recurringDepositIntervalUnit = recurringDepositIntervalUnit;
@@ -290,5 +451,55 @@ public class StockAutoParticipantProfileConfig {
                 ? Math.max(1, recurringDepositIntervalValue.setScale(0, java.math.RoundingMode.CEILING).intValue())
                 : 1;
         this.updatedAt = LocalDateTime.now();
+    }
+
+    public void updateBehaviorModelVersion(AutoParticipantBehaviorModelVersion behaviorModelVersion) {
+        if (behaviorModelVersion == null) {
+            throw new IllegalArgumentException("Auto participant profile behavior model version is required");
+        }
+        this.behaviorModelVersion = behaviorModelVersion;
+        this.updatedAt = LocalDateTime.now();
+    }
+
+    private static BigDecimal legacyDecisionFrequency(
+            BigDecimal orderMultiplier,
+            BigDecimal orderTtlMultiplier
+    ) {
+        if (orderMultiplier == null || orderTtlMultiplier == null) {
+            return BigDecimal.ONE;
+        }
+        BigDecimal legacyMinimum = new BigDecimal("0.25");
+        return orderMultiplier.max(legacyMinimum)
+                .divide(
+                        orderTtlMultiplier.max(legacyMinimum),
+                        4,
+                        java.math.RoundingMode.HALF_UP
+                )
+                .min(new BigDecimal("20.0000"));
+    }
+
+    private static AutoParticipantProfilePricingMode legacyPricingMode(BigDecimal marketMakingWeight) {
+        return marketMakingWeight != null && marketMakingWeight.compareTo(new BigDecimal("0.8")) >= 0
+                ? AutoParticipantProfilePricingMode.MARKET_MAKING
+                : AutoParticipantProfilePricingMode.DIRECTIONAL;
+    }
+
+    private static AutoParticipantProfileExitMode legacyExitMode(
+            BigDecimal profitTakingWeight,
+            BigDecimal holdingPatienceWeight
+    ) {
+        if (profitTakingWeight != null && profitTakingWeight.compareTo(new BigDecimal("0.9")) >= 0) {
+            return AutoParticipantProfileExitMode.TAKE_PROFIT_FIRST;
+        }
+        if (holdingPatienceWeight != null && holdingPatienceWeight.compareTo(new BigDecimal("0.85")) >= 0) {
+            return AutoParticipantProfileExitMode.HOLD_LOSSES;
+        }
+        return AutoParticipantProfileExitMode.SIGNAL_DRIVEN;
+    }
+
+    private static AutoParticipantProfileInventoryMode legacyInventoryMode(BigDecimal marketMakingWeight) {
+        return legacyPricingMode(marketMakingWeight) == AutoParticipantProfilePricingMode.MARKET_MAKING
+                ? AutoParticipantProfileInventoryMode.TARGET_ALLOCATION
+                : AutoParticipantProfileInventoryMode.SIGNAL_DRIVEN;
     }
 }

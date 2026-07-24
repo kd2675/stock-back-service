@@ -1,13 +1,18 @@
 package stock.back.service.market.biz;
 
 import stock.back.service.database.entity.AutoParticipantProfileType;
-import stock.back.service.database.entity.RecurringCashIntervalUnit;
+import stock.back.service.database.entity.AutoParticipantBehaviorModelVersion;
+import stock.back.service.database.entity.AutoParticipantProfileExitMode;
+import stock.back.service.database.entity.AutoParticipantProfileInventoryMode;
+import stock.back.service.database.entity.AutoParticipantProfilePricingMode;
 import stock.back.service.database.entity.StockAutoParticipantProfileConfig;
+import stock.back.service.common.exception.StockException;
 import stock.back.service.market.vo.AutoParticipantProfileConfigRequest;
 
 import java.math.BigDecimal;
 
 record AutoParticipantProfileConfigCommand(
+        AutoParticipantBehaviorModelVersion behaviorModelVersion,
         BigDecimal newsWeight,
         BigDecimal momentumWeight,
         BigDecimal contrarianWeight,
@@ -19,6 +24,8 @@ record AutoParticipantProfileConfigCommand(
         BigDecimal panicSellWeight,
         BigDecimal dipBuyWeight,
         BigDecimal orderMultiplier,
+        BigDecimal decisionFrequencyMultiplier,
+        BigDecimal ordersPerDecisionMultiplier,
         BigDecimal aggressionMultiplier,
         BigDecimal pricePressureSensitivity,
         BigDecimal orderTtlMultiplier,
@@ -26,71 +33,101 @@ record AutoParticipantProfileConfigCommand(
         BigDecimal holdingPatienceWeight,
         BigDecimal deepLossHoldWeight,
         BigDecimal profitTakingWeight,
-        BigDecimal recurringDepositAmount,
-        BigDecimal recurringDepositIntervalValue,
-        RecurringCashIntervalUnit recurringDepositIntervalUnit
+        AutoParticipantProfilePricingMode pricingMode,
+        AutoParticipantProfileExitMode exitMode,
+        AutoParticipantProfileInventoryMode inventoryMode,
+        AutoParticipantFundingPolicyCommand fundingPolicy
 ) {
 
     static AutoParticipantProfileConfigCommand from(
             AutoParticipantProfileType profileType,
             AutoParticipantProfileConfigRequest request
     ) {
-        BigDecimal recurringDepositAmount = NumericRangePolicy.requireBigDecimal(
-                request.recurringDepositAmount(),
-                "Recurring deposit amount",
-                BigDecimal.ZERO,
-                new BigDecimal("1000000000000")
+        ProfileConfigDefaults profileDefaults = AutoParticipantProfileConfigDefaults.defaultsFor(profileType);
+        AutoParticipantFundingPolicyCommand fundingPolicy =
+                AutoParticipantFundingPolicyCommand.from(profileType, request);
+        BigDecimal orderMultiplier = NumericRangePolicy.requireBigDecimal(
+                request.orderMultiplier(), "Order multiplier", BigDecimal.ZERO, BigDecimal.valueOf(5)
         );
-        BigDecimal recurringDepositIntervalValue = RecurringCashPolicy.normalizeIntervalValue(
-                request.recurringDepositIntervalValue() == null && request.recurringDepositIntervalDays() != null
-                        ? BigDecimal.valueOf(request.recurringDepositIntervalDays())
-                        : request.recurringDepositIntervalValue(),
-                recurringDepositAmount
+        BigDecimal orderTtlMultiplier = NumericRangePolicy.requireBigDecimal(
+                request.orderTtlMultiplier(), "Order TTL multiplier", new BigDecimal("0.1"), BigDecimal.TEN
         );
-        RecurringCashIntervalUnit recurringDepositIntervalUnit = RecurringCashPolicy.normalizeIntervalUnit(
-                request.recurringDepositIntervalUnit() == null && request.recurringDepositIntervalDays() != null
-                        ? RecurringCashIntervalUnit.DAY.name()
-                        : request.recurringDepositIntervalUnit(),
-                recurringDepositAmount
+        BigDecimal marketMakingWeight = NumericRangePolicy.requireBigDecimal(
+                request.marketMakingWeight(), "Market making weight", BigDecimal.ZERO, BigDecimal.ONE
         );
-        if (recurringDepositIntervalValue == null) {
-            recurringDepositIntervalValue = BigDecimal.ZERO;
-        }
-        if (recurringDepositIntervalUnit == null) {
-            recurringDepositIntervalUnit = RecurringCashIntervalUnit.DAY;
-        }
-        if (AutoParticipantProfileType.DIVIDEND_REINVESTOR.equals(profileType)) {
-            recurringDepositAmount = BigDecimal.ZERO;
-            recurringDepositIntervalValue = BigDecimal.ZERO;
-            recurringDepositIntervalUnit = RecurringCashIntervalUnit.DAY;
-        }
+        BigDecimal profitTakingWeight = NumericRangePolicy.requireBigDecimal(
+                request.profitTakingWeight(), "Profit taking weight", BigDecimal.ZERO, BigDecimal.ONE
+        );
+        BigDecimal holdingPatienceWeight = NumericRangePolicy.requireBigDecimal(
+                request.holdingPatienceWeight(), "Holding patience weight", BigDecimal.ZERO, BigDecimal.ONE
+        );
+        BigDecimal decisionFrequencyMultiplier = request.decisionFrequencyMultiplier() == null
+                ? profileDefaults.decisionFrequencyMultiplier()
+                : NumericRangePolicy.requireBigDecimal(
+                        request.decisionFrequencyMultiplier(),
+                        "Decision frequency multiplier",
+                        BigDecimal.ZERO,
+                        BigDecimal.valueOf(20)
+                );
+        BigDecimal ordersPerDecisionMultiplier = request.ordersPerDecisionMultiplier() == null
+                ? profileDefaults.ordersPerDecisionMultiplier()
+                : NumericRangePolicy.requireBigDecimal(
+                        request.ordersPerDecisionMultiplier(),
+                        "Orders per decision multiplier",
+                        BigDecimal.ZERO,
+                        BigDecimal.valueOf(5)
+                );
         return new AutoParticipantProfileConfigCommand(
+                enumOrDefault(
+                        request.behaviorModelVersion(),
+                        AutoParticipantBehaviorModelVersion.class,
+                        AutoParticipantBehaviorModelVersion.V2,
+                        "Behavior model version"
+                ),
                 NumericRangePolicy.requireBigDecimal(request.newsWeight(), "News weight", BigDecimal.ZERO, BigDecimal.ONE),
                 NumericRangePolicy.requireBigDecimal(request.momentumWeight(), "Momentum weight", BigDecimal.ZERO, BigDecimal.ONE),
                 NumericRangePolicy.requireBigDecimal(request.contrarianWeight(), "Contrarian weight", BigDecimal.ZERO, BigDecimal.ONE),
                 NumericRangePolicy.requireBigDecimal(request.lossAversionWeight(), "Loss aversion weight", BigDecimal.ZERO, BigDecimal.ONE),
                 NumericRangePolicy.requireBigDecimal(request.herdingWeight(), "Herding weight", BigDecimal.ZERO, BigDecimal.ONE),
-                NumericRangePolicy.requireBigDecimal(request.marketMakingWeight(), "Market making weight", BigDecimal.ZERO, BigDecimal.ONE),
+                marketMakingWeight,
                 NumericRangePolicy.requireBigDecimal(request.overconfidenceWeight(), "Overconfidence weight", BigDecimal.ZERO, BigDecimal.ONE),
                 NumericRangePolicy.requireBigDecimal(request.noiseWeight(), "Noise weight", BigDecimal.ZERO, BigDecimal.ONE),
                 NumericRangePolicy.requireBigDecimal(request.panicSellWeight(), "Panic sell weight", BigDecimal.ZERO, BigDecimal.ONE),
                 NumericRangePolicy.requireBigDecimal(request.dipBuyWeight(), "Dip buy weight", BigDecimal.ZERO, BigDecimal.ONE),
-                NumericRangePolicy.requireBigDecimal(request.orderMultiplier(), "Order multiplier", BigDecimal.ZERO, BigDecimal.valueOf(5)),
+                orderMultiplier,
+                decisionFrequencyMultiplier,
+                ordersPerDecisionMultiplier,
                 NumericRangePolicy.requireBigDecimal(request.aggressionMultiplier(), "Aggression multiplier", BigDecimal.ZERO, BigDecimal.valueOf(5)),
                 NumericRangePolicy.requireBigDecimal(request.pricePressureSensitivity(), "Price pressure sensitivity", BigDecimal.ZERO, BigDecimal.valueOf(2)),
-                NumericRangePolicy.requireBigDecimal(request.orderTtlMultiplier(), "Order TTL multiplier", new BigDecimal("0.1"), BigDecimal.TEN),
+                orderTtlMultiplier,
                 NumericRangePolicy.requireBigDecimal(request.quantityMultiplier(), "Quantity multiplier", BigDecimal.ZERO, BigDecimal.valueOf(5)),
-                NumericRangePolicy.requireBigDecimal(request.holdingPatienceWeight(), "Holding patience weight", BigDecimal.ZERO, BigDecimal.ONE),
+                holdingPatienceWeight,
                 NumericRangePolicy.requireBigDecimal(request.deepLossHoldWeight(), "Deep loss hold weight", BigDecimal.ZERO, BigDecimal.ONE),
-                NumericRangePolicy.requireBigDecimal(request.profitTakingWeight(), "Profit taking weight", BigDecimal.ZERO, BigDecimal.ONE),
-                recurringDepositAmount,
-                recurringDepositIntervalValue,
-                recurringDepositIntervalUnit
+                profitTakingWeight,
+                enumOrDefault(
+                        request.pricingMode(),
+                        AutoParticipantProfilePricingMode.class,
+                        AutoParticipantProfileConfigDefaults.pricingModeFor(profileType),
+                        "Pricing mode"
+                ),
+                enumOrDefault(
+                        request.exitMode(),
+                        AutoParticipantProfileExitMode.class,
+                        AutoParticipantProfileConfigDefaults.exitModeFor(profileType),
+                        "Exit mode"
+                ),
+                enumOrDefault(
+                        request.inventoryMode(),
+                        AutoParticipantProfileInventoryMode.class,
+                        AutoParticipantProfileConfigDefaults.inventoryModeFor(profileType),
+                        "Inventory mode"
+                ),
+                fundingPolicy
         );
     }
 
     StockAutoParticipantProfileConfig create(AutoParticipantProfileType profileType) {
-        return StockAutoParticipantProfileConfig.create(
+        StockAutoParticipantProfileConfig config = StockAutoParticipantProfileConfig.create(
                 profileType,
                 newsWeight,
                 momentumWeight,
@@ -103,6 +140,8 @@ record AutoParticipantProfileConfigCommand(
                 panicSellWeight,
                 dipBuyWeight,
                 orderMultiplier,
+                decisionFrequencyMultiplier,
+                ordersPerDecisionMultiplier,
                 aggressionMultiplier,
                 pricePressureSensitivity,
                 orderTtlMultiplier,
@@ -110,13 +149,19 @@ record AutoParticipantProfileConfigCommand(
                 holdingPatienceWeight,
                 deepLossHoldWeight,
                 profitTakingWeight,
-                recurringDepositAmount,
-                recurringDepositIntervalValue,
-                recurringDepositIntervalUnit
+                pricingMode,
+                exitMode,
+                inventoryMode,
+                fundingPolicy.recurringDepositAmount(),
+                fundingPolicy.recurringDepositIntervalValue(),
+                fundingPolicy.recurringDepositIntervalUnit()
         );
+        config.updateBehaviorModelVersion(behaviorModelVersion);
+        return config;
     }
 
     void applyTo(StockAutoParticipantProfileConfig config) {
+        config.updateBehaviorModelVersion(behaviorModelVersion);
         config.update(
                 newsWeight,
                 momentumWeight,
@@ -129,6 +174,8 @@ record AutoParticipantProfileConfigCommand(
                 panicSellWeight,
                 dipBuyWeight,
                 orderMultiplier,
+                decisionFrequencyMultiplier,
+                ordersPerDecisionMultiplier,
                 aggressionMultiplier,
                 pricePressureSensitivity,
                 orderTtlMultiplier,
@@ -136,9 +183,28 @@ record AutoParticipantProfileConfigCommand(
                 holdingPatienceWeight,
                 deepLossHoldWeight,
                 profitTakingWeight,
-                recurringDepositAmount,
-                recurringDepositIntervalValue,
-                recurringDepositIntervalUnit
+                pricingMode,
+                exitMode,
+                inventoryMode,
+                fundingPolicy.recurringDepositAmount(),
+                fundingPolicy.recurringDepositIntervalValue(),
+                fundingPolicy.recurringDepositIntervalUnit()
         );
+    }
+
+    private static <T extends Enum<T>> T enumOrDefault(
+            String value,
+            Class<T> type,
+            T defaultValue,
+            String fieldName
+    ) {
+        if (value == null || value.isBlank()) {
+            return defaultValue;
+        }
+        try {
+            return Enum.valueOf(type, value.trim().toUpperCase(java.util.Locale.ROOT));
+        } catch (IllegalArgumentException exception) {
+            throw StockException.badRequest(fieldName + " is invalid: " + value);
+        }
     }
 }

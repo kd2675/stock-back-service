@@ -9,6 +9,7 @@ import jakarta.persistence.Table;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
+import web.common.core.utils.DeterministicSeed;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -32,6 +33,9 @@ public class StockAutoParticipant {
     @Enumerated(EnumType.STRING)
     @Column(name = "profile_type", nullable = false, length = 40)
     private AutoParticipantProfileType profileType;
+
+    @Column(name = "behavior_seed")
+    private Long behaviorSeed;
 
     @Column(name = "recurring_cash_amount", precision = 19, scale = 2)
     private BigDecimal recurringCashAmount;
@@ -80,6 +84,7 @@ public class StockAutoParticipant {
         participant.displayName = displayName;
         participant.enabled = enabled;
         participant.profileType = profileType == null ? AutoParticipantProfileType.defaultType() : profileType;
+        participant.behaviorSeed = DeterministicSeed.fromUtf8(userKey);
         participant.recurringCashAmount = recurringCashAmount;
         participant.recurringCashIntervalValue = recurringCashIntervalValue;
         participant.recurringCashIntervalUnit = recurringCashIntervalUnit;
@@ -96,6 +101,26 @@ public class StockAutoParticipant {
             BigDecimal recurringCashIntervalValue,
             RecurringCashIntervalUnit recurringCashIntervalUnit
     ) {
+        update(
+                displayName,
+                enabled,
+                profileType,
+                null,
+                recurringCashAmount,
+                recurringCashIntervalValue,
+                recurringCashIntervalUnit
+        );
+    }
+
+    public void update(
+            String displayName,
+            Boolean enabled,
+            AutoParticipantProfileType profileType,
+            Long behaviorSeed,
+            BigDecimal recurringCashAmount,
+            BigDecimal recurringCashIntervalValue,
+            RecurringCashIntervalUnit recurringCashIntervalUnit
+    ) {
         if (displayName != null && !displayName.isBlank()) {
             this.displayName = displayName;
         }
@@ -107,6 +132,11 @@ public class StockAutoParticipant {
         }
         if (profileType != null) {
             this.profileType = profileType;
+        }
+        if (behaviorSeed != null) {
+            this.behaviorSeed = behaviorSeed;
+        } else if (this.behaviorSeed == null) {
+            this.behaviorSeed = DeterministicSeed.fromUtf8(userKey);
         }
         this.recurringCashAmount = recurringCashAmount;
         this.recurringCashIntervalValue = recurringCashIntervalValue;
@@ -120,4 +150,5 @@ public class StockAutoParticipant {
         this.withdrawnAt = now;
         this.updatedAt = now;
     }
+
 }

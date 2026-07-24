@@ -40,6 +40,7 @@ public class TradingService {
     private final TradingReservationService tradingReservationService;
     private final TradingSessionFenceService tradingSessionFenceService;
     private final OrderBookReadySymbolPublisher orderBookReadySymbolPublisher;
+    private final AutoParticipantFundingBudgetReleaseService fundingBudgetReleaseService;
 
     @Transactional
     public OrderResponse placeOrder(String userKey, OrderRequest request) {
@@ -109,6 +110,7 @@ public class TradingService {
         validateLockedOrder(account, order, sessionApproval, "Only pending orders can be cancelled");
         LocalDateTime cancelledAt = sessionApproval.businessEffectiveAt();
         tradingReservationService.releaseOnCancel(account, sellHolding, order, cancelledAt);
+        releaseFundingBudgetOnFullCancel(order, cancelledAt);
         order.cancel(cancelledAt);
         return TradingResponseMapper.toOrderResponse(order);
     }
@@ -120,6 +122,7 @@ public class TradingService {
         StockAccount account = accountService.requireAccountForUpdate(userKey);
         StockHolding sellHolding = lockSellHoldingBeforeOrder(account, sessionApproval);
         StockOrder order = findOwnOpenOrderForUpdate(account, orderId, sessionApproval);
+        rejectManualBudgetBackedOrderMutation(order, "amended");
         if (request == null || (request.quantity() == null && request.limitPrice() == null)) {
             throw StockException.badRequest("Order amendment requires quantity or limit price");
         }
@@ -170,9 +173,12 @@ public class TradingService {
         if (request.quantity() == remainingQuantity) {
             LocalDateTime cancelledAt = sessionApproval.businessEffectiveAt();
             tradingReservationService.releaseAllRemainingReservation(account, sellHolding, order, cancelledAt);
+            releaseFundingBudgetOnFullCancel(order, cancelledAt);
             order.cancel(cancelledAt);
             return TradingResponseMapper.toOrderResponse(order);
         }
+
+        rejectManualBudgetBackedOrderMutation(order, "partially cancelled");
 
         tradingReservationService.releasePartialReservation(
                 account,
@@ -183,6 +189,21 @@ public class TradingService {
                 sessionApproval.businessEffectiveAt()
         );
         return TradingResponseMapper.toOrderResponse(order);
+    }
+
+    private void releaseFundingBudgetOnFullCancel(StockOrder order, LocalDateTime cancelledAt) {
+        if (order.getFundingBudgetType() != null) {
+            fundingBudgetReleaseService.releaseCancelledOrderBudgets(List.of(order.getId()), cancelledAt);
+        }
+    }
+
+    private void rejectManualBudgetBackedOrderMutation(StockOrder order, String operation) {
+        if (order.getFundingBudgetType() != null) {
+            throw StockException.conflict(
+                    "A dedicated-funding order cannot be %s; cancel the remaining order instead"
+                            .formatted(operation)
+            );
+        }
     }
 
     @Transactional(readOnly = true)

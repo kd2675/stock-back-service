@@ -156,7 +156,12 @@ class AccountOrderCleanupServiceTest {
     ) {
         SimulationClockService simulationClockService = mock(SimulationClockService.class);
         when(simulationClockService.currentMarketDateTime()).thenReturn(LocalDateTime.of(2026, 7, 1, 10, 0));
-        return new AccountOrderCleanupService(stockHoldingRepository, jdbcTemplate, simulationClockService);
+        return new AccountOrderCleanupService(
+                stockHoldingRepository,
+                jdbcTemplate,
+                simulationClockService,
+                mock(AutoParticipantFundingBudgetReleaseService.class)
+        );
     }
 
     private void insertOrder(

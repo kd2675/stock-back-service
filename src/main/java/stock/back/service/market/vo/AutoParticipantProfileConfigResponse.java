@@ -5,6 +5,7 @@ import java.time.LocalDateTime;
 
 public record AutoParticipantProfileConfigResponse(
         String profileType,
+        String behaviorModelVersion,
         BigDecimal newsWeight,
         BigDecimal momentumWeight,
         BigDecimal contrarianWeight,
@@ -16,6 +17,8 @@ public record AutoParticipantProfileConfigResponse(
         BigDecimal panicSellWeight,
         BigDecimal dipBuyWeight,
         BigDecimal orderMultiplier,
+        BigDecimal decisionFrequencyMultiplier,
+        BigDecimal ordersPerDecisionMultiplier,
         BigDecimal aggressionMultiplier,
         BigDecimal pricePressureSensitivity,
         BigDecimal orderTtlMultiplier,
@@ -23,10 +26,14 @@ public record AutoParticipantProfileConfigResponse(
         BigDecimal holdingPatienceWeight,
         BigDecimal deepLossHoldWeight,
         BigDecimal profitTakingWeight,
+        String pricingMode,
+        String exitMode,
+        String inventoryMode,
         BigDecimal recurringDepositAmount,
         BigDecimal recurringDepositIntervalValue,
         String recurringDepositIntervalUnit,
         Integer recurringDepositIntervalDays,
+        AutoParticipantFundingPolicyResponse fundingPolicy,
         boolean customized,
         LocalDateTime updatedAt
 ) {

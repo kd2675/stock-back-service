@@ -218,9 +218,13 @@ class MarketServiceTest {
                 ),
                 new AutoParticipantManagementService(
                         stockAutoParticipantRepository,
+                        stockAutoParticipantProfileConfigRepository,
                         stockAccountRepository,
                         stockAccountCashFlowRepository,
-                        accountOrderCleanupService,
+                        new AutoParticipantStrategyTransitionService(
+                                accountOrderCleanupService,
+                                commandJdbcTemplate
+                        ),
                         simulationClockService,
                         marketLedgerFreezeGuard
                 ),
@@ -381,12 +385,25 @@ class MarketServiceTest {
                 when(resultSet.getString("display_name")).thenReturn(participant.displayName());
                 when(resultSet.getBoolean("enabled")).thenReturn(participant.enabled());
                 when(resultSet.getString("profile_type")).thenReturn(participant.profileType());
+                when(resultSet.getString("behavior_model_version")).thenReturn(participant.behaviorModelVersion());
+                when(resultSet.getObject("behavior_seed")).thenReturn(participant.behaviorSeed());
+                if (participant.behaviorSeed() != null) {
+                    when(resultSet.getString("behavior_seed")).thenReturn(participant.behaviorSeed());
+                }
                 when(resultSet.getBigDecimal("recurring_cash_amount")).thenReturn(participant.recurringCashAmount());
                 when(resultSet.getBigDecimal("recurring_cash_interval_value")).thenReturn(participant.recurringCashIntervalValue());
                 when(resultSet.getString("recurring_cash_interval_unit")).thenReturn(participant.recurringCashIntervalUnit());
                 when(resultSet.getObject("account_id", Long.class)).thenReturn(participant.accountId());
                 when(resultSet.getString("account_status")).thenReturn(participant.accountStatus());
                 when(resultSet.getBigDecimal("cash_balance")).thenReturn(participant.cashBalance());
+                when(resultSet.getBigDecimal("payday_available_budget")).thenReturn(participant.paydayAvailableBudget());
+                when(resultSet.getBigDecimal("dividend_available_budget")).thenReturn(participant.dividendAvailableBudget());
+                when(resultSet.getBigDecimal("funding_reserved_amount")).thenReturn(participant.fundingReservedAmount());
+                when(resultSet.getBigDecimal("funding_spent_amount")).thenReturn(participant.fundingSpentAmount());
+                when(resultSet.getLong("active_funding_budget_count")).thenReturn(participant.activeFundingBudgetCount());
+                when(resultSet.getLong("tracked_position_count")).thenReturn(participant.trackedPositionCount());
+                when(resultSet.getBigDecimal("average_holding_trading_days")).thenReturn(participant.averageHoldingTradingDays());
+                when(resultSet.getLong("average_down_round_count")).thenReturn(participant.averageDownRoundCount());
                 when(resultSet.getObject("created_at", LocalDateTime.class)).thenReturn(participant.createdAt());
                 when(resultSet.getObject("updated_at", LocalDateTime.class)).thenReturn(participant.updatedAt());
                 when(resultSet.getObject("withdrawn_at", LocalDateTime.class)).thenReturn(participant.withdrawnAt());

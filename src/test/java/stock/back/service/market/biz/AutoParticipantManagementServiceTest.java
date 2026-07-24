@@ -10,12 +10,13 @@ import stock.back.service.database.entity.StockAccount;
 import stock.back.service.database.entity.StockAccountCashFlow;
 import stock.back.service.database.entity.StockAccountParticipantCategory;
 import stock.back.service.database.entity.StockAccountStatus;
+import stock.back.service.database.entity.AutoParticipantProfileType;
 import stock.back.service.database.entity.StockAutoParticipant;
 import stock.back.service.database.repository.StockAccountCashFlowRepository;
 import stock.back.service.database.repository.StockAccountRepository;
+import stock.back.service.database.repository.StockAutoParticipantProfileConfigRepository;
 import stock.back.service.database.repository.StockAutoParticipantRepository;
 import stock.back.service.market.vo.AutoParticipantRequest;
-import stock.back.service.trading.biz.AccountOrderCleanupService;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -37,13 +38,16 @@ class AutoParticipantManagementServiceTest {
     private StockAutoParticipantRepository stockAutoParticipantRepository;
 
     @Mock
+    private StockAutoParticipantProfileConfigRepository stockAutoParticipantProfileConfigRepository;
+
+    @Mock
     private StockAccountRepository stockAccountRepository;
 
     @Mock
     private StockAccountCashFlowRepository stockAccountCashFlowRepository;
 
     @Mock
-    private AccountOrderCleanupService accountOrderCleanupService;
+    private AutoParticipantStrategyTransitionService strategyTransitionService;
 
     @Mock
     private SimulationClockService simulationClockService;
@@ -59,9 +63,10 @@ class AutoParticipantManagementServiceTest {
                 .thenReturn(LocalDateTime.of(2026, 7, 2, 10, 0));
         service = new AutoParticipantManagementService(
                 stockAutoParticipantRepository,
+                stockAutoParticipantProfileConfigRepository,
                 stockAccountRepository,
                 stockAccountCashFlowRepository,
-                accountOrderCleanupService,
+                strategyTransitionService,
                 simulationClockService,
                 marketLedgerFreezeGuard
         );
@@ -242,6 +247,85 @@ class AutoParticipantManagementServiceTest {
     }
 
     @Test
+    void upsertAutoParticipant_newParticipant_usesProfileModelAndPreservesSeed() {
+        when(stockAutoParticipantRepository.findById("stock-auto-v2")).thenReturn(Optional.empty());
+        when(stockAutoParticipantRepository.save(any(StockAutoParticipant.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+        when(stockAccountRepository.findByUserKey("stock-auto-v2")).thenReturn(Optional.empty());
+
+        var response = service.upsertAutoParticipant(
+                "stock-auto-v2",
+                new AutoParticipantRequest(
+                        "V2 참여자",
+                        true,
+                        "NOISE_TRADER",
+                        null,
+                        null,
+                        null,
+                        "987654321",
+                        false,
+                        BigDecimal.ZERO
+                )
+        );
+
+        assertThat(response.behaviorModelVersion()).isEqualTo("V2");
+        assertThat(response.behaviorSeed()).isEqualTo("987654321");
+    }
+
+    @Test
+    void upsertAutoParticipant_strategyChange_retiresOldOrdersAndPurposeBudgetsBeforeUpdate() {
+        StockAutoParticipant participant = StockAutoParticipant.create(
+                "stock-auto-transition",
+                "전환 참여자",
+                true,
+                AutoParticipantProfileType.PAYDAY_ACCUMULATOR
+        );
+        participant.update(
+                "전환 참여자",
+                true,
+                AutoParticipantProfileType.PAYDAY_ACCUMULATOR,
+                101L,
+                null,
+                null,
+                null
+        );
+        StockAccount account = StockAccount.open("stock-auto-transition");
+        setAccountId(account, 101L);
+        when(stockAutoParticipantRepository.findById("stock-auto-transition"))
+                .thenReturn(Optional.of(participant));
+        when(stockAutoParticipantRepository.save(any(StockAutoParticipant.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+        when(stockAccountRepository.findByUserKeyAndStatusForUpdate(
+                "stock-auto-transition",
+                StockAccountStatus.ACTIVE
+        )).thenReturn(Optional.of(account));
+        when(stockAccountRepository.findByUserKey("stock-auto-transition"))
+                .thenReturn(Optional.of(account));
+
+        service.upsertAutoParticipant(
+                "stock-auto-transition",
+                new AutoParticipantRequest(
+                        "전환 참여자",
+                        true,
+                        "NOISE_TRADER",
+                        null,
+                        null,
+                        null,
+                        "101",
+                        false,
+                        BigDecimal.ZERO
+                )
+        );
+
+        verify(marketLedgerFreezeGuard).acquireMutationPermit("auto-participant strategy transition");
+        verify(strategyTransitionService).retireOpenOrdersAndFundingBudgets(
+                account,
+                LocalDateTime.of(2026, 7, 2, 10, 0)
+        );
+        assertThat(participant.getProfileType()).isEqualTo(AutoParticipantProfileType.NOISE_TRADER);
+    }
+
+    @Test
     void withdrawAutoParticipant_openOrders_releasesReservationsAndCancelsOrders() {
         StockAutoParticipant participant = StockAutoParticipant.create(
                 "stock-auto-001",
@@ -262,7 +346,10 @@ class AutoParticipantManagementServiceTest {
 
         assertThat(response.enabled()).isFalse();
         assertThat(response.withdrawnAt()).isNotNull();
-        verify(accountOrderCleanupService).cancelOpenOrderBookOrders(account);
+        verify(strategyTransitionService).retireOpenOrdersAndFundingBudgets(
+                account,
+                LocalDateTime.of(2026, 7, 2, 10, 0)
+        );
     }
 
     private void setAccountId(StockAccount account, Long id) {

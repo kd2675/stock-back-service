@@ -38,7 +38,8 @@ class TradingServiceLockOrderTest {
                 mock(TradingMarketRuleService.class),
                 reservationService,
                 fenceService,
-                mock(OrderBookReadySymbolPublisher.class)
+                mock(OrderBookReadySymbolPublisher.class),
+                mock(AutoParticipantFundingBudgetReleaseService.class)
         );
         LocalDateTime approvedAt = LocalDateTime.of(2026, 7, 15, 17, 59, 59);
         TradingSessionFenceService.OwnedOrderSessionApproval approval =

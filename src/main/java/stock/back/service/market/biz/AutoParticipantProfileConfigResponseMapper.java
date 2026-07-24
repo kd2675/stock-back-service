@@ -1,12 +1,12 @@
 package stock.back.service.market.biz;
 
-import stock.back.service.database.entity.AutoParticipantProfileType;
-import stock.back.service.database.entity.StockAutoParticipantProfileConfig;
-import stock.back.service.market.vo.AutoParticipantProfileConfigResponse;
-
-import stock.back.service.database.entity.RecurringCashIntervalUnit;
-
 import java.math.BigDecimal;
+
+import stock.back.service.database.entity.AutoParticipantProfileType;
+import stock.back.service.database.entity.RecurringCashIntervalUnit;
+import stock.back.service.database.entity.StockAutoParticipantProfileConfig;
+import stock.back.service.market.vo.AutoParticipantFundingPolicyResponse;
+import stock.back.service.market.vo.AutoParticipantProfileConfigResponse;
 
 final class AutoParticipantProfileConfigResponseMapper {
 
@@ -18,9 +18,15 @@ final class AutoParticipantProfileConfigResponseMapper {
             StockAutoParticipantProfileConfig savedConfig
     ) {
         ProfileConfigDefaults defaults = AutoParticipantProfileConfigDefaults.defaultsFor(profileType);
+        AutoParticipantFundingPolicyDefaults fundingDefaults =
+                AutoParticipantProfileConfigDefaults.fundingDefaults();
+        String defaultPricingMode = AutoParticipantProfileConfigDefaults.pricingModeFor(profileType).name();
+        String defaultExitMode = AutoParticipantProfileConfigDefaults.exitModeFor(profileType).name();
+        String defaultInventoryMode = AutoParticipantProfileConfigDefaults.inventoryModeFor(profileType).name();
         if (savedConfig == null) {
             return new AutoParticipantProfileConfigResponse(
                     profileType.name(),
+                    "V2",
                     defaults.newsWeight(),
                     defaults.momentumWeight(),
                     defaults.contrarianWeight(),
@@ -32,6 +38,8 @@ final class AutoParticipantProfileConfigResponseMapper {
                     defaults.panicSellWeight(),
                     defaults.dipBuyWeight(),
                     defaults.orderMultiplier(),
+                    defaults.decisionFrequencyMultiplier(),
+                    defaults.ordersPerDecisionMultiplier(),
                     defaults.aggressionMultiplier(),
                     defaults.pricePressureSensitivity(),
                     defaults.orderTtlMultiplier(),
@@ -39,23 +47,41 @@ final class AutoParticipantProfileConfigResponseMapper {
                     defaults.holdingPatienceWeight(),
                     defaults.deepLossHoldWeight(),
                     defaults.profitTakingWeight(),
-                    defaults.recurringDepositAmount(),
-                    defaults.recurringDepositIntervalValue(),
-                    defaults.recurringDepositIntervalUnit().name(),
-                    RecurringCashPolicy.intervalDays(defaults.recurringDepositIntervalValue(), defaults.recurringDepositIntervalUnit()),
+                    defaultPricingMode,
+                    defaultExitMode,
+                    defaultInventoryMode,
+                    fundingDefaults.recurringDepositAmount(),
+                    fundingDefaults.recurringDepositIntervalValue(),
+                    fundingDefaults.recurringDepositIntervalUnit().name(),
+                    RecurringCashPolicy.intervalDays(
+                            fundingDefaults.recurringDepositIntervalValue(),
+                            fundingDefaults.recurringDepositIntervalUnit()
+                    ),
+                    new AutoParticipantFundingPolicyResponse(
+                            fundingDefaults.recurringDepositAmount(),
+                            fundingDefaults.recurringDepositIntervalValue(),
+                            fundingDefaults.recurringDepositIntervalUnit().name(),
+                            RecurringCashPolicy.intervalDays(
+                                    fundingDefaults.recurringDepositIntervalValue(),
+                                    fundingDefaults.recurringDepositIntervalUnit()
+                            )
+                    ),
                     false,
                     null
             );
         }
         BigDecimal recurringDepositIntervalValue = valueOrDefault(
                 savedConfig.getRecurringDepositIntervalValue(),
-                defaults.recurringDepositIntervalValue()
+                fundingDefaults.recurringDepositIntervalValue()
         );
         RecurringCashIntervalUnit recurringDepositIntervalUnit = savedConfig.getRecurringDepositIntervalUnit() == null
-                ? defaults.recurringDepositIntervalUnit()
+                ? fundingDefaults.recurringDepositIntervalUnit()
                 : savedConfig.getRecurringDepositIntervalUnit();
         return new AutoParticipantProfileConfigResponse(
                 profileType.name(),
+                savedConfig.getBehaviorModelVersion() == null
+                        ? "V2"
+                        : savedConfig.getBehaviorModelVersion().name(),
                 valueOrDefault(savedConfig.getNewsWeight(), defaults.newsWeight()),
                 valueOrDefault(savedConfig.getMomentumWeight(), defaults.momentumWeight()),
                 valueOrDefault(savedConfig.getContrarianWeight(), defaults.contrarianWeight()),
@@ -67,6 +93,8 @@ final class AutoParticipantProfileConfigResponseMapper {
                 valueOrDefault(savedConfig.getPanicSellWeight(), defaults.panicSellWeight()),
                 valueOrDefault(savedConfig.getDipBuyWeight(), defaults.dipBuyWeight()),
                 savedConfig.getOrderMultiplier(),
+                valueOrDefault(savedConfig.getDecisionFrequencyMultiplier(), defaults.decisionFrequencyMultiplier()),
+                valueOrDefault(savedConfig.getOrdersPerDecisionMultiplier(), defaults.ordersPerDecisionMultiplier()),
                 savedConfig.getAggressionMultiplier(),
                 valueOrDefault(savedConfig.getPricePressureSensitivity(), defaults.pricePressureSensitivity()),
                 savedConfig.getOrderTtlMultiplier(),
@@ -74,10 +102,19 @@ final class AutoParticipantProfileConfigResponseMapper {
                 savedConfig.getHoldingPatienceWeight(),
                 savedConfig.getDeepLossHoldWeight(),
                 savedConfig.getProfitTakingWeight(),
+                savedConfig.getPricingMode() == null ? defaultPricingMode : savedConfig.getPricingMode().name(),
+                savedConfig.getExitMode() == null ? defaultExitMode : savedConfig.getExitMode().name(),
+                savedConfig.getInventoryMode() == null ? defaultInventoryMode : savedConfig.getInventoryMode().name(),
                 savedConfig.getRecurringDepositAmount(),
                 recurringDepositIntervalValue,
                 recurringDepositIntervalUnit.name(),
                 savedConfig.getRecurringDepositIntervalDays(),
+                new AutoParticipantFundingPolicyResponse(
+                        savedConfig.getRecurringDepositAmount(),
+                        recurringDepositIntervalValue,
+                        recurringDepositIntervalUnit.name(),
+                        savedConfig.getRecurringDepositIntervalDays()
+                ),
                 true,
                 savedConfig.getUpdatedAt()
         );

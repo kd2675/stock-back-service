@@ -79,6 +79,8 @@ final class AutoMarketStatusResponseMapper {
                 rs.getString("display_name"),
                 rs.getBoolean("enabled"),
                 defaultProfileTypeName(rs.getString("profile_type")),
+                rs.getString("behavior_model_version"),
+                rs.getObject("behavior_seed") == null ? null : rs.getString("behavior_seed"),
                 rs.getBigDecimal("recurring_cash_amount"),
                 rs.getBigDecimal("recurring_cash_interval_value"),
                 rs.getString("recurring_cash_interval_unit"),
@@ -87,7 +89,15 @@ final class AutoMarketStatusResponseMapper {
                 rs.getBigDecimal("cash_balance"),
                 rs.getObject("created_at", LocalDateTime.class),
                 rs.getObject("updated_at", LocalDateTime.class),
-                rs.getObject("withdrawn_at", LocalDateTime.class)
+                rs.getObject("withdrawn_at", LocalDateTime.class),
+                rs.getBigDecimal("payday_available_budget"),
+                rs.getBigDecimal("dividend_available_budget"),
+                rs.getBigDecimal("funding_reserved_amount"),
+                rs.getBigDecimal("funding_spent_amount"),
+                rs.getLong("active_funding_budget_count"),
+                rs.getLong("tracked_position_count"),
+                rs.getBigDecimal("average_holding_trading_days"),
+                rs.getLong("average_down_round_count")
         );
     }
 

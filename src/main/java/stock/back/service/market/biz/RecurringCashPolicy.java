@@ -69,7 +69,7 @@ final class RecurringCashPolicy {
         if (!RecurringCashIntervalUnit.DAY.equals(unit)) {
             return 1;
         }
-        return value.setScale(0, RoundingMode.CEILING).intValue();
+        return Math.max(1, value.setScale(0, RoundingMode.CEILING).intValue());
     }
 
     private static BigDecimal requireIntervalValue(BigDecimal value) {

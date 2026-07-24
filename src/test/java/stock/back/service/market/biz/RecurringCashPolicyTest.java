@@ -58,4 +58,10 @@ class RecurringCashPolicyTest {
         assertThat(RecurringCashPolicy.intervalDays(BigDecimal.ONE, RecurringCashIntervalUnit.HOUR))
                 .isEqualTo(1);
     }
+
+    @Test
+    void intervalDays_disabledDaySchedule_preservesLegacyDatabaseMinimum() {
+        assertThat(RecurringCashPolicy.intervalDays(BigDecimal.ZERO, RecurringCashIntervalUnit.DAY))
+                .isEqualTo(1);
+    }
 }

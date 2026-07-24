@@ -1,7 +1,5 @@
 package stock.back.service.market.biz;
 
-import stock.back.service.database.entity.RecurringCashIntervalUnit;
-
 import java.math.BigDecimal;
 
 record ProfileConfigDefaults(
@@ -22,11 +20,22 @@ record ProfileConfigDefaults(
         BigDecimal quantityMultiplier,
         BigDecimal holdingPatienceWeight,
         BigDecimal deepLossHoldWeight,
-        BigDecimal profitTakingWeight,
-        BigDecimal recurringDepositAmount,
-        BigDecimal recurringDepositIntervalValue,
-        RecurringCashIntervalUnit recurringDepositIntervalUnit
+        BigDecimal profitTakingWeight
 ) {
+    BigDecimal decisionFrequencyMultiplier() {
+        BigDecimal legacyMinimum = new BigDecimal("0.25");
+        return orderMultiplier.max(legacyMinimum)
+                .divide(
+                        orderTtlMultiplier.max(legacyMinimum),
+                        4,
+                        java.math.RoundingMode.HALF_UP
+                );
+    }
+
+    BigDecimal ordersPerDecisionMultiplier() {
+        return orderMultiplier;
+    }
+
     ProfileConfigDefaults withPricePressureSensitivity(double sensitivity) {
         return new ProfileConfigDefaults(
                 newsWeight,
@@ -46,10 +55,7 @@ record ProfileConfigDefaults(
                 quantityMultiplier,
                 holdingPatienceWeight,
                 deepLossHoldWeight,
-                profitTakingWeight,
-                recurringDepositAmount,
-                recurringDepositIntervalValue,
-                recurringDepositIntervalUnit
+                profitTakingWeight
         );
     }
 }

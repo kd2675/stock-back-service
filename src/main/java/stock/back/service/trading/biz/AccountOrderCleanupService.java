@@ -32,16 +32,19 @@ public class AccountOrderCleanupService {
     private final JdbcTemplate jdbcTemplate;
     private final JdbcClient jdbcClient;
     private final SimulationClockService simulationClockService;
+    private final AutoParticipantFundingBudgetReleaseService fundingBudgetReleaseService;
 
     public AccountOrderCleanupService(
             StockHoldingRepository stockHoldingRepository,
             JdbcTemplate jdbcTemplate,
-            SimulationClockService simulationClockService
+            SimulationClockService simulationClockService,
+            AutoParticipantFundingBudgetReleaseService fundingBudgetReleaseService
     ) {
         this.stockHoldingRepository = stockHoldingRepository;
         this.jdbcTemplate = jdbcTemplate;
         this.jdbcClient = JdbcClient.create(jdbcTemplate);
         this.simulationClockService = simulationClockService;
+        this.fundingBudgetReleaseService = fundingBudgetReleaseService;
     }
 
     @Transactional(propagation = Propagation.MANDATORY)
@@ -73,6 +76,10 @@ public class AccountOrderCleanupService {
                 Map<String, StockHolding> sellHoldings = lockSellHoldingsForUpdate(accountId, candidates);
                 List<OpenOrderReservation> openOrders = lockOpenOrderCandidatesForUpdate(candidates);
                 cancelOpenOrdersInChunks(openOrders, openStatuses, cancelledAt);
+                fundingBudgetReleaseService.releaseCancelledOrderBudgets(
+                        openOrders.stream().map(OpenOrderReservation::id).toList(),
+                        cancelledAt
+                );
                 releaseOpenBuyReservations(account, openOrders, cancelledAt);
                 releaseOpenSellReservations(openOrders, sellHoldings, cancelledAt);
 
