@@ -3,6 +3,7 @@ package stock.back.service.market.biz;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
 import stock.back.service.market.vo.AutoParticipantActivityScope;
+import stock.back.service.market.vo.AutoParticipantLifecycleScope;
 import stock.back.service.market.vo.AutoParticipantOverviewResponse;
 
 import java.util.List;
@@ -28,7 +29,8 @@ class AutoParticipantOverviewCacheServiceTest {
         when(participantQueryService.getAutoParticipantOverviews(
                 true,
                 List.of("account-a", "account-b"),
-                AutoParticipantActivityScope.RECENT_SIMULATION_DAY
+                AutoParticipantActivityScope.RECENT_SIMULATION_DAY,
+                AutoParticipantLifecycleScope.CURRENT
         )).thenAnswer(ignored -> {
             loadStarted.countDown();
             assertThat(releaseLoad.await(2, TimeUnit.SECONDS)).isTrue();
@@ -63,7 +65,61 @@ class AutoParticipantOverviewCacheServiceTest {
         verify(participantQueryService, times(1)).getAutoParticipantOverviews(
                 true,
                 List.of("account-a", "account-b"),
-                AutoParticipantActivityScope.RECENT_SIMULATION_DAY
+                AutoParticipantActivityScope.RECENT_SIMULATION_DAY,
+                AutoParticipantLifecycleScope.CURRENT
+        );
+    }
+
+    @Test
+    void getAutoParticipantOverviews_differentLifecycleScopes_useSeparateCacheEntries() {
+        AutoParticipantOverviewQueryService participantQueryService = mock(AutoParticipantOverviewQueryService.class);
+        AutoParticipantProfileOverviewQueryService profileQueryService = mock(AutoParticipantProfileOverviewQueryService.class);
+        List<AutoParticipantOverviewResponse> currentResult = List.of(mock(AutoParticipantOverviewResponse.class));
+        List<AutoParticipantOverviewResponse> withdrawnResult = List.of(mock(AutoParticipantOverviewResponse.class));
+        when(participantQueryService.getAutoParticipantOverviews(
+                true,
+                List.of(),
+                AutoParticipantActivityScope.ALL,
+                AutoParticipantLifecycleScope.CURRENT
+        )).thenReturn(currentResult);
+        when(participantQueryService.getAutoParticipantOverviews(
+                true,
+                List.of(),
+                AutoParticipantActivityScope.ALL,
+                AutoParticipantLifecycleScope.WITHDRAWN
+        )).thenReturn(withdrawnResult);
+        AutoParticipantOverviewCacheService service = new AutoParticipantOverviewCacheService(
+                participantQueryService,
+                profileQueryService,
+                new SimpleMeterRegistry(),
+                5_000L
+        );
+
+        List<AutoParticipantOverviewResponse> current = service.getAutoParticipantOverviews(
+                true,
+                List.of(),
+                AutoParticipantActivityScope.ALL,
+                AutoParticipantLifecycleScope.CURRENT
+        );
+        List<AutoParticipantOverviewResponse> withdrawn = service.getAutoParticipantOverviews(
+                true,
+                List.of(),
+                AutoParticipantActivityScope.ALL,
+                AutoParticipantLifecycleScope.WITHDRAWN
+        );
+
+        assertThat(List.of(current, withdrawn)).containsExactly(currentResult, withdrawnResult);
+        verify(participantQueryService).getAutoParticipantOverviews(
+                true,
+                List.of(),
+                AutoParticipantActivityScope.ALL,
+                AutoParticipantLifecycleScope.CURRENT
+        );
+        verify(participantQueryService).getAutoParticipantOverviews(
+                true,
+                List.of(),
+                AutoParticipantActivityScope.ALL,
+                AutoParticipantLifecycleScope.WITHDRAWN
         );
     }
 }

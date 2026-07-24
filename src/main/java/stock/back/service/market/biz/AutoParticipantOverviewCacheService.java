@@ -4,6 +4,7 @@ import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import stock.back.service.market.vo.AutoParticipantActivityScope;
+import stock.back.service.market.vo.AutoParticipantLifecycleScope;
 import stock.back.service.market.vo.AutoParticipantOverviewResponse;
 import stock.back.service.market.vo.AutoParticipantProfileOverviewResponse;
 
@@ -43,10 +44,25 @@ public class AutoParticipantOverviewCacheService {
             List<String> userKeys,
             AutoParticipantActivityScope activityScope
     ) {
+        return getAutoParticipantOverviews(
+                includeHoldings,
+                userKeys,
+                activityScope,
+                AutoParticipantLifecycleScope.CURRENT
+        );
+    }
+
+    public List<AutoParticipantOverviewResponse> getAutoParticipantOverviews(
+            boolean includeHoldings,
+            List<String> userKeys,
+            AutoParticipantActivityScope activityScope,
+            AutoParticipantLifecycleScope lifecycleScope
+    ) {
         ParticipantCacheKey key = new ParticipantCacheKey(
                 includeHoldings,
                 normalizedValues(userKeys, false),
-                effectiveScope(activityScope)
+                effectiveScope(activityScope),
+                AutoParticipantLifecycleScope.effective(lifecycleScope)
         );
         return getOrLoad(
                 participantCache,
@@ -55,7 +71,8 @@ public class AutoParticipantOverviewCacheService {
                 () -> participantQueryService.getAutoParticipantOverviews(
                         includeHoldings,
                         key.userKeys(),
-                        key.activityScope()
+                        key.activityScope(),
+                        key.lifecycleScope()
                 )
         );
     }
@@ -156,7 +173,8 @@ public class AutoParticipantOverviewCacheService {
     private record ParticipantCacheKey(
             boolean includeHoldings,
             List<String> userKeys,
-            AutoParticipantActivityScope activityScope
+            AutoParticipantActivityScope activityScope,
+            AutoParticipantLifecycleScope lifecycleScope
     ) {
     }
 

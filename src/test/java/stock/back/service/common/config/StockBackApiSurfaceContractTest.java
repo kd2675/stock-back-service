@@ -79,6 +79,7 @@ class StockBackApiSurfaceContractTest {
             "GET /api/stock/v1/markets/auto-market/participants/overviews",
             "GET /api/stock/v1/markets/auto-market/participants/performance-summary",
             "GET /api/stock/v1/markets/auto-market/participants/profile-overviews",
+            "GET /api/stock/v1/markets/auto-market/participants/symbol-configs",
             "GET /api/stock/v1/markets/auto-market/cash-flow",
             "PATCH /api/stock/v1/markets/auto-market/cash-flow",
             "POST /api/stock/v1/markets/auto-market/cash-flow/run",

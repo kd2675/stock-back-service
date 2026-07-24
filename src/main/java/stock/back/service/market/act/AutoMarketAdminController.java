@@ -25,6 +25,7 @@ import stock.back.service.market.biz.AutoParticipantCashAdjustmentService;
 import stock.back.service.market.biz.AutoParticipantManagementService;
 import stock.back.service.market.biz.AutoParticipantOverviewQueryService;
 import stock.back.service.market.biz.AutoParticipantProfileConfigService;
+import stock.back.service.market.biz.AutoParticipantSymbolConfigQueryService;
 import stock.back.service.market.biz.AutoParticipantSymbolConfigService;
 import stock.back.service.market.vo.AutoMarketConfigResponse;
 import stock.back.service.market.vo.AutoMarketConfigUpdateRequest;
@@ -34,6 +35,7 @@ import stock.back.service.market.vo.AutoParticipantActivityScope;
 import stock.back.service.market.vo.AutoParticipantCashAdjustmentRequest;
 import stock.back.service.market.vo.AutoParticipantCashAdjustmentResponse;
 import stock.back.service.market.vo.AutoParticipantHoldingGroupResponse;
+import stock.back.service.market.vo.AutoParticipantLifecycleScope;
 import stock.back.service.market.vo.AutoParticipantOverviewResponse;
 import stock.back.service.market.vo.AutoParticipantPerformanceBasis;
 import stock.back.service.market.vo.AutoParticipantPerformanceSummaryResponse;
@@ -62,20 +64,40 @@ public class AutoMarketAdminController {
     private final AutoParticipantManagementService autoParticipantManagementService;
     private final AutoParticipantCashAdjustmentService autoParticipantCashAdjustmentService;
     private final AutoParticipantSymbolConfigService autoParticipantSymbolConfigService;
+    private final AutoParticipantSymbolConfigQueryService autoParticipantSymbolConfigQueryService;
     private final AutoParticipantPerformanceSummaryQueryService autoParticipantPerformanceSummaryQueryService;
 
     @GetMapping("/auto-market/participants/overviews")
     public ResponseDataDTO<List<AutoParticipantOverviewResponse>> getAutoParticipantOverviews(
             @RequestParam(defaultValue = "true") boolean includeHoldings,
             @RequestParam(defaultValue = "") List<String> userKeys,
-            @RequestParam(defaultValue = "RECENT_SIMULATION_DAY") AutoParticipantActivityScope activityScope
+            @RequestParam(defaultValue = "RECENT_SIMULATION_DAY") AutoParticipantActivityScope activityScope,
+            @RequestParam(defaultValue = "CURRENT") AutoParticipantLifecycleScope lifecycleScope
     ) {
-        return ResponseDataDTO.of(autoParticipantOverviewCacheService.getAutoParticipantOverviews(includeHoldings, userKeys, activityScope));
+        return ResponseDataDTO.of(autoParticipantOverviewCacheService.getAutoParticipantOverviews(
+                includeHoldings,
+                userKeys,
+                activityScope,
+                lifecycleScope
+        ));
     }
 
     @GetMapping("/auto-market/participants")
-    public ResponseDataDTO<List<AutoParticipantResponse>> getAutoParticipants() {
-        return ResponseDataDTO.of(autoParticipantOverviewQueryService.getAutoParticipants());
+    public ResponseDataDTO<List<AutoParticipantResponse>> getAutoParticipants(
+            @RequestParam(defaultValue = "CURRENT") AutoParticipantLifecycleScope lifecycleScope
+    ) {
+        return ResponseDataDTO.of(autoParticipantOverviewQueryService.getAutoParticipants(lifecycleScope));
+    }
+
+    @GetMapping("/auto-market/participants/symbol-configs")
+    public ResponseDataDTO<List<AutoParticipantSymbolConfigResponse>> getAutoParticipantSymbolConfigs(
+            @RequestParam(defaultValue = "CURRENT") AutoParticipantLifecycleScope lifecycleScope,
+            @RequestParam(defaultValue = "") List<String> userKeys
+    ) {
+        return ResponseDataDTO.of(autoParticipantSymbolConfigQueryService.getAutoParticipantSymbolConfigs(
+                lifecycleScope,
+                userKeys
+        ));
     }
 
     @GetMapping("/auto-market/participants/holdings")

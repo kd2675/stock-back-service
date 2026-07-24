@@ -61,6 +61,9 @@ Admin protected API:
 - `POST /api/stock/v1/markets/order-book-instruments`
 - `POST /api/stock/v1/markets/order-book-instruments/{symbol}/corporate-actions`
 - `PATCH /api/stock/v1/markets/auto-market/configs/{symbol}`
+- `GET /api/stock/v1/markets/auto-market/participants?lifecycleScope=CURRENT|WITHDRAWN`
+- `GET /api/stock/v1/markets/auto-market/participants/overviews?lifecycleScope=CURRENT|WITHDRAWN`
+- `GET /api/stock/v1/markets/auto-market/participants/symbol-configs?lifecycleScope=CURRENT|WITHDRAWN`
 - `PATCH /api/stock/v1/markets/auto-market/participants/{userKey}`
 - `PATCH /api/stock/v1/markets/auto-market/participants/{userKey}/symbols/{symbol}`
 - `GET /api/stock/v1/markets/batch-jobs/runtime-controls`

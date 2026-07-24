@@ -9,6 +9,7 @@ import stock.back.service.database.entity.StockListingAutoAccountConfig;
 import stock.back.service.database.repository.StockAutoParticipantSymbolConfigRepository;
 import stock.back.service.market.vo.AutoMarketDailyRegimeResponse;
 import stock.back.service.market.vo.AutoMarketRegimeModifierResponse;
+import stock.back.service.market.vo.AutoParticipantLifecycleScope;
 import stock.back.service.market.vo.AutoParticipantResponse;
 import stock.back.service.market.vo.AutoParticipantSymbolConfigResponse;
 import stock.back.service.market.vo.ListingAutoAccountResponse;
@@ -42,6 +43,17 @@ public class AutoMarketStatusDataLoader {
     }
 
     List<AutoParticipantResponse> loadAutoParticipantStatusResponses() {
+        return loadAutoParticipantStatusResponses(AutoParticipantLifecycleScope.CURRENT);
+    }
+
+    List<AutoParticipantResponse> loadAutoParticipantStatusResponses(AutoParticipantLifecycleScope lifecycleScope) {
+        AutoParticipantLifecycleScope effectiveScope = AutoParticipantLifecycleScope.effective(lifecycleScope);
+        String lifecyclePredicate = effectiveScope == AutoParticipantLifecycleScope.WITHDRAWN
+                ? "is not null"
+                : "is null";
+        String participantOrder = effectiveScope == AutoParticipantLifecycleScope.WITHDRAWN
+                ? "p.withdrawn_at desc, p.user_key asc"
+                : "p.user_key asc";
         String sql = """
                 select p.user_key,
                        p.display_name,
@@ -126,9 +138,9 @@ public class AutoMarketStatusDataLoader {
 	                     from stock_auto_participant_position_state
 	                    group by account_id
 	              ) s on s.account_id = a.id
-	                 where p.withdrawn_at is null
-	                 order by p.user_key asc
-	                """;
+	                 where p.withdrawn_at %s
+	                 order by %s
+	                """.formatted(lifecyclePredicate, participantOrder);
         return jdbcClient.sql(sql)
                 .query((rs, rowNum) -> AutoMarketStatusResponseMapper.toParticipant(rs))
                 .list();

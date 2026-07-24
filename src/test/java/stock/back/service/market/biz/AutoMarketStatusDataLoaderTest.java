@@ -3,6 +3,7 @@ package stock.back.service.market.biz;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.UUID;
 
 import org.junit.jupiter.api.BeforeEach;
@@ -11,9 +12,11 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 
 import stock.back.service.database.repository.StockAutoParticipantSymbolConfigRepository;
+import stock.back.service.market.vo.AutoParticipantLifecycleScope;
 import stock.back.service.market.vo.AutoParticipantResponse;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.tuple;
 import static org.mockito.Mockito.mock;
 
 class AutoMarketStatusDataLoaderTest {
@@ -80,6 +83,57 @@ class AutoMarketStatusDataLoaderTest {
         assertThat(response.activeFundingBudgetCount()).isEqualTo(2L);
         assertThat(response.fundingReservedAmount()).isEqualByComparingTo("50.00");
         assertThat(response.fundingSpentAmount()).isEqualByComparingTo("600.00");
+    }
+
+    @Test
+    void loadAutoParticipantStatusResponses_withdrawnScope_returnsOnlyWithdrawnParticipants() {
+        LocalDateTime now = LocalDate.of(2027, 1, 18).atStartOfDay();
+        jdbcTemplate.update(
+                """
+                insert into stock_auto_participant(
+                    user_key, display_name, enabled, profile_type,
+                    created_at, updated_at, withdrawn_at
+                ) values ('auto-current', '현재 참여자', true, 'NOISE_TRADER', ?, ?, null)
+                """,
+                now,
+                now
+        );
+        jdbcTemplate.update(
+                """
+                insert into stock_auto_participant(
+                    user_key, display_name, enabled, profile_type,
+                    created_at, updated_at, withdrawn_at
+                ) values ('auto-withdrawn', '휴면 참여자', false, 'CONTRARIAN', ?, ?, ?)
+                """,
+                now.minusDays(3),
+                now.minusDays(1),
+                now.minusDays(1)
+        );
+        jdbcTemplate.update(
+                """
+                insert into stock_account(id, user_key, status, cash_balance)
+                values (1, 'auto-current', 'ACTIVE', 100000),
+                       (2, 'auto-withdrawn', 'ACTIVE', 250000)
+                """
+        );
+
+        var currentParticipants = dataLoader.loadAutoParticipantStatusResponses(
+                AutoParticipantLifecycleScope.CURRENT
+        );
+        var withdrawnParticipants = dataLoader.loadAutoParticipantStatusResponses(
+                AutoParticipantLifecycleScope.WITHDRAWN
+        );
+
+        assertThat(List.of(currentParticipants.getFirst(), withdrawnParticipants.getFirst()))
+                .extracting(
+                        AutoParticipantResponse::userKey,
+                        AutoParticipantResponse::cashBalance,
+                        AutoParticipantResponse::withdrawnAt
+                )
+                .containsExactly(
+                        tuple("auto-current", new BigDecimal("100000.00"), null),
+                        tuple("auto-withdrawn", new BigDecimal("250000.00"), now.minusDays(1))
+                );
     }
 
     private void insertBudget(

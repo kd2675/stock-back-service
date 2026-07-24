@@ -655,6 +655,46 @@ class StockBackAuthorizationBoundaryTest {
     }
 
     @Test
+    void getAutoParticipantSymbolConfigs_userPrincipalHeaders_returnsForbidden() throws Exception {
+        mockMvc.perform(get("/api/stock/v1/markets/auto-market/participants/symbol-configs")
+                        .header("X-User-Key", "stock-user-key")
+                        .header("X-User-Role", "ROLE_USER"))
+                .andExpect(status().isForbidden())
+                .andExpect(content().string(containsString("Required role: ADMIN")));
+    }
+
+    @Test
+    void getAutoParticipantSymbolConfigs_withdrawnScope_adminPrincipalHeaders_isAllowed() throws Exception {
+        seedAutoParticipant("stock-auto-auth-dormant-config");
+        jdbcTemplate.update(
+                """
+                update stock_auto_participant
+                   set enabled = false,
+                       withdrawn_at = ?
+                 where user_key = 'stock-auto-auth-dormant-config'
+                """,
+                LocalDateTime.now()
+        );
+        jdbcTemplate.update(
+                """
+                insert into stock_auto_participant_symbol_config(
+                    user_key, symbol, enabled, intensity, updated_at
+                ) values ('stock-auto-auth-dormant-config', 'ZQAUTH09', true, 7, ?)
+                """,
+                LocalDateTime.now()
+        );
+
+        mockMvc.perform(get("/api/stock/v1/markets/auto-market/participants/symbol-configs")
+                        .queryParam("lifecycleScope", "WITHDRAWN")
+                        .header("X-User-Key", "stock-admin-key")
+                        .header("X-User-Role", "ROLE_ADMIN"))
+                .andExpect(status().isOk())
+                .andExpect(content().string(containsString("\"userKey\":\"stock-auto-auth-dormant-config\"")))
+                .andExpect(content().string(containsString("\"symbol\":\"ZQAUTH09\"")))
+                .andExpect(content().string(containsString("\"intensity\":7")));
+    }
+
+    @Test
     void getAutoParticipantProfileOverviews_userPrincipalHeaders_returnsForbidden() throws Exception {
         mockMvc.perform(get("/api/stock/v1/markets/auto-market/participants/profile-overviews")
                         .header("X-User-Key", "stock-user-key")

@@ -25,6 +25,9 @@
 - `/api/stock/v1/markets/virtual-market`
 - `/api/stock/v1/markets/order-book-market`
 - `/api/stock/v1/markets/auto-market`
+- `GET /api/stock/v1/markets/auto-market/participants?lifecycleScope=CURRENT|WITHDRAWN` (`ADMIN`)
+- `GET /api/stock/v1/markets/auto-market/participants/overviews?lifecycleScope=CURRENT|WITHDRAWN` (`ADMIN`, 계좌·보유·주문·체결 요약)
+- `GET /api/stock/v1/markets/auto-market/participants/symbol-configs?lifecycleScope=CURRENT|WITHDRAWN` (`ADMIN`, 저장된 종목별 전략)
 - `GET /api/stock/v1/markets/admin/investor-flow-summary` (`ADMIN`, 유저·자동 참여자·상장주관사 기준 현재 거래일 비동기 요약)
 - `GET /api/stock/v1/markets/admin/investor-flow-history` (`ADMIN`, 오늘은 비동기 요약, 과거 거래일은 권위 있는 full-market cycle의 역할 동결 스냅샷과 집계 상태를 반환)
 - 현재 계좌 역할의 권위 소스는 `stock_account.participant_category`이며, 과거 자산·체결 역할은 장마감 스냅샷의 `participant_category`를 사용해 현재 역할 변경으로 재분류하지 않습니다.
@@ -61,6 +64,7 @@
 - `stock_order.market_type`은 현재가 체결용 `VIRTUAL_PRICE`와 주문장 체결용 `ORDER_BOOK`을 분리하는 핵심 계약입니다.
 - 주문장 API는 미체결/부분체결 LIMIT 주문만 가격대별로 집계합니다. 시장가 주문은 가격 레벨이 없으므로 호가에 넣지 않습니다.
 - 자동장 API는 `stock_auto_participant`, `stock_auto_market_config`, 자동 주문/체결 원장을 읽는 조회 API입니다. 주문 생성과 체결은 batch 서버 책임입니다.
+- 자동 참여자 탈퇴는 계좌·현금·보유주식을 삭제하지 않는 소프트 탈퇴입니다. 일반 관리 조회는 `CURRENT`, 휴면 자산 조회는 `WITHDRAWN` 생명주기 범위를 명시하며 두 범위의 캐시를 섞지 않습니다.
 - `portfolio_snapshot`은 batch 정산 결과의 원장이며 사용자 화면에서는 최근 정산 기록/랭킹 근거로만 읽습니다.
 - MySQL business DDL의 단일 canonical source는 `src/main/resources/db/ddl/stock_all.sql`입니다.
 - 기능별 현재 구현과 다음 개발 순서는 `docs/market-simulation/00-overview.md`, 코드 파일별 책임은 `docs/market-simulation/13-code-ownership-map.md`, 기능별 변경 절차는 `docs/market-simulation/14-feature-change-playbooks.md`를 기준으로 확인합니다.

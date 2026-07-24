@@ -9,6 +9,7 @@ import stock.back.service.market.vo.AutoParticipantHoldingGroupResponse;
 import stock.back.service.market.vo.AutoParticipantHoldingResponse;
 import stock.back.service.market.vo.AutoParticipantOverviewResponse;
 import stock.back.service.market.vo.AutoParticipantActivityScope;
+import stock.back.service.market.vo.AutoParticipantLifecycleScope;
 import stock.back.service.market.vo.AutoParticipantProfileOverviewResponse;
 import stock.back.service.market.vo.AutoParticipantResponse;
 
@@ -67,7 +68,12 @@ public class AutoParticipantOverviewQueryService {
 
     @Transactional(readOnly = true)
     public List<AutoParticipantResponse> getAutoParticipants() {
-        return autoMarketStatusDataLoader.loadAutoParticipantStatusResponses();
+        return getAutoParticipants(AutoParticipantLifecycleScope.CURRENT);
+    }
+
+    @Transactional(readOnly = true)
+    public List<AutoParticipantResponse> getAutoParticipants(AutoParticipantLifecycleScope lifecycleScope) {
+        return autoMarketStatusDataLoader.loadAutoParticipantStatusResponses(lifecycleScope);
     }
 
     public List<AutoParticipantOverviewResponse> getAutoParticipantOverviews(boolean includeHoldings, List<String> userKeys) {
@@ -80,22 +86,50 @@ public class AutoParticipantOverviewQueryService {
             List<String> userKeys,
             AutoParticipantActivityScope activityScope
     ) {
+        return getAutoParticipantOverviews(
+                includeHoldings,
+                userKeys,
+                activityScope,
+                AutoParticipantLifecycleScope.CURRENT
+        );
+    }
+
+    @Transactional(readOnly = true)
+    public List<AutoParticipantOverviewResponse> getAutoParticipantOverviews(
+            boolean includeHoldings,
+            List<String> userKeys,
+            AutoParticipantActivityScope activityScope,
+            AutoParticipantLifecycleScope lifecycleScope
+    ) {
+        AutoParticipantLifecycleScope effectiveLifecycleScope =
+                AutoParticipantLifecycleScope.effective(lifecycleScope);
         return meterRegistry.timer(
                 "stock.auto.participant.overview.query.duration",
                 "view",
-                "participant"
-        ).record(() -> loadAutoParticipantOverviews(includeHoldings, userKeys, activityScope));
+                "participant",
+                "lifecycle",
+                effectiveLifecycleScope.name()
+        ).record(() -> loadAutoParticipantOverviews(
+                includeHoldings,
+                userKeys,
+                activityScope,
+                effectiveLifecycleScope
+        ));
     }
 
     private List<AutoParticipantOverviewResponse> loadAutoParticipantOverviews(
             boolean includeHoldings,
             List<String> userKeys,
-            AutoParticipantActivityScope activityScope
+            AutoParticipantActivityScope activityScope,
+            AutoParticipantLifecycleScope lifecycleScope
     ) {
         AutoParticipantAggregateQuerySupport.ActivityWindow activityWindow = activityWindow(activityScope);
         LocalDateTime todayStart = simulationClockService.currentMarketDayStart();
         List<String> normalizedUserKeys = AutoParticipantQuerySupport.normalizeUserKeys(userKeys);
-        List<ParticipantOverviewAccumulator> participants = findParticipantOverviewSeeds(normalizedUserKeys);
+        List<ParticipantOverviewAccumulator> participants = findParticipantOverviewSeeds(
+                normalizedUserKeys,
+                lifecycleScope
+        );
         Map<String, ParticipantOverviewAccumulator> participantByUserKey = new LinkedHashMap<>();
         Map<Long, ParticipantOverviewAccumulator> participantByAccountId = new HashMap<>();
         for (ParticipantOverviewAccumulator participant : participants) {
@@ -147,7 +181,18 @@ public class AutoParticipantOverviewQueryService {
         return autoParticipantHoldingQueryService.getAutoParticipantHoldings(userKeys);
     }
 
-    private List<ParticipantOverviewAccumulator> findParticipantOverviewSeeds(List<String> userKeys) {
+    private List<ParticipantOverviewAccumulator> findParticipantOverviewSeeds(
+            List<String> userKeys,
+            AutoParticipantLifecycleScope lifecycleScope
+    ) {
+        AutoParticipantLifecycleScope effectiveLifecycleScope =
+                AutoParticipantLifecycleScope.effective(lifecycleScope);
+        String lifecyclePredicate = effectiveLifecycleScope == AutoParticipantLifecycleScope.WITHDRAWN
+                ? "is not null"
+                : "is null";
+        String participantOrder = effectiveLifecycleScope == AutoParticipantLifecycleScope.WITHDRAWN
+                ? "p.withdrawn_at desc, p.user_key asc"
+                : "p.user_key asc";
         String participantUserFilter = userKeys.isEmpty() ? "" : " and p.user_key in (:userKeys)";
         JdbcClient.StatementSpec statement = jdbcClient.sql("""
                         select p.user_key,
@@ -162,10 +207,10 @@ public class AutoParticipantOverviewQueryService {
                                coalesce(a.cash_balance, 0) as available_cash
                           from stock_auto_participant p
                           left join stock_account a on a.user_key = p.user_key
-                         where p.withdrawn_at is null
+                         where p.withdrawn_at %s
                          %s
-                         order by p.user_key asc
-                        """.formatted(participantUserFilter));
+                         order by %s
+                        """.formatted(lifecyclePredicate, participantUserFilter, participantOrder));
         if (!userKeys.isEmpty()) {
             statement = statement.param("userKeys", userKeys);
         }
