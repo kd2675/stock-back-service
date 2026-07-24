@@ -225,6 +225,15 @@ class MarketServiceTest {
                                 accountOrderCleanupService,
                                 commandJdbcTemplate
                         ),
+                        new AutoParticipantWithdrawalSettlementService(
+                                stockAccountRepository,
+                                stockAccountCashFlowRepository,
+                                new AutoParticipantStrategyTransitionService(
+                                        accountOrderCleanupService,
+                                        commandJdbcTemplate
+                                ),
+                                new NamedParameterJdbcTemplate(commandJdbcTemplate)
+                        ),
                         simulationClockService,
                         marketLedgerFreezeGuard
                 ),

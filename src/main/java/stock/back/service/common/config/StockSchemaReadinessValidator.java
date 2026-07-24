@@ -84,6 +84,14 @@ public class StockSchemaReadinessValidator implements ApplicationRunner {
                     "order_id", "budget_id", "allocated_amount", "remaining_reserved_amount",
                     "spent_amount", "released_amount", "created_at", "updated_at"
             )),
+            Map.entry("stock_auto_participant_withdrawal", Set.of(
+                    "participant_user_key", "account_id", "returned_cash_amount",
+                    "returned_share_quantity", "returned_symbol_count", "created_by", "created_at"
+            )),
+            Map.entry("stock_auto_participant_share_return", Set.of(
+                    "withdrawal_id", "symbol", "underwriter_account_id",
+                    "quantity", "source_average_price", "created_at"
+            )),
             Map.entry("stock_post_close_cycle", Set.of("eod_contract_version")),
             Map.entry("stock_post_close_phase_attempt", Set.of("eod_contract_version"))
     );
@@ -117,6 +125,11 @@ public class StockSchemaReadinessValidator implements ApplicationRunner {
             Map.entry("chk_stock_auto_funding_budget_amounts", Set.of("available_amount", "reserved_amount", "spent_amount")),
             Map.entry("chk_stock_auto_funding_budget_source", Set.of("corporate_action_id", "corporate_action_entitlement_id")),
             Map.entry("chk_stock_auto_order_budget_amounts", Set.of("remaining_reserved_amount", "spent_amount", "released_amount")),
+            Map.entry("chk_stock_auto_participant_withdrawal_cash", Set.of("returned_cash_amount")),
+            Map.entry("chk_stock_auto_participant_withdrawal_shares", Set.of("returned_share_quantity")),
+            Map.entry("chk_stock_auto_participant_withdrawal_symbols", Set.of("returned_symbol_count")),
+            Map.entry("chk_stock_auto_share_return_quantity", Set.of("quantity")),
+            Map.entry("chk_stock_auto_share_return_average_price", Set.of("source_average_price")),
             Map.entry("chk_stock_post_close_cycle_eod_contract", Set.of("eod_contract_version")),
             Map.entry("chk_stock_post_close_phase_attempt_eod_contract", Set.of("eod_contract_version"))
     );
@@ -156,7 +169,15 @@ public class StockSchemaReadinessValidator implements ApplicationRunner {
                     "idx_stock_auto_funding_budget_symbol",
                     "idx_stock_auto_funding_budget_action"
             )),
-            Map.entry("stock_auto_participant_order_budget", Set.of("idx_stock_auto_order_budget_budget"))
+            Map.entry("stock_auto_participant_order_budget", Set.of("idx_stock_auto_order_budget_budget")),
+            Map.entry("stock_auto_participant_withdrawal", Set.of(
+                    "uk_stock_auto_participant_withdrawal_user",
+                    "idx_stock_auto_participant_withdrawal_account",
+                    "idx_stock_auto_participant_withdrawal_created"
+            )),
+            Map.entry("stock_auto_participant_share_return", Set.of(
+                    "idx_stock_auto_share_return_underwriter"
+            ))
     );
 
     private final DataSource dataSource;
@@ -166,7 +187,7 @@ public class StockSchemaReadinessValidator implements ApplicationRunner {
     public StockSchemaReadinessValidator(
             @Qualifier("pubMasterDatasource") DataSource dataSource,
             ObjectProvider<BuildProperties> buildPropertiesProvider,
-            @Value("${STOCK_SCHEMA_VERSION:2026-07-23-auto-profile-v2-direct}") String schemaVersion
+            @Value("${STOCK_SCHEMA_VERSION:2026-07-25-auto-participant-withdrawal}") String schemaVersion
     ) {
         this.dataSource = dataSource;
         this.buildPropertiesProvider = buildPropertiesProvider;
@@ -435,6 +456,14 @@ public class StockSchemaReadinessValidator implements ApplicationRunner {
         requirements.put("stock_auto_participant_order_budget", Set.of(
                 "order_id", "budget_id", "allocated_amount", "remaining_reserved_amount",
                 "spent_amount", "released_amount", "created_at", "updated_at"
+        ));
+        requirements.put("stock_auto_participant_withdrawal", Set.of(
+                "id", "participant_user_key", "account_id", "returned_cash_amount",
+                "returned_share_quantity", "returned_symbol_count", "created_by", "created_at"
+        ));
+        requirements.put("stock_auto_participant_share_return", Set.of(
+                "withdrawal_id", "symbol", "underwriter_account_id",
+                "quantity", "source_average_price", "created_at"
         ));
         requirements.put("stock_post_close_cycle", Set.of(
                 "id", "business_date", "scope_type", "scope_key", "cycle_kind", "phase", "status",

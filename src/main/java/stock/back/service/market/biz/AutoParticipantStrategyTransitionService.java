@@ -26,13 +26,30 @@ class AutoParticipantStrategyTransitionService {
 
     @Transactional(propagation = Propagation.MANDATORY)
     void retireOpenOrdersAndFundingBudgets(StockAccount account, LocalDateTime retiredAt) {
+        retireOpenOrdersAndFundingBudgets(account, retiredAt, false);
+    }
+
+    @Transactional(propagation = Propagation.MANDATORY)
+    void retireAllOpenOrdersAndFundingBudgets(StockAccount account, LocalDateTime retiredAt) {
+        retireOpenOrdersAndFundingBudgets(account, retiredAt, true);
+    }
+
+    private void retireOpenOrdersAndFundingBudgets(
+            StockAccount account,
+            LocalDateTime retiredAt,
+            boolean allMarkets
+    ) {
         if (account == null || account.getId() == null) {
             return;
         }
         if (retiredAt == null) {
             throw new IllegalArgumentException("Auto-participant strategy transition time is required");
         }
-        accountOrderCleanupService.cancelOpenOrderBookOrders(account);
+        if (allMarkets) {
+            accountOrderCleanupService.cancelOpenOrdersForDetach(account);
+        } else {
+            accountOrderCleanupService.cancelOpenOrderBookOrders(account);
+        }
         int reservedBudgetCount = jdbcTemplate.queryForObject(
                 """
                 select count(*)

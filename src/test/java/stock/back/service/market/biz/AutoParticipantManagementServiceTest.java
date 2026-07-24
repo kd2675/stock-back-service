@@ -29,6 +29,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -50,6 +51,9 @@ class AutoParticipantManagementServiceTest {
     private AutoParticipantStrategyTransitionService strategyTransitionService;
 
     @Mock
+    private AutoParticipantWithdrawalSettlementService withdrawalSettlementService;
+
+    @Mock
     private SimulationClockService simulationClockService;
 
     @Mock
@@ -67,6 +71,7 @@ class AutoParticipantManagementServiceTest {
                 stockAccountRepository,
                 stockAccountCashFlowRepository,
                 strategyTransitionService,
+                withdrawalSettlementService,
                 simulationClockService,
                 marketLedgerFreezeGuard
         );
@@ -326,7 +331,7 @@ class AutoParticipantManagementServiceTest {
     }
 
     @Test
-    void withdrawAutoParticipant_openOrders_releasesReservationsAndCancelsOrders() {
+    void withdrawAutoParticipant_settlesAssetsAndClosesAccount() {
         StockAutoParticipant participant = StockAutoParticipant.create(
                 "stock-auto-001",
                 "자동 참여자 1",
@@ -335,21 +340,114 @@ class AutoParticipantManagementServiceTest {
         StockAccount account = StockAccount.open("stock-auto-001");
         account.assignAccountCodeIfMissing("AC001");
         setAccountId(account, 101L);
-        when(stockAutoParticipantRepository.findById("stock-auto-001")).thenReturn(Optional.of(participant));
-        when(stockAccountRepository.findByUserKeyAndStatusForUpdate("stock-auto-001", StockAccountStatus.ACTIVE))
-                .thenReturn(Optional.of(account));
+        when(stockAutoParticipantRepository.findByUserKeyForUpdate("stock-auto-001"))
+                .thenReturn(Optional.of(participant));
+        when(withdrawalSettlementService.findCompletedSettlement("stock-auto-001"))
+                .thenReturn(Optional.empty());
+        when(withdrawalSettlementService.settle(
+                "stock-auto-001",
+                "stock-admin",
+                LocalDateTime.of(2026, 7, 2, 10, 0)
+        )).thenAnswer(invocation -> {
+            account.withdrawCash(account.getCashBalance(), LocalDateTime.of(2026, 7, 2, 10, 0));
+            account.closeForAutoParticipantWithdrawal(LocalDateTime.of(2026, 7, 2, 10, 0));
+            return new AutoParticipantWithdrawalSettlementService.WithdrawalSettlement(
+                    new BigDecimal("5000000.00"),
+                    125L,
+                    2,
+                    true
+            );
+        });
         when(stockAutoParticipantRepository.save(any(StockAutoParticipant.class)))
                 .thenAnswer(invocation -> invocation.getArgument(0));
         when(stockAccountRepository.findByUserKey("stock-auto-001")).thenReturn(Optional.of(account));
+        account.depositCash(new BigDecimal("5000000.00"));
 
-        var response = service.withdrawAutoParticipant("stock-auto-001");
+        var response = service.withdrawAutoParticipant("stock-auto-001", "stock-admin");
 
         assertThat(response.enabled()).isFalse();
         assertThat(response.withdrawnAt()).isNotNull();
-        verify(strategyTransitionService).retireOpenOrdersAndFundingBudgets(
-                account,
+        assertThat(response.accountStatus()).isEqualTo("CLOSED");
+        assertThat(response.cashBalance()).isEqualByComparingTo(BigDecimal.ZERO);
+        assertThat(response.withdrawalReturnedCashAmount()).isEqualByComparingTo("5000000.00");
+        assertThat(response.withdrawalReturnedShareQuantity()).isEqualTo(125L);
+        assertThat(response.withdrawalReturnedSymbolCount()).isEqualTo(2);
+        assertThat(response.accountClosedOnWithdrawal()).isTrue();
+        verify(withdrawalSettlementService).settle(
+                "stock-auto-001",
+                "stock-admin",
                 LocalDateTime.of(2026, 7, 2, 10, 0)
         );
+    }
+
+    @Test
+    void withdrawAutoParticipant_completedSettlement_returnsAuditWithoutSettlingTwice() {
+        StockAutoParticipant participant = StockAutoParticipant.create(
+                "stock-auto-001",
+                "탈퇴 완료 참여자",
+                true
+        );
+        participant.withdraw();
+        StockAccount account = StockAccount.open("stock-auto-001");
+        setAccountId(account, 101L);
+        account.assignParticipantCategory(
+                StockAccountParticipantCategory.AUTO_PARTICIPANT,
+                LocalDateTime.of(2026, 7, 2, 10, 0)
+        );
+        account.closeForAutoParticipantWithdrawal(LocalDateTime.of(2026, 7, 2, 10, 0));
+        when(stockAutoParticipantRepository.findByUserKeyForUpdate("stock-auto-001"))
+                .thenReturn(Optional.of(participant));
+        when(withdrawalSettlementService.findCompletedSettlement("stock-auto-001"))
+                .thenReturn(Optional.of(
+                        new AutoParticipantWithdrawalSettlementService.WithdrawalSettlement(
+                                new BigDecimal("1000000.00"),
+                                25L,
+                                1,
+                                true
+                        )
+                ));
+        when(stockAutoParticipantRepository.save(any(StockAutoParticipant.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+        when(stockAccountRepository.findByUserKey("stock-auto-001"))
+                .thenReturn(Optional.of(account));
+
+        var response = service.withdrawAutoParticipant("stock-auto-001", "stock-admin");
+
+        assertThat(response.withdrawalReturnedCashAmount()).isEqualByComparingTo("1000000.00");
+        assertThat(response.withdrawalReturnedShareQuantity()).isEqualTo(25L);
+        assertThat(response.accountClosedOnWithdrawal()).isTrue();
+        verify(withdrawalSettlementService, never()).settle(any(), any(), any());
+    }
+
+    @Test
+    void upsertAutoParticipant_withdrawnParticipant_rejectsReactivation() {
+        StockAutoParticipant participant = StockAutoParticipant.create(
+                "stock-auto-001",
+                "탈퇴 참여자",
+                true
+        );
+        participant.withdraw();
+        when(stockAutoParticipantRepository.findById("stock-auto-001"))
+                .thenReturn(Optional.of(participant));
+
+        AutoParticipantRequest request = new AutoParticipantRequest(
+                "재활성화 참여자",
+                true,
+                "MOMENTUM_FOLLOWER",
+                null,
+                null,
+                null,
+                null,
+                false,
+                BigDecimal.ZERO
+        );
+
+        assertThatThrownBy(() -> service.upsertAutoParticipant("stock-auto-001", request))
+                .isInstanceOf(StockException.class)
+                .hasMessageContaining("cannot be reactivated");
+
+        verify(stockAutoParticipantRepository, never()).save(any());
+        verifyNoInteractions(marketLedgerFreezeGuard);
     }
 
     private void setAccountId(StockAccount account, Long id) {

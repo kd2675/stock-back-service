@@ -145,6 +145,10 @@ public class StockAutoParticipant {
     }
 
     public void withdraw() {
+        if (this.withdrawnAt != null) {
+            this.enabled = false;
+            return;
+        }
         LocalDateTime now = LocalDateTime.now();
         this.enabled = false;
         this.withdrawnAt = now;

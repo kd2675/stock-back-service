@@ -77,11 +77,18 @@ public class AutoMarketStatusDataLoader {
                        coalesce(b.active_funding_budget_count, 0) as active_funding_budget_count,
                        coalesce(s.tracked_position_count, 0) as tracked_position_count,
                        coalesce(s.average_holding_trading_days, 0) as average_holding_trading_days,
-                       coalesce(s.average_down_round_count, 0) as average_down_round_count
+                       coalesce(s.average_down_round_count, 0) as average_down_round_count,
+                       coalesce(w.returned_cash_amount, 0) as withdrawal_returned_cash_amount,
+                       coalesce(w.returned_share_quantity, 0) as withdrawal_returned_share_quantity,
+                       coalesce(w.returned_symbol_count, 0) as withdrawal_returned_symbol_count,
+                       case when w.id is not null and a.status = 'CLOSED' then true else false end
+                           as account_closed_on_withdrawal
                   from stock_auto_participant p
                   left join stock_auto_participant_profile_config pc
                     on pc.profile_type = p.profile_type
                   left join stock_account a on a.user_key = p.user_key
+                  left join stock_auto_participant_withdrawal w
+                    on w.participant_user_key = p.user_key
 	              left join (
 	                   select account_id,
 	                          sum(case

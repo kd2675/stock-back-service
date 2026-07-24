@@ -97,7 +97,11 @@ final class AutoMarketStatusResponseMapper {
                 rs.getLong("active_funding_budget_count"),
                 rs.getLong("tracked_position_count"),
                 rs.getBigDecimal("average_holding_trading_days"),
-                rs.getLong("average_down_round_count")
+                rs.getLong("average_down_round_count"),
+                rs.getBigDecimal("withdrawal_returned_cash_amount"),
+                rs.getLong("withdrawal_returned_share_quantity"),
+                rs.getInt("withdrawal_returned_symbol_count"),
+                rs.getBoolean("account_closed_on_withdrawal")
         );
     }
 

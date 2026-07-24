@@ -64,7 +64,7 @@
 - `stock_order.market_type`은 현재가 체결용 `VIRTUAL_PRICE`와 주문장 체결용 `ORDER_BOOK`을 분리하는 핵심 계약입니다.
 - 주문장 API는 미체결/부분체결 LIMIT 주문만 가격대별로 집계합니다. 시장가 주문은 가격 레벨이 없으므로 호가에 넣지 않습니다.
 - 자동장 API는 `stock_auto_participant`, `stock_auto_market_config`, 자동 주문/체결 원장을 읽는 조회 API입니다. 주문 생성과 체결은 batch 서버 책임입니다.
-- 자동 참여자 탈퇴는 계좌·현금·보유주식을 삭제하지 않는 소프트 탈퇴입니다. 일반 관리 조회는 `CURRENT`, 휴면 자산 조회는 `WITHDRAWN` 생명주기 범위를 명시하며 두 범위의 캐시를 섞지 않습니다.
+- 자동 참여자 탈퇴는 미체결 주문·예약을 해제하고 전용 예산을 만료한 뒤, 보유주식을 종목별 상장주관사에 반납하고 잔여 현금을 회수하는 원자적 정산입니다. 계좌 row는 과거 원장 연결을 위해 삭제하지 않고 `CLOSED`로 보존하며, 진행 중 기업행사 권리가 있으면 탈퇴를 거부합니다. 일반 관리 조회는 `CURRENT`, 탈퇴 감사 조회는 `WITHDRAWN` 생명주기 범위를 명시하며 두 범위의 캐시를 섞지 않습니다.
 - `portfolio_snapshot`은 batch 정산 결과의 원장이며 사용자 화면에서는 최근 정산 기록/랭킹 근거로만 읽습니다.
 - MySQL business DDL의 단일 canonical source는 `src/main/resources/db/ddl/stock_all.sql`입니다.
 - 기능별 현재 구현과 다음 개발 순서는 `docs/market-simulation/00-overview.md`, 코드 파일별 책임은 `docs/market-simulation/13-code-ownership-map.md`, 기능별 변경 절차는 `docs/market-simulation/14-feature-change-playbooks.md`를 기준으로 확인합니다.

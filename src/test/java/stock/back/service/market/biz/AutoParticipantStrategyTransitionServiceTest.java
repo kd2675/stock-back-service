@@ -105,4 +105,15 @@ class AutoParticipantStrategyTransitionServiceTest {
                 String.class
         )).isEqualTo("ACTIVE");
     }
+
+    @Test
+    void retireAllOpenOrdersAndFundingBudgets_withdrawal_cancelsEveryMarketOrder() {
+        LocalDateTime retiredAt = LocalDateTime.of(2027, 1, 18, 12, 0);
+
+        transactionTemplate.executeWithoutResult(ignored ->
+                service.retireAllOpenOrdersAndFundingBudgets(account, retiredAt)
+        );
+
+        verify(accountOrderCleanupService).cancelOpenOrdersForDetach(account);
+    }
 }

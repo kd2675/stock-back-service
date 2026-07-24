@@ -26,7 +26,11 @@ public record AutoParticipantResponse(
         long activeFundingBudgetCount,
         long trackedPositionCount,
         BigDecimal averageHoldingTradingDays,
-        long averageDownRoundCount
+        long averageDownRoundCount,
+        BigDecimal withdrawalReturnedCashAmount,
+        long withdrawalReturnedShareQuantity,
+        int withdrawalReturnedSymbolCount,
+        boolean accountClosedOnWithdrawal
 ) {
     public AutoParticipantResponse(
             String userKey,
@@ -51,7 +55,8 @@ public record AutoParticipantResponse(
                 recurringCashAmount, recurringCashIntervalValue, recurringCashIntervalUnit,
                 accountId, accountStatus, cashBalance, createdAt, updatedAt, withdrawnAt,
                 BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO,
-                0L, 0L, BigDecimal.ZERO, 0L
+                0L, 0L, BigDecimal.ZERO, 0L,
+                BigDecimal.ZERO, 0L, 0, false
         );
     }
 
@@ -76,7 +81,26 @@ public record AutoParticipantResponse(
                 recurringCashAmount, recurringCashIntervalValue, recurringCashIntervalUnit,
                 accountId, accountStatus, cashBalance, createdAt, updatedAt, withdrawnAt,
                 BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO,
-                0L, 0L, BigDecimal.ZERO, 0L
+                0L, 0L, BigDecimal.ZERO, 0L,
+                BigDecimal.ZERO, 0L, 0, false
+        );
+    }
+
+    public AutoParticipantResponse withWithdrawalSettlement(
+            BigDecimal returnedCashAmount,
+            long returnedShareQuantity,
+            int returnedSymbolCount,
+            boolean accountClosed
+    ) {
+        return new AutoParticipantResponse(
+                userKey, displayName, enabled, profileType,
+                behaviorModelVersion, behaviorSeed,
+                recurringCashAmount, recurringCashIntervalValue, recurringCashIntervalUnit,
+                accountId, accountStatus, cashBalance, createdAt, updatedAt, withdrawnAt,
+                paydayAvailableBudget, dividendAvailableBudget, fundingReservedAmount, fundingSpentAmount,
+                activeFundingBudgetCount, trackedPositionCount, averageHoldingTradingDays, averageDownRoundCount,
+                returnedCashAmount == null ? BigDecimal.ZERO : returnedCashAmount,
+                returnedShareQuantity, returnedSymbolCount, accountClosed
         );
     }
 }

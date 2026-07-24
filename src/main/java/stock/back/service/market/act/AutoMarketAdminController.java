@@ -184,8 +184,13 @@ public class AutoMarketAdminController {
     }
 
     @DeleteMapping("/auto-market/participants/{userKey}")
-    public ResponseDataDTO<AutoParticipantResponse> withdrawAutoParticipant(@PathVariable String userKey) {
-        return ResponseDataDTO.of(autoParticipantManagementService.withdrawAutoParticipant(userKey));
+    public ResponseDataDTO<AutoParticipantResponse> withdrawAutoParticipant(
+            @PathVariable String userKey,
+            UserContext userContext
+    ) {
+        return ResponseDataDTO.of(
+                autoParticipantManagementService.withdrawAutoParticipant(userKey, userContext.getUserKey())
+        );
     }
 
     @PostMapping("/auto-market/participants/{userKey}/cash-adjustments")

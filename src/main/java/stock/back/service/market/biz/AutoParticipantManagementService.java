@@ -33,6 +33,7 @@ public class AutoParticipantManagementService {
     private final StockAccountRepository stockAccountRepository;
     private final StockAccountCashFlowRepository stockAccountCashFlowRepository;
     private final AutoParticipantStrategyTransitionService strategyTransitionService;
+    private final AutoParticipantWithdrawalSettlementService withdrawalSettlementService;
     private final SimulationClockService simulationClockService;
     private final MarketLedgerFreezeGuard marketLedgerFreezeGuard;
 
@@ -69,6 +70,7 @@ public class AutoParticipantManagementService {
                 recurringCashAmount
         );
         var existingParticipant = stockAutoParticipantRepository.findById(normalizedUserKey);
+        existingParticipant.ifPresent(existing -> requireNotWithdrawn(existing, normalizedUserKey));
         retirePreviousStrategyIfChanged(
                 normalizedUserKey,
                 existingParticipant.orElse(null),
@@ -119,16 +121,41 @@ public class AutoParticipantManagementService {
 
     @Transactional
     public AutoParticipantResponse withdrawAutoParticipant(String userKey) {
+        return withdrawAutoParticipant(userKey, null);
+    }
+
+    @Transactional
+    public AutoParticipantResponse withdrawAutoParticipant(String userKey, String adminUserKey) {
         String normalizedUserKey = MarketTextNormalizer.text(userKey);
         if (normalizedUserKey.isBlank()) {
             throw StockException.badRequest("Auto participant user key is required");
         }
-        StockAutoParticipant participant = stockAutoParticipantRepository.findById(normalizedUserKey)
-                .orElseThrow(() -> StockException.notFound("Unknown auto participant: " + normalizedUserKey));
         marketLedgerFreezeGuard.acquireMutationPermit("auto-participant withdrawal");
-        retireCurrentStrategy(normalizedUserKey);
+        StockAutoParticipant participant = stockAutoParticipantRepository.findByUserKeyForUpdate(normalizedUserKey)
+                .orElseThrow(() -> StockException.notFound("Unknown auto participant: " + normalizedUserKey));
+        AutoParticipantWithdrawalSettlementService.WithdrawalSettlement settlement =
+                withdrawalSettlementService.findCompletedSettlement(normalizedUserKey)
+                        .orElseGet(() -> withdrawalSettlementService.settle(
+                                normalizedUserKey,
+                                adminUserKey,
+                                simulationClockService.currentMarketDateTime()
+                        ));
         participant.withdraw();
-        return toAutoParticipantResponse(stockAutoParticipantRepository.save(participant));
+        StockAutoParticipant savedParticipant = stockAutoParticipantRepository.save(participant);
+        return toAutoParticipantResponse(savedParticipant).withWithdrawalSettlement(
+                settlement.returnedCashAmount(),
+                settlement.returnedShareQuantity(),
+                settlement.returnedSymbolCount(),
+                settlement.accountClosed()
+        );
+    }
+
+    private void requireNotWithdrawn(StockAutoParticipant participant, String userKey) {
+        if (participant.getWithdrawnAt() != null) {
+            throw StockException.conflict(
+                    "Withdrawn auto participant cannot be reactivated; register a new user key: " + userKey
+            );
+        }
     }
 
     private void retireCurrentStrategy(String userKey) {

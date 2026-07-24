@@ -200,6 +200,8 @@ class StockMysqlDdlContractTest {
             "TRUNCATE TABLE stock_execution;",
             "TRUNCATE TABLE stock_account_cash_flow;",
             "TRUNCATE TABLE stock_auto_participant_cash_flow_run;",
+            "TRUNCATE TABLE stock_auto_participant_share_return;",
+            "TRUNCATE TABLE stock_auto_participant_withdrawal;",
             "TRUNCATE TABLE stock_auto_participant_order_budget;",
             "TRUNCATE TABLE stock_auto_participant_funding_budget;",
             "TRUNCATE TABLE stock_auto_participant_position_state;",
@@ -691,6 +693,41 @@ class StockMysqlDdlContractTest {
                 "FROM stock_execution ",
                 "JOIN stock_execution "
         );
+    }
+
+    @Test
+    void autoParticipantWithdrawalSettlementAlter_isCreateOnlyAndMatchesCanonicalDdl() throws IOException {
+        String alterDdl = Files.readString(
+                Path.of("src/main/resources/db/ddl/stock_auto_participant_withdrawal_settlement_alter.sql"),
+                StandardCharsets.UTF_8
+        );
+        String canonicalDdl = Files.readString(
+                Path.of("src/main/resources/db/ddl/stock_all.sql"),
+                StandardCharsets.UTF_8
+        );
+
+        assertThat(firstExecutableSqlLine(alterDdl)).isEqualTo("USE STOCK_SERVICE;");
+        assertThat(alterDdl).contains(
+                "CREATE TABLE IF NOT EXISTS stock_auto_participant_withdrawal",
+                "CREATE TABLE IF NOT EXISTS stock_auto_participant_share_return",
+                "uk_stock_auto_participant_withdrawal_user",
+                "idx_stock_auto_share_return_underwriter",
+                "returned_cash_amount",
+                "returned_share_quantity",
+                "source_average_price"
+        );
+        assertThat(canonicalDdl).contains(
+                "CREATE TABLE IF NOT EXISTS stock_auto_participant_withdrawal",
+                "CREATE TABLE IF NOT EXISTS stock_auto_participant_share_return"
+        );
+        for (String tableName : List.of(
+                "stock_auto_participant_withdrawal",
+                "stock_auto_participant_share_return"
+        )) {
+            assertThat(normalizeSqlBlock(extractCreateTableBlock(alterDdl, tableName)))
+                    .isEqualTo(normalizeSqlBlock(extractCreateTableBlock(canonicalDdl, tableName)));
+        }
+        assertThat(alterDdl).doesNotContain("ALTER TABLE", "UPDATE ", "DELETE FROM");
     }
 
     @Test

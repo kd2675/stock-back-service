@@ -171,6 +171,18 @@ public class StockAccount {
         this.updatedAt = LocalDateTime.now();
     }
 
+    public void closeForAutoParticipantWithdrawal(LocalDateTime closedAt) {
+        this.status = StockAccountStatus.CLOSED;
+        this.recoveryCodeHash = null;
+        this.issuedRecoveryCode = null;
+        this.previousUserKeyHash = null;
+        this.detachedAt = null;
+        this.reconnectedAt = null;
+        this.recoveryExpiresAt = null;
+        this.purgeAfter = null;
+        this.updatedAt = closedAt == null ? LocalDateTime.now() : closedAt;
+    }
+
     public void reserveCash(BigDecimal amount) {
         reserveCash(amount, LocalDateTime.now());
     }

@@ -93,6 +93,7 @@ stock 원장은 주문, 체결, 계좌, 보유, 가격, 주문장 종목, 시장
 - 기존 주문·체결 원장에 계좌별 최신 활동 및 캔들 전용 인덱스가 없으면 `stock_activity_latest_lookup_alter.sql`을 적용한다.
 - 기존 `stock_order_book_daily_snapshot`이 BUY·SELL 양쪽 행을 합산한 체결수·거래량·거래대금을 보유하면 `stock_market_turnover_normalization_alter.sql`을 적용한다. 이미 정규화된 스냅샷에는 재적용되지 않는다.
 - 기존 `portfolio_snapshot`에 보유량 계열 컬럼이 없으면 batch/back 배포 전에 `stock_portfolio_snapshot_holding_metrics_alter.sql`을 적용한다. 이 alter는 기존 row를 그대로 NULL로 보존하며, 부분 적용·타입/NULL 계약 불일치·동일 이름의 잘못된 CHECK가 있으면 `stock_migration_required_portfolio_snapshot_holding_metrics_schema` marker로 중단한다.
+- 자동 참여자 자산 정산형 탈퇴를 배포하기 전 `stock_auto_participant_withdrawal_settlement_alter.sql`을 적용한다. 이 파일은 기존 대형 원장 테이블을 재작성하지 않고 탈퇴 요약·종목별 반납 감사 테이블만 `CREATE TABLE IF NOT EXISTS`로 추가한다. 적용 전까지 새 백엔드는 스키마 readiness 검사에서 기동을 중단한다.
 - 잘못 배포된 실제시장형 `investor_type` 컬럼이 남은 DB는 백엔드·배치를 종료한 유지보수 창에서 `stock_investor_type_cleanup_alter.sql`을 적용한다. 이 정방향 정리 ALTER는 5개 소형 계좌·요약·스냅샷 테이블만 변경하고 `stock_order`·`stock_execution`을 읽거나 변경하지 않으며 재실행할 수 있다.
 - MySQL 8.0은 `ADD COLUMN`과 enforced `CHECK` 추가를 한 문장에서 `INSTANT`로 처리하지 못한다. 이 alter는 원자적 계약 적용을 위해 `ALGORITHM=COPY, LOCK=SHARED`를 명시하므로 읽기는 허용하지만 쓰기는 잠시 막힌다. `portfolio-settlement` writer를 중지하고 장마감 후처리가 없는 유지보수 구간에 적용하며, 15초 안에 metadata lock을 얻지 못하면 실패하도록 해 장시간 대기를 피한다.
 - `stock_schema_contract_alignment_alter.sql`은 migration용 임시 기본값을 제거하고, 기존 테이블 생성 시 빠질 수 있던 스냅샷·레짐 CHECK와 기업 이벤트 발행 필수 CHECK를 canonical 정의로 재생성한다.

@@ -87,6 +87,7 @@ public class AccountOrderCleanupService {
                 cursor = new OpenOrderCursor(lastCandidate.createdAt(), lastCandidate.id());
             }
         }
+        stockHoldingRepository.flush();
     }
 
     private List<OpenOrderReservation> findOpenOrderCandidates(

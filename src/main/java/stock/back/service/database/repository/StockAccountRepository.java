@@ -28,4 +28,8 @@ public interface StockAccountRepository extends JpaRepository<StockAccount, Long
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select a from StockAccount a where a.accountCode = :accountCode")
     Optional<StockAccount> findByAccountCodeForUpdate(@Param("accountCode") String accountCode);
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select a from StockAccount a where a.id in :accountIds order by a.id")
+    List<StockAccount> findAllByIdInForUpdate(@Param("accountIds") Collection<Long> accountIds);
 }

@@ -113,7 +113,15 @@ class AutoMarketStatusDataLoaderTest {
                 """
                 insert into stock_account(id, user_key, status, cash_balance)
                 values (1, 'auto-current', 'ACTIVE', 100000),
-                       (2, 'auto-withdrawn', 'ACTIVE', 250000)
+                       (2, 'auto-withdrawn', 'CLOSED', 0)
+                """
+        );
+        jdbcTemplate.update(
+                """
+                insert into stock_auto_participant_withdrawal(
+                    id, participant_user_key, account_id, returned_cash_amount,
+                    returned_share_quantity, returned_symbol_count
+                ) values (1, 'auto-withdrawn', 2, 250000, 120, 2)
                 """
         );
 
@@ -128,11 +136,21 @@ class AutoMarketStatusDataLoaderTest {
                 .extracting(
                         AutoParticipantResponse::userKey,
                         AutoParticipantResponse::cashBalance,
-                        AutoParticipantResponse::withdrawnAt
+                        AutoParticipantResponse::withdrawnAt,
+                        AutoParticipantResponse::withdrawalReturnedCashAmount,
+                        AutoParticipantResponse::withdrawalReturnedShareQuantity,
+                        AutoParticipantResponse::accountClosedOnWithdrawal
                 )
                 .containsExactly(
-                        tuple("auto-current", new BigDecimal("100000.00"), null),
-                        tuple("auto-withdrawn", new BigDecimal("250000.00"), now.minusDays(1))
+                        tuple("auto-current", new BigDecimal("100000.00"), null, BigDecimal.ZERO, 0L, false),
+                        tuple(
+                                "auto-withdrawn",
+                                new BigDecimal("0.00"),
+                                now.minusDays(1),
+                                new BigDecimal("250000.00"),
+                                120L,
+                                true
+                        )
                 );
     }
 
@@ -191,6 +209,18 @@ class AutoMarketStatusDataLoaderTest {
                 create table stock_auto_participant_profile_config(
                     profile_type varchar(40) primary key,
                     behavior_model_version varchar(20) not null
+                )
+                """
+        );
+        jdbcTemplate.execute(
+                """
+                create table stock_auto_participant_withdrawal(
+                    id bigint primary key,
+                    participant_user_key varchar(64) not null,
+                    account_id bigint not null,
+                    returned_cash_amount decimal(19,2) not null,
+                    returned_share_quantity bigint not null,
+                    returned_symbol_count int not null
                 )
                 """
         );
