@@ -45,7 +45,7 @@ public class UnderwritingContractProvisionService {
         this.marketLedgerFreezeGuard = marketLedgerFreezeGuard;
     }
 
-    @Transactional
+    @Transactional(transactionManager = "pubJdbcTransactionManager")
     public long createContract(
             String symbol,
             UnderwritingContractCreateRequest request,
@@ -56,7 +56,7 @@ public class UnderwritingContractProvisionService {
         String changeReason = normalizeReason(request);
         String normalizedChangedBy = normalizeChangedBy(changedBy);
         SimulationClockSnapshot clock = requirePausedPreOpen();
-        LocalDate businessDate = marketLedgerFreezeGuard.acquireMutationPermit(
+        LocalDate businessDate = marketLedgerFreezeGuard.acquireJdbcPreOpenMutationPermit(
                 "independent underwriting contract creation"
         );
         if (!businessDate.equals(clock.simulationDate())) {

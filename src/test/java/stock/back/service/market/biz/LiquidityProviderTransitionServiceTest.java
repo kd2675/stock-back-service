@@ -7,7 +7,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.util.List;
 import java.util.UUID;
 
 import javax.sql.DataSource;
@@ -20,15 +19,10 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.SingleConnectionDataSource;
 import org.springframework.jdbc.datasource.init.ResourceDatabasePopulator;
-import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import stock.back.service.common.exception.StockException;
-import stock.back.service.database.entity.StockAccount;
-import stock.back.service.database.repository.StockAccountRepository;
-import stock.back.service.market.vo.LiquidityProviderActivationRequest;
 import stock.back.service.market.vo.LiquidityProviderProvisionRequest;
-import stock.back.service.trading.biz.AccountOrderCleanupService;
 import web.common.core.simulation.SimulationClockSnapshot;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -47,8 +41,6 @@ class LiquidityProviderTransitionServiceTest {
     private TransactionTemplate transactionTemplate;
     private SimulationClockService simulationClockService;
     private MarketLedgerFreezeGuard freezeGuard;
-    private StockAccountRepository stockAccountRepository;
-    private AccountOrderCleanupService accountOrderCleanupService;
     private LiquidityProviderTransitionService service;
     private LiquidityProviderRecommendationService recommendationService;
 
@@ -72,20 +64,15 @@ class LiquidityProviderTransitionServiceTest {
         SimulationMarketSessionService marketSessionService =
                 new SimulationMarketSessionService(simulationClockService, "06:00", "18:00");
         freezeGuard = mock(MarketLedgerFreezeGuard.class);
-        when(freezeGuard.acquireMutationPermit("liquidity-provider shadow provisioning"))
+        when(freezeGuard.acquireJdbcPreOpenMutationPermit("liquidity-provider live provisioning"))
                 .thenReturn(BUSINESS_DATE);
-        when(freezeGuard.acquireMutationPermit("liquidity-provider live activation"))
-                .thenReturn(BUSINESS_DATE);
-        stockAccountRepository = mock(StockAccountRepository.class);
-        accountOrderCleanupService = mock(AccountOrderCleanupService.class);
         service = new LiquidityProviderTransitionService(
                 jdbcTemplate,
                 new ObjectMapper(),
                 simulationClockService,
                 marketSessionService,
                 freezeGuard,
-                stockAccountRepository,
-                accountOrderCleanupService
+                new MarketRoleOrderCleanupService(jdbcTemplate)
         );
         recommendationService = new LiquidityProviderRecommendationService(
                 JdbcClient.create(dataSource)
@@ -94,37 +81,59 @@ class LiquidityProviderTransitionServiceTest {
     }
 
     @Test
-    void provisionShadow_defaultRates_separatesInventoryAndCreatesNoOrders() {
+    void provisionLive_defaultRates_migratesLegacyAtomically() {
+        seedLegacyOpenOrders();
+
         transactionTemplate.executeWithoutResult(status ->
-                service.provisionShadow("demo001", null, "stock-admin"));
+                service.provisionLive("demo001", null, "stock-admin"));
 
         assertThat(jdbcTemplate.queryForObject(
-                "select count(*) from stock_order",
+                """
+                select count(*)
+                  from stock_order
+                 where status = 'CANCELLED'
+                   and reserved_cash = 0
+                """,
                 Integer.class
+        )).isEqualTo(2);
+        assertThat(jdbcTemplate.queryForObject(
+                "select cash_balance from stock_account where id = 100",
+                BigDecimal.class
+        )).isEqualByComparingTo("1000.00");
+        assertThat(jdbcTemplate.queryForObject(
+                """
+                select reserved_quantity
+                  from stock_holding
+                 where account_id = 100
+                   and symbol = 'DEMO001'
+                """,
+                Long.class
         )).isZero();
         assertThat(jdbcTemplate.queryForObject(
                 "select enabled from stock_listing_auto_account_config where symbol = 'DEMO001'",
                 Boolean.class
-        )).isTrue();
+        )).isFalse();
         assertThat(jdbcTemplate.queryForMap(
                 """
                 select mandate.execution_mode, mandate.reference_daily_volume,
                        mandate.max_order_quantity, mandate.target_inventory_quantity,
                        mandate.inventory_band_quantity, transition.stage,
-                       transition.seed_inventory_quantity, transition.seed_cash_amount
+                       transition.seed_inventory_quantity, transition.seed_cash_amount,
+                       transition.legacy_disabled_at, transition.activated_at
                   from stock_liquidity_mandate mandate
                   join stock_liquidity_transition transition
                     on transition.mandate_id = mandate.id
                  where mandate.symbol = 'DEMO001'
                 """
-        )).containsEntry("execution_mode", "SHADOW")
+        )).containsEntry("execution_mode", "LIVE")
                 .containsEntry("reference_daily_volume", 30_000L)
                 .containsEntry("max_order_quantity", 300L)
                 .containsEntry("target_inventory_quantity", 5_000L)
                 .containsEntry("inventory_band_quantity", 5_000L)
-                .containsEntry("stage", "SHADOW_READY")
+                .containsEntry("stage", "LIVE_ACTIVE")
                 .containsEntry("seed_inventory_quantity", 5_000L)
-                .containsEntry("seed_cash_amount", new BigDecimal("500000.00"));
+                .containsEntry("seed_cash_amount", new BigDecimal("500000.00"))
+                .doesNotContainValue(null);
         assertThat(jdbcTemplate.queryForObject(
                 "select quantity from stock_holding where account_id = 100 and symbol = 'DEMO001'",
                 Long.class
@@ -162,45 +171,13 @@ class LiquidityProviderTransitionServiceTest {
                 """,
                 Integer.class
         )).isOne();
-    }
-
-    @Test
-    void activateLive_pausedPreOpen_cleansLegacyThenSwitchesAtomically() {
-        transactionTemplate.executeWithoutResult(status ->
-                service.provisionShadow("DEMO001", null, "stock-admin"));
-        StockAccount legacyAccount = StockAccount.open("stock-listing-demo001");
-        ReflectionTestUtils.setField(legacyAccount, "id", 100L);
-        when(stockAccountRepository.findAllByIdInForUpdate(List.of(100L)))
-                .thenReturn(List.of(legacyAccount));
-
-        transactionTemplate.executeWithoutResult(status ->
-                service.activateLive(
-                        "DEMO001",
-                        new LiquidityProviderActivationRequest("pilot review passed"),
-                        "stock-admin"
-                ));
-
-        verify(accountOrderCleanupService)
-                .cancelOpenOrderBookOrders(legacyAccount, "DEMO001");
-        assertThat(jdbcTemplate.queryForObject(
-                "select enabled from stock_listing_auto_account_config where symbol = 'DEMO001'",
-                Boolean.class
-        )).isFalse();
-        assertThat(jdbcTemplate.queryForObject(
-                "select execution_mode from stock_liquidity_mandate where symbol = 'DEMO001'",
-                String.class
-        )).isEqualTo("LIVE");
-        assertThat(jdbcTemplate.queryForObject(
-                "select stage from stock_liquidity_transition where symbol = 'DEMO001'",
-                String.class
-        )).isEqualTo("LIVE_ACTIVE");
         assertThat(jdbcTemplate.queryForObject(
                 """
                 select count(*)
                   from stock_market_policy_version
                  where policy_scope = 'LIQUIDITY_MANDATE'
                    and scope_key = 'DEMO001'
-                   and version_no = 2
+                   and version_no = 1
                    and status = 'ACTIVE'
                 """,
                 Integer.class
@@ -208,32 +185,21 @@ class LiquidityProviderTransitionServiceTest {
     }
 
     @Test
-    void activateLive_pendingRoleSeparatedListing_enablesMarketForNextSession() {
+    void provisionLive_pendingRoleSeparatedListing_enablesMarketForNextSession() {
         convertFixtureToPendingRoleSeparatedListing();
         transactionTemplate.executeWithoutResult(status ->
-                service.provisionShadow("DEMO001", null, "stock-admin"));
-
-        assertThat(jdbcTemplate.queryForMap(
-                """
-                select enabled, market_status
-                  from stock_order_book_market_config
-                 where symbol = 'DEMO001'
-                """
-        )).containsEntry("enabled", false)
-                .containsEntry("market_status", "CLOSED");
-
-        transactionTemplate.executeWithoutResult(status ->
-                service.activateLive(
+                service.provisionLive(
                         "DEMO001",
-                        new LiquidityProviderActivationRequest("new listing LP ready"),
+                        new LiquidityProviderProvisionRequest(
+                                null,
+                                null,
+                                null,
+                                null,
+                                "new listing LP ready"
+                        ),
                         "stock-admin"
                 ));
 
-        verify(accountOrderCleanupService, never())
-                .cancelOpenOrderBookOrders(
-                        org.mockito.ArgumentMatchers.any(StockAccount.class),
-                        org.mockito.ArgumentMatchers.anyString()
-                );
         assertThat(jdbcTemplate.queryForMap(
                 """
                 select enabled, market_status
@@ -249,7 +215,7 @@ class LiquidityProviderTransitionServiceTest {
     }
 
     @Test
-    void provisionShadow_multipleContractsForSameUnderwriter_resolvesOneSourceAccount() {
+    void provisionLive_multipleContractsForSameUnderwriter_resolvesOneSourceAccount() {
         convertFixtureToPendingRoleSeparatedListing();
         Long participantId = jdbcTemplate.queryForObject(
                 """
@@ -292,7 +258,7 @@ class LiquidityProviderTransitionServiceTest {
         });
 
         transactionTemplate.executeWithoutResult(status ->
-                service.provisionShadow("DEMO001", null, "stock-admin"));
+                service.provisionLive("DEMO001", null, "stock-admin"));
 
         assertThat(jdbcTemplate.queryForObject(
                 """
@@ -305,49 +271,68 @@ class LiquidityProviderTransitionServiceTest {
     }
 
     @Test
-    void activateLive_selfTradeGroupMismatch_rejectsBeforeLegacyCleanup() {
-        transactionTemplate.executeWithoutResult(status ->
-                service.provisionShadow("DEMO001", null, "stock-admin"));
+    void provisionLive_participantSelfTradeGroupMismatch_rollsBackLegacyMigration() {
+        seedLegacyOpenOrders();
         jdbcTemplate.update(
                 """
-                update stock_account
+                update stock_market_participant
                    set self_trade_group_id = 'BROKEN-GROUP'
-                 where participant_category = 'LIQUIDITY_PROVIDER'
+                 where participant_code = 'DEFAULT_LIQUIDITY_PROVIDER'
                 """
         );
 
         assertThatThrownBy(() -> transactionTemplate.executeWithoutResult(status ->
-                service.activateLive("DEMO001", null, "stock-admin")
+                service.provisionLive("DEMO001", null, "stock-admin")
         )).isInstanceOf(StockException.class)
-                .hasMessageContaining("self-trade group is inconsistent");
+                .hasMessageContaining("Default liquidity-provider participant is missing or inconsistent");
 
-        verify(accountOrderCleanupService, never())
-                .cancelOpenOrderBookOrders(
-                        org.mockito.ArgumentMatchers.any(StockAccount.class),
-                        org.mockito.ArgumentMatchers.anyString()
-                );
+        assertThat(jdbcTemplate.queryForObject(
+                """
+                select count(*)
+                  from stock_order
+                 where status in ('PENDING', 'PARTIALLY_FILLED')
+                """,
+                Integer.class
+        )).isEqualTo(2);
+        assertThat(jdbcTemplate.queryForObject(
+                "select cash_balance from stock_account where id = 100",
+                BigDecimal.class
+        )).isEqualByComparingTo("0.00");
+        assertThat(jdbcTemplate.queryForObject(
+                """
+                select reserved_quantity
+                  from stock_holding
+                 where account_id = 100
+                   and symbol = 'DEMO001'
+                """,
+                Long.class
+        )).isEqualTo(100L);
         assertThat(jdbcTemplate.queryForObject(
                 "select enabled from stock_listing_auto_account_config where symbol = 'DEMO001'",
                 Boolean.class
         )).isTrue();
         assertThat(jdbcTemplate.queryForObject(
-                "select stage from stock_liquidity_transition where symbol = 'DEMO001'",
-                String.class
-        )).isEqualTo("SHADOW_READY");
+                "select count(*) from stock_liquidity_transition",
+                Integer.class
+        )).isZero();
+        assertThat(jdbcTemplate.queryForObject(
+                "select count(*) from stock_account where participant_category = 'LIQUIDITY_PROVIDER'",
+                Integer.class
+        )).isZero();
     }
 
     @Test
-    void provisionShadow_runningClock_rejectsBeforeAssetMutation() {
+    void provisionLive_runningClock_rejectsBeforeAssetMutation() {
         when(simulationClockService.currentSnapshot())
                 .thenReturn(clockSnapshot(true, PRE_OPEN));
 
         assertThatThrownBy(() -> transactionTemplate.executeWithoutResult(status ->
-                service.provisionShadow("DEMO001", null, "stock-admin")
+                service.provisionLive("DEMO001", null, "stock-admin")
         )).isInstanceOf(StockException.class)
                 .hasMessageContaining("Pause the simulation clock");
 
         verify(freezeGuard, never())
-                .acquireMutationPermit("liquidity-provider shadow provisioning");
+                .acquireJdbcPreOpenMutationPermit("liquidity-provider live provisioning");
         assertThat(jdbcTemplate.queryForObject(
                 "select quantity from stock_holding where account_id = 100 and symbol = 'DEMO001'",
                 Long.class
@@ -359,7 +344,7 @@ class LiquidityProviderTransitionServiceTest {
     }
 
     @Test
-    void provisionShadow_insufficientUnreservedSourceInventory_rollsBack() {
+    void provisionLive_insufficientUnreservedSourceInventory_rollsBack() {
         jdbcTemplate.update(
                 """
                 update stock_holding
@@ -370,7 +355,7 @@ class LiquidityProviderTransitionServiceTest {
         );
 
         assertThatThrownBy(() -> transactionTemplate.executeWithoutResult(status ->
-                service.provisionShadow(
+                service.provisionLive(
                         "DEMO001",
                         new LiquidityProviderProvisionRequest(
                                 null,
@@ -392,6 +377,27 @@ class LiquidityProviderTransitionServiceTest {
                 "select count(*) from stock_liquidity_transition",
                 Integer.class
         )).isZero();
+        assertThat(jdbcTemplate.queryForObject(
+                "select enabled from stock_listing_auto_account_config where symbol = 'DEMO001'",
+                Boolean.class
+        )).isTrue();
+    }
+
+    @Test
+    void provisionLive_repeatedRequest_isIdempotent() {
+        transactionTemplate.executeWithoutResult(status ->
+                service.provisionLive("DEMO001", null, "stock-admin"));
+        transactionTemplate.executeWithoutResult(status ->
+                service.provisionLive("DEMO001", null, "stock-admin"));
+
+        assertThat(jdbcTemplate.queryForObject(
+                "select count(*) from stock_liquidity_mandate where symbol = 'DEMO001'",
+                Integer.class
+        )).isOne();
+        assertThat(jdbcTemplate.queryForObject(
+                "select count(*) from stock_account where participant_category = 'LIQUIDITY_PROVIDER'",
+                Integer.class
+        )).isOne();
     }
 
     private void seedLegacySymbol() {
@@ -468,6 +474,49 @@ class LiquidityProviderTransitionServiceTest {
                 """,
                 PRE_OPEN,
                 PRE_OPEN
+        );
+    }
+
+    private void seedLegacyOpenOrders() {
+        jdbcTemplate.update(
+                """
+                update stock_holding
+                   set reserved_quantity = 100
+                 where account_id = 100
+                   and symbol = 'DEMO001'
+                """
+        );
+        jdbcTemplate.update(
+                """
+                insert into stock_order(
+                    id, client_order_id, account_id, market_type,
+                    side, order_type, status, symbol,
+                    quantity, filled_quantity, reserved_cash,
+                    created_at, updated_at
+                ) values (
+                    1001, 'LP-LEGACY-BUY-1001', 100, 'ORDER_BOOK',
+                    'BUY', 'LIMIT', 'PENDING', 'DEMO001',
+                    10, 0, 1000, ?, ?
+                )
+                """,
+                PRE_OPEN.minusMinutes(10),
+                PRE_OPEN.minusMinutes(10)
+        );
+        jdbcTemplate.update(
+                """
+                insert into stock_order(
+                    id, client_order_id, account_id, market_type,
+                    side, order_type, status, symbol,
+                    quantity, filled_quantity, reserved_cash,
+                    created_at, updated_at
+                ) values (
+                    1002, 'LP-LEGACY-SELL-1002', 100, 'ORDER_BOOK',
+                    'SELL', 'LIMIT', 'PARTIALLY_FILLED', 'DEMO001',
+                    150, 50, 0, ?, ?
+                )
+                """,
+                PRE_OPEN.minusMinutes(5),
+                PRE_OPEN.minusMinutes(5)
         );
     }
 

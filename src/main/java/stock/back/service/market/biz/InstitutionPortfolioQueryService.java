@@ -98,22 +98,22 @@ public class InstitutionPortfolioQueryService {
                                coalesce(order_summary.institutional_open_order_count, 0)
                                    as institutional_open_order_count,
                                (
-                                   select count(distinct shadow_run.simulation_trade_date)
-                                     from stock_institution_decision_run shadow_run
-                                    where shadow_run.portfolio_id = portfolio.id
-                                      and shadow_run.execution_mode = 'SHADOW'
-                                      and shadow_run.status = 'COMPLETED'
-                                      and shadow_run.simulation_trade_date < :simulationTradeDate
-                               ) as completed_shadow_trading_days,
+                                   select count(distinct decision_run.simulation_trade_date)
+                                     from stock_institution_decision_run decision_run
+                                    where decision_run.portfolio_id = portfolio.id
+                                      and decision_run.execution_mode = 'LIVE'
+                                      and decision_run.status = 'COMPLETED'
+                                      and decision_run.simulation_trade_date < :simulationTradeDate
+                               ) as completed_decision_trading_days,
                                (
                                    select count(*)
                                      from stock_institution_decision_run failed_run
                                     where failed_run.portfolio_id = portfolio.id
-                                      and failed_run.execution_mode = 'SHADOW'
+                                      and failed_run.execution_mode = 'LIVE'
                                       and failed_run.status = 'FAILED'
-                                      and failed_run.simulation_trade_date >= :shadowFailureFromDate
+                                      and failed_run.simulation_trade_date >= :decisionFailureFromDate
                                       and failed_run.simulation_trade_date < :simulationTradeDate
-                               ) as recent_shadow_failure_count,
+                               ) as recent_decision_failure_count,
                                latest_run.id as latest_decision_run_id,
                                latest_run.decision_slot as latest_decision_slot,
                                latest_run.status as latest_decision_status,
@@ -190,7 +190,7 @@ public class InstitutionPortfolioQueryService {
                         """
                 )
                 .param("simulationTradeDate", simulationTradeDate)
-                .param("shadowFailureFromDate", simulationTradeDate.minusDays(20))
+                .param("decisionFailureFromDate", simulationTradeDate.minusDays(20))
                 .query((rs, rowNum) -> mapHeader(rs))
                 .list();
     }
@@ -370,8 +370,8 @@ public class InstitutionPortfolioQueryService {
                 zero(rs.getBigDecimal("daily_submitted_buy_amount")),
                 zero(rs.getBigDecimal("daily_submitted_sell_amount")),
                 rs.getLong("institutional_open_order_count"),
-                rs.getInt("completed_shadow_trading_days"),
-                rs.getInt("recent_shadow_failure_count")
+                rs.getInt("completed_decision_trading_days"),
+                rs.getInt("recent_decision_failure_count")
         );
     }
 
@@ -384,10 +384,7 @@ public class InstitutionPortfolioQueryService {
         long projectedQuantity = projectedQuantity(
                 actualQuantity,
                 openBuyQuantity,
-                openSellQuantity,
-                plannedBuyQuantity,
-                plannedSellQuantity,
-                "SHADOW".equals(rs.getString("execution_mode"))
+                openSellQuantity
         );
         return new MandateRow(
                 rs.getLong("portfolio_id"),
@@ -450,20 +447,10 @@ public class InstitutionPortfolioQueryService {
     private long projectedQuantity(
             long actual,
             long openBuy,
-            long openSell,
-            long plannedBuy,
-            long plannedSell,
-            boolean includeUnsubmittedShadowPlan
+            long openSell
     ) {
         long afterBuy = openBuy > Long.MAX_VALUE - actual ? Long.MAX_VALUE : actual + openBuy;
-        long afterOpenOrders = Math.max(0L, afterBuy - Math.min(afterBuy, openSell));
-        if (!includeUnsubmittedShadowPlan) {
-            return afterOpenOrders;
-        }
-        long afterPlannedBuy = plannedBuy > Long.MAX_VALUE - afterOpenOrders
-                ? Long.MAX_VALUE
-                : afterOpenOrders + plannedBuy;
-        return Math.max(0L, afterPlannedBuy - Math.min(afterPlannedBuy, plannedSell));
+        return Math.max(0L, afterBuy - Math.min(afterBuy, openSell));
     }
 
     private Long nullableLong(ResultSet rs, String column) throws SQLException {
@@ -518,8 +505,8 @@ public class InstitutionPortfolioQueryService {
             BigDecimal dailySubmittedBuyAmount,
             BigDecimal dailySubmittedSellAmount,
             long institutionalOpenOrderCount,
-            int completedShadowTradingDays,
-            int recentShadowFailureCount
+            int completedDecisionTradingDays,
+            int recentDecisionFailureCount
     ) {
 
         InstitutionPortfolioResponse toResponse(
@@ -576,8 +563,8 @@ public class InstitutionPortfolioQueryService {
                     dailySubmittedBuyAmount,
                     dailySubmittedSellAmount,
                     institutionalOpenOrderCount,
-                    completedShadowTradingDays,
-                    recentShadowFailureCount,
+                    completedDecisionTradingDays,
+                    recentDecisionFailureCount,
                     mandates
             );
         }

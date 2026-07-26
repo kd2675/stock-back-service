@@ -51,8 +51,8 @@ public record InstitutionPortfolioResponse(
         BigDecimal dailySubmittedBuyAmount,
         BigDecimal dailySubmittedSellAmount,
         long institutionalOpenOrderCount,
-        int completedShadowTradingDays,
-        int recentShadowFailureCount,
+        int completedDecisionTradingDays,
+        int recentDecisionFailureCount,
         List<InstitutionSymbolMandateResponse> mandates
 ) {
 

@@ -217,7 +217,7 @@ JOIN stock_liquidity_transition transition
    SET account.cash_balance = transition.seed_cash_amount,
        account.updated_at = NOW()
  WHERE account.status = 'ACTIVE'
-   AND transition.stage IN ('SHADOW_READY', 'LIVE_ACTIVE', 'SUSPENDED');
+   AND transition.stage IN ('LIVE_ACTIVE', 'SUSPENDED');
 
 INSERT INTO stock_account_cash_flow(
     account_id, flow_type, amount, reason, created_by,
@@ -239,7 +239,7 @@ SELECT account.id,
  CROSS JOIN stock_market_business_state state
  WHERE state.state_id = 'DEFAULT'
    AND account.status = 'ACTIVE'
-   AND transition.stage IN ('SHADOW_READY', 'LIVE_ACTIVE', 'SUSPENDED')
+   AND transition.stage IN ('LIVE_ACTIVE', 'SUSPENDED')
    AND transition.seed_cash_amount > 0;
 
 INSERT INTO stock_holding(account_id, symbol, quantity, reserved_quantity, average_price, updated_at)
@@ -336,7 +336,7 @@ SELECT transition.id,
   JOIN stock_account destination_account
     ON destination_account.id = transition.liquidity_account_id
    AND destination_account.status = 'ACTIVE'
- WHERE transition.stage IN ('SHADOW_READY', 'LIVE_ACTIVE', 'SUSPENDED')
+ WHERE transition.stage IN ('LIVE_ACTIVE', 'SUSPENDED')
    AND source_holding.reserved_quantity = 0
    AND source_holding.quantity >= transition.seed_inventory_quantity;
 
@@ -351,7 +351,7 @@ SELECT COUNT(*)
   FROM stock_liquidity_transition transition
   LEFT JOIN tmp_stock_lp_seed_replay replay
     ON replay.transition_id = transition.id
- WHERE transition.stage IN ('SHADOW_READY', 'LIVE_ACTIVE', 'SUSPENDED')
+ WHERE transition.stage IN ('LIVE_ACTIVE', 'SUSPENDED')
    AND replay.transition_id IS NULL;
 
 UPDATE stock_holding source_holding

@@ -89,7 +89,7 @@ class OrderBookInstrumentCommandServiceTest {
                 .thenReturn(pausedClock(simulationNow));
         lenient().when(marketSessionService.currentSession())
                 .thenReturn(SimulationMarketSession.PRE_OPEN);
-        lenient().when(marketLedgerFreezeGuard.acquireMutationPermit(any()))
+        lenient().when(marketLedgerFreezeGuard.acquirePreOpenMutationPermit(any()))
                 .thenReturn(simulationNow.toLocalDate());
         service = new OrderBookInstrumentCommandService(
                 stockInstrumentRepository,
@@ -197,7 +197,7 @@ class OrderBookInstrumentCommandServiceTest {
                 .isInstanceOf(StockException.class)
                 .hasMessageContaining("Pause the simulation clock");
 
-        verify(marketLedgerFreezeGuard, never()).acquireMutationPermit(any());
+        verify(marketLedgerFreezeGuard, never()).acquirePreOpenMutationPermit(any());
         verify(stockOrderBookInstrumentRepository, never()).save(any());
         verify(stockCorporateActionRepository, never()).save(any());
     }

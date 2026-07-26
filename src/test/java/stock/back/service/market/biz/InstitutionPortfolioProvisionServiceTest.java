@@ -23,14 +23,10 @@ import org.springframework.jdbc.datasource.init.ResourceDatabasePopulator;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import stock.back.service.common.exception.StockException;
-import stock.back.service.database.entity.StockAccount;
-import stock.back.service.database.repository.StockAccountRepository;
-import stock.back.service.market.vo.InstitutionPilotActivationRequest;
-import stock.back.service.market.vo.InstitutionPilotSuspensionRequest;
 import stock.back.service.market.vo.InstitutionPortfolioCreateRequest;
 import stock.back.service.market.vo.InstitutionPortfolioResponse;
+import stock.back.service.market.vo.InstitutionSuspensionRequest;
 import stock.back.service.market.vo.InstitutionSymbolMandateResponse;
-import stock.back.service.trading.biz.AccountOrderCleanupService;
 import web.common.core.simulation.SimulationClockSnapshot;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -51,13 +47,11 @@ class InstitutionPortfolioProvisionServiceTest {
     private TransactionTemplate transactionTemplate;
     private InstitutionPortfolioProvisionService provisionService;
     private InstitutionPortfolioRecommendationService recommendationService;
-    private InstitutionPilotTransitionService pilotTransitionService;
-    private InstitutionPilotEmergencyStopService emergencyStopService;
+    private InstitutionEmergencyStopService emergencyStopService;
     private InstitutionPortfolioQueryService queryService;
     private MarketLedgerFreezeGuard freezeGuard;
     private SimulationClockService simulationClockService;
-    private StockAccountRepository stockAccountRepository;
-    private AccountOrderCleanupService accountOrderCleanupService;
+    private DataSourceTransactionManager transactionManager;
 
     @BeforeEach
     void setUp() {
@@ -70,8 +64,7 @@ class InstitutionPortfolioProvisionServiceTest {
         );
         new ResourceDatabasePopulator(new FileSystemResource(batchH2Ddl())).execute(dataSource);
         jdbcTemplate = new JdbcTemplate(dataSource);
-        DataSourceTransactionManager transactionManager =
-                new DataSourceTransactionManager(dataSource);
+        transactionManager = new DataSourceTransactionManager(dataSource);
         transactionTemplate = new TransactionTemplate(transactionManager);
 
         simulationClockService = mock(SimulationClockService.class);
@@ -80,7 +73,7 @@ class InstitutionPortfolioProvisionServiceTest {
         SimulationMarketSessionService marketSessionService =
                 new SimulationMarketSessionService(simulationClockService, "06:00", "18:00");
         freezeGuard = mock(MarketLedgerFreezeGuard.class);
-        when(freezeGuard.acquireMutationPermit("institution portfolio creation"))
+        when(freezeGuard.acquireJdbcPreOpenMutationPermit("institution portfolio creation"))
                 .thenReturn(BUSINESS_DATE);
 
         provisionService = new InstitutionPortfolioProvisionService(
@@ -90,21 +83,11 @@ class InstitutionPortfolioProvisionServiceTest {
                 marketSessionService,
                 freezeGuard
         );
-        pilotTransitionService = new InstitutionPilotTransitionService(
+        emergencyStopService = new InstitutionEmergencyStopService(
                 jdbcTemplate,
                 new ObjectMapper(),
                 simulationClockService,
-                marketSessionService,
-                freezeGuard
-        );
-        stockAccountRepository = mock(StockAccountRepository.class);
-        accountOrderCleanupService = mock(AccountOrderCleanupService.class);
-        emergencyStopService = new InstitutionPilotEmergencyStopService(
-                jdbcTemplate,
-                new ObjectMapper(),
-                simulationClockService,
-                stockAccountRepository,
-                accountOrderCleanupService,
+                new MarketRoleOrderCleanupService(jdbcTemplate),
                 transactionManager
         );
         queryService = new InstitutionPortfolioQueryService(
@@ -118,7 +101,7 @@ class InstitutionPortfolioProvisionServiceTest {
     }
 
     @Test
-    void createPortfolio_threeSymbolMarket_createsOneShadowPortfolioWithoutOrders() {
+    void createPortfolio_threeSymbolMarket_createsOneLivePortfolioWithoutImmediateOrders() {
         createDefaultPortfolio();
 
         assertThat(jdbcTemplate.queryForObject(
@@ -154,11 +137,11 @@ class InstitutionPortfolioProvisionServiceTest {
         assertThat(jdbcTemplate.queryForList(
                 "select distinct next_decision_at from stock_institution_portfolio",
                 LocalDateTime.class
-        )).containsExactly(LocalDateTime.of(2027, 1, 28, 6, 0));
+        )).containsExactly(LocalDateTime.of(2027, 1, 27, 6, 0));
         assertThat(jdbcTemplate.queryForList(
                 "select distinct effective_business_date from stock_market_policy_version",
                 LocalDate.class
-        )).containsExactly(LocalDate.of(2027, 1, 28));
+        )).containsExactly(LocalDate.of(2027, 1, 27));
     }
 
     @Test
@@ -173,7 +156,7 @@ class InstitutionPortfolioProvisionServiceTest {
                 BigDecimal.class
         )).isEqualByComparingTo("12000000.00");
         verify(freezeGuard, times(2))
-                .acquireMutationPermit("institution portfolio creation");
+                .acquireJdbcPreOpenMutationPermit("institution portfolio creation");
     }
 
     @Test
@@ -238,7 +221,7 @@ class InstitutionPortfolioProvisionServiceTest {
                 .hasMessageContaining("Pause the simulation clock");
 
         verify(freezeGuard, never())
-                .acquireMutationPermit("institution portfolio creation");
+                .acquireJdbcPreOpenMutationPermit("institution portfolio creation");
         assertThat(jdbcTemplate.queryForObject(
                 "select count(*) from stock_account "
                         + "where participant_category = 'INSTITUTIONAL_INVESTOR'",
@@ -255,7 +238,7 @@ class InstitutionPortfolioProvisionServiceTest {
 
         assertThat(portfolios).hasSize(1);
         assertThat(portfolios).allSatisfy(portfolio -> {
-            assertThat(portfolio.executionMode()).isEqualTo("SHADOW");
+            assertThat(portfolio.executionMode()).isEqualTo("LIVE");
             assertThat(portfolio.accountStatus()).isEqualTo("ACTIVE");
             assertThat(portfolio.accountSelfTradeGroupId())
                     .isEqualTo(portfolio.participantSelfTradeGroupId());
@@ -263,8 +246,8 @@ class InstitutionPortfolioProvisionServiceTest {
             assertThat(portfolio.totalAsset()).isEqualByComparingTo("6000000.00");
             assertThat(portfolio.currentStockAllocationRate()).isEqualByComparingTo("0.000000");
             assertThat(portfolio.institutionalOpenOrderCount()).isZero();
-            assertThat(portfolio.completedShadowTradingDays()).isZero();
-            assertThat(portfolio.recentShadowFailureCount()).isZero();
+            assertThat(portfolio.completedDecisionTradingDays()).isZero();
+            assertThat(portfolio.recentDecisionFailureCount()).isZero();
             assertThat(portfolio.mandates()).hasSize(3);
             assertThat(portfolio.mandates()).allSatisfy(mandate -> {
                 assertThat(mandate.referenceDailyVolume()).isEqualTo(30_000L);
@@ -275,7 +258,7 @@ class InstitutionPortfolioProvisionServiceTest {
     }
 
     @Test
-    void getPortfolios_dailyShadowPlans_areIncludedInProjectedQuantity() {
+    void getPortfolios_dailyPlans_withoutOpenOrders_areNotCountedAsProjectedHoldings() {
         createDefaultPortfolio();
         jdbcTemplate.update(
                 """
@@ -311,150 +294,39 @@ class InstitutionPortfolioProvisionServiceTest {
                 .findFirst()
                 .orElseThrow();
 
-        assertThat(demo001.projectedQuantity()).isEqualTo(80L);
+        assertThat(demo001.projectedQuantity()).isZero();
     }
 
     @Test
-    void activatePilot_reviewedShadowPortfolio_selectsOneSymbolAndVersionsPolicy() {
+    void suspendLive_runningClock_suspendsRejectsIntentAndCancelsOrdersAtomically() {
         createDefaultPortfolio();
         long portfolioId = portfolioId("INST_PENSION");
-        seedCompletedShadowDays(portfolioId, 20);
-        LocalDate pilotDate = BUSINESS_DATE.plusDays(21);
-        LocalDateTime pilotNow = pilotDate.atTime(5, 0);
-        when(simulationClockService.currentMarketDateTime()).thenReturn(pilotNow);
-        when(simulationClockService.currentSnapshot())
-                .thenReturn(clockSnapshot(pilotNow, false));
-        when(freezeGuard.acquireMutationPermit("institution pilot activation"))
-                .thenReturn(pilotDate);
-
-        transactionTemplate.executeWithoutResult(status ->
-                pilotTransitionService.activatePilot(
-                        portfolioId,
-                        new InstitutionPilotActivationRequest(
-                                "demo002",
-                                "20일 shadow 검토 완료"
-                        ),
-                        "stock-admin"
-                )
-        );
-
-        assertThat(jdbcTemplate.queryForMap(
-                """
-                select execution_mode, status, policy_version, next_decision_at
-                  from stock_institution_portfolio
-                 where id = ?
-                """,
-                portfolioId
-        )).containsEntry("execution_mode", "PILOT")
-                .containsEntry("status", "ACTIVE")
-                .containsEntry("policy_version", 2L)
-                .containsEntry("next_decision_at", java.sql.Timestamp.valueOf(pilotDate.atTime(6, 0)));
-        assertThat(jdbcTemplate.queryForList(
-                """
-                select symbol
-                  from stock_institution_symbol_mandate
-                 where portfolio_id = ?
-                   and enabled = true
-                 order by symbol
-                """,
-                String.class,
-                portfolioId
-        )).containsExactly("DEMO002");
-        assertThat(jdbcTemplate.queryForMap(
-                """
-                select version_no, effective_business_date, status
-                  from stock_market_policy_version
-                 where policy_scope = 'INSTITUTIONAL_PORTFOLIO'
-                   and scope_key = 'INST_PENSION'
-                   and version_no = 2
-                """
-        )).containsEntry("version_no", 2L)
-                .containsEntry("effective_business_date", java.sql.Date.valueOf(pilotDate))
-                .containsEntry("status", "SCHEDULED");
-    }
-
-    @Test
-    void activatePilot_insufficientShadowDays_rejectsWithoutModeChange() {
-        createDefaultPortfolio();
-        long portfolioId = portfolioId("INST_PENSION");
-        seedCompletedShadowDays(portfolioId, 19);
-        LocalDate pilotDate = BUSINESS_DATE.plusDays(21);
-        LocalDateTime pilotNow = pilotDate.atTime(5, 0);
-        when(simulationClockService.currentSnapshot())
-                .thenReturn(clockSnapshot(pilotNow, false));
-        when(freezeGuard.acquireMutationPermit("institution pilot activation"))
-                .thenReturn(pilotDate);
-
-        assertThatThrownBy(() -> transactionTemplate.executeWithoutResult(status ->
-                pilotTransitionService.activatePilot(
-                        portfolioId,
-                        new InstitutionPilotActivationRequest("DEMO001", "too early"),
-                        "stock-admin"
-                )
-        )).isInstanceOf(StockException.class)
-                .hasMessageContaining("at least 20 completed SHADOW trading days");
-
-        assertThat(jdbcTemplate.queryForObject(
-                "select execution_mode from stock_institution_portfolio where id = ?",
-                String.class,
-                portfolioId
-        )).isEqualTo("SHADOW");
-        assertThat(jdbcTemplate.queryForObject(
-                """
-                select count(*)
-                  from stock_institution_symbol_mandate
-                 where portfolio_id = ?
-                   and enabled = true
-                """,
-                Integer.class,
-                portfolioId
-        )).isEqualTo(3);
-    }
-
-    @Test
-    void suspendPilot_runningClock_suspendsRejectsIntentAndCancelsOrdersAtomically() {
-        createDefaultPortfolio();
-        long portfolioId = portfolioId("INST_PENSION");
-        seedCompletedShadowDays(portfolioId, 20);
-        LocalDate pilotDate = BUSINESS_DATE.plusDays(21);
-        LocalDateTime activationNow = pilotDate.atTime(5, 0);
-        when(simulationClockService.currentMarketDateTime()).thenReturn(activationNow);
-        when(simulationClockService.currentSnapshot())
-                .thenReturn(clockSnapshot(activationNow, false));
-        when(freezeGuard.acquireMutationPermit("institution pilot activation"))
-                .thenReturn(pilotDate);
-        transactionTemplate.executeWithoutResult(status ->
-                pilotTransitionService.activatePilot(
-                        portfolioId,
-                        new InstitutionPilotActivationRequest("DEMO002", "pilot ready"),
-                        "stock-admin"
-                )
-        );
-
-        LocalDateTime emergencyStopNow = pilotDate.atTime(6, 30);
-        long decisionRunId = insertPendingPilotIntent(portfolioId, emergencyStopNow);
+        LocalDateTime emergencyStopNow = BUSINESS_DATE.atTime(6, 30);
+        long decisionRunId = insertPendingLiveIntent(portfolioId, emergencyStopNow);
         Long accountId = jdbcTemplate.queryForObject(
                 "select account_id from stock_institution_portfolio where id = ?",
                 Long.class,
                 portfolioId
         );
         assertThat(accountId).isNotNull();
-        StockAccount account = mock(StockAccount.class);
-        when(account.getId()).thenReturn(accountId);
-        when(stockAccountRepository.findAllByIdInForUpdate(List.of(accountId)))
-                .thenReturn(List.of(account));
+        insertInstitutionOpenBuyOrder(
+                accountId,
+                portfolioId,
+                decisionRunId,
+                emergencyStopNow
+        );
         when(simulationClockService.currentMarketDateTime()).thenReturn(emergencyStopNow);
         when(simulationClockService.currentSnapshot())
                 .thenReturn(clockSnapshot(emergencyStopNow, true));
 
         emergencyStopService.suspend(
                 portfolioId,
-                new InstitutionPilotSuspensionRequest("운영자 즉시 중단 검증"),
+                new InstitutionSuspensionRequest("운영자 즉시 중단 검증"),
                 "stock-admin"
         );
         emergencyStopService.suspend(
                 portfolioId,
-                new InstitutionPilotSuspensionRequest("멱등 재시도"),
+                new InstitutionSuspensionRequest("멱등 재시도"),
                 "stock-admin"
         );
 
@@ -465,9 +337,9 @@ class InstitutionPortfolioProvisionServiceTest {
                  where id = ?
                 """,
                 portfolioId
-        )).containsEntry("execution_mode", "PILOT")
+        )).containsEntry("execution_mode", "LIVE")
                 .containsEntry("status", "SUSPENDED")
-                .containsEntry("policy_version", 3L)
+                .containsEntry("policy_version", 2L)
                 .containsEntry("next_decision_at", null);
         assertThat(jdbcTemplate.queryForMap(
                 """
@@ -488,9 +360,9 @@ class InstitutionPortfolioProvisionServiceTest {
                   from stock_market_policy_version
                  where policy_scope = 'INSTITUTIONAL_PORTFOLIO'
                    and scope_key = 'INST_PENSION'
-                   and version_no = 3
+                   and version_no = 2
                 """
-        )).containsEntry("version_no", 3L)
+        )).containsEntry("version_no", 2L)
                 .containsEntry("status", "ACTIVE")
                 .containsEntry("change_reason", "운영자 즉시 중단 검증");
         assertThat(jdbcTemplate.queryForObject(
@@ -499,56 +371,58 @@ class InstitutionPortfolioProvisionServiceTest {
                   from stock_market_policy_version
                  where policy_scope = 'INSTITUTIONAL_PORTFOLIO'
                    and scope_key = 'INST_PENSION'
-                   and version_no = 3
+                   and version_no = 2
                 """,
                 Integer.class
         )).isEqualTo(1);
-        verify(accountOrderCleanupService, times(2))
-                .cancelOpenOrderBookOrders(account);
+        assertThat(jdbcTemplate.queryForMap(
+                "select status, reserved_cash from stock_order where id = 8801"
+        )).containsEntry("status", "CANCELLED")
+                .containsEntry("reserved_cash", BigDecimal.ZERO.setScale(2));
+        assertThat(jdbcTemplate.queryForObject(
+                "select cash_balance from stock_account where id = ?",
+                BigDecimal.class,
+                accountId
+        )).isEqualByComparingTo("6000000.00");
     }
 
     @Test
-    void suspendPilot_orderCleanupFails_rollsBackPortfolioIntentAndPolicyTogether() {
+    void suspendLive_orderCleanupFails_rollsBackPortfolioIntentAndPolicyTogether() {
         createDefaultPortfolio();
         long portfolioId = portfolioId("INST_PENSION");
-        seedCompletedShadowDays(portfolioId, 20);
-        LocalDate pilotDate = BUSINESS_DATE.plusDays(21);
-        LocalDateTime activationNow = pilotDate.atTime(5, 0);
-        when(simulationClockService.currentMarketDateTime()).thenReturn(activationNow);
-        when(simulationClockService.currentSnapshot())
-                .thenReturn(clockSnapshot(activationNow, false));
-        when(freezeGuard.acquireMutationPermit("institution pilot activation"))
-                .thenReturn(pilotDate);
-        transactionTemplate.executeWithoutResult(status ->
-                pilotTransitionService.activatePilot(
-                        portfolioId,
-                        new InstitutionPilotActivationRequest("DEMO002", "pilot ready"),
-                        "stock-admin"
-                )
-        );
-
-        LocalDateTime emergencyStopNow = pilotDate.atTime(6, 30);
-        long decisionRunId = insertPendingPilotIntent(portfolioId, emergencyStopNow);
+        LocalDateTime emergencyStopNow = BUSINESS_DATE.atTime(6, 30);
+        long decisionRunId = insertPendingLiveIntent(portfolioId, emergencyStopNow);
         Long accountId = jdbcTemplate.queryForObject(
                 "select account_id from stock_institution_portfolio where id = ?",
                 Long.class,
                 portfolioId
         );
         assertThat(accountId).isNotNull();
-        StockAccount account = mock(StockAccount.class);
-        when(account.getId()).thenReturn(accountId);
-        when(stockAccountRepository.findAllByIdInForUpdate(List.of(accountId)))
-                .thenReturn(List.of(account));
+        MarketRoleOrderCleanupService failingCleanup =
+                mock(MarketRoleOrderCleanupService.class);
         doThrow(new IllegalStateException("cleanup failed"))
-                .when(accountOrderCleanupService)
-                .cancelOpenOrderBookOrders(account);
+                .when(failingCleanup)
+                .cancelOpenOrderBookOrders(
+                        accountId,
+                        "INSTITUTIONAL_INVESTOR",
+                        null,
+                        emergencyStopNow
+                );
+        InstitutionEmergencyStopService failingEmergencyStopService =
+                new InstitutionEmergencyStopService(
+                        jdbcTemplate,
+                        new ObjectMapper(),
+                        simulationClockService,
+                        failingCleanup,
+                        transactionManager
+                );
         when(simulationClockService.currentMarketDateTime()).thenReturn(emergencyStopNow);
         when(simulationClockService.currentSnapshot())
                 .thenReturn(clockSnapshot(emergencyStopNow, true));
 
-        assertThatThrownBy(() -> emergencyStopService.suspend(
+        assertThatThrownBy(() -> failingEmergencyStopService.suspend(
                 portfolioId,
-                new InstitutionPilotSuspensionRequest("rollback verification"),
+                new InstitutionSuspensionRequest("rollback verification"),
                 "stock-admin"
         )).isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("cleanup failed");
@@ -560,9 +434,9 @@ class InstitutionPortfolioProvisionServiceTest {
                  where id = ?
                 """,
                 portfolioId
-        )).containsEntry("execution_mode", "PILOT")
+        )).containsEntry("execution_mode", "LIVE")
                 .containsEntry("status", "ACTIVE")
-                .containsEntry("policy_version", 2L);
+                .containsEntry("policy_version", 1L);
         assertThat(jdbcTemplate.queryForMap(
                 """
                 select status, submission_reason
@@ -579,7 +453,7 @@ class InstitutionPortfolioProvisionServiceTest {
                   from stock_market_policy_version
                  where policy_scope = 'INSTITUTIONAL_PORTFOLIO'
                    and scope_key = 'INST_PENSION'
-                   and version_no = 3
+                   and version_no = 2
                 """,
                 Integer.class
         )).isZero();
@@ -635,36 +509,14 @@ class InstitutionPortfolioProvisionServiceTest {
         return portfolioId;
     }
 
-    private void seedCompletedShadowDays(long portfolioId, int tradingDays) {
-        for (int day = 1; day <= tradingDays; day++) {
-            LocalDate simulationTradeDate = BUSINESS_DATE.plusDays(day);
-            LocalDateTime decisionSlot = simulationTradeDate.atTime(6, 0);
-            jdbcTemplate.update(
-                    """
-                    insert into stock_institution_decision_run(
-                        decision_slot, simulation_trade_date, portfolio_id,
-                        execution_mode, policy_version, deterministic_seed,
-                        status, error_message, created_at, completed_at
-                    ) values (?, ?, ?, 'SHADOW', 1, ?, 'COMPLETED', null, ?, ?)
-                    """,
-                    decisionSlot,
-                    simulationTradeDate,
-                    portfolioId,
-                    (long) day,
-                    decisionSlot,
-                    decisionSlot
-            );
-        }
-    }
-
-    private long insertPendingPilotIntent(long portfolioId, LocalDateTime decisionSlot) {
+    private long insertPendingLiveIntent(long portfolioId, LocalDateTime decisionSlot) {
         jdbcTemplate.update(
                 """
                 insert into stock_institution_decision_run(
                     decision_slot, simulation_trade_date, portfolio_id,
                     execution_mode, policy_version, deterministic_seed,
                     status, error_message, created_at, completed_at
-                ) values (?, ?, ?, 'PILOT', 2, 99, 'COMPLETED', null, ?, ?)
+                ) values (?, ?, ?, 'LIVE', 1, 99, 'COMPLETED', null, ?, ?)
                 """,
                 decisionSlot,
                 decisionSlot.toLocalDate(),
@@ -695,7 +547,7 @@ class InstitutionPortfolioProvisionServiceTest {
                 )
                 select ?, 'DEMO002', id, participant_id, account_id,
                        'BUY', 10, 1000.00, 30000,
-                       0.000000, 2, 'PENDING', 0,
+                       0.000000, 1, 'PENDING', 0,
                        null, null, 0, null, ?, ?, null
                   from stock_institution_portfolio
                  where id = ?
@@ -706,6 +558,58 @@ class InstitutionPortfolioProvisionServiceTest {
                 portfolioId
         );
         return decisionRunId;
+    }
+
+    private void insertInstitutionOpenBuyOrder(
+            long accountId,
+            long portfolioId,
+            long decisionRunId,
+            LocalDateTime createdAt
+    ) {
+        Long participantId = jdbcTemplate.queryForObject(
+                "select participant_id from stock_institution_portfolio where id = ?",
+                Long.class,
+                portfolioId
+        );
+        assertThat(participantId).isNotNull();
+        jdbcTemplate.update(
+                "update stock_account set cash_balance = cash_balance - 1000 where id = ?",
+                accountId
+        );
+        jdbcTemplate.update(
+                """
+                insert into stock_order(
+                    id, client_order_id, account_id, origin_type,
+                    self_trade_group_id, symbol, market_type, side,
+                    order_type, status, limit_price, quantity,
+                    filled_quantity, reserved_cash, expires_at,
+                    created_at, updated_at
+                ) values (
+                    8801, 'institution-open-buy', ?, 'INSTITUTIONAL_INVESTOR',
+                    'INSTITUTIONAL_INVESTOR:INST_PENSION', 'DEMO001',
+                    'ORDER_BOOK', 'BUY', 'LIMIT', 'PENDING',
+                    100, 10, 0, 1000, ?, ?, ?
+                )
+                """,
+                accountId,
+                createdAt.plusHours(1),
+                createdAt,
+                createdAt
+        );
+        jdbcTemplate.update(
+                """
+                insert into stock_order_strategy_origin(
+                    order_id, origin_type, participant_id, portfolio_id,
+                    decision_run_id, policy_version, created_at
+                ) values (
+                    8801, 'INSTITUTIONAL_INVESTOR', ?, ?, ?, 1, ?
+                )
+                """,
+                participantId,
+                portfolioId,
+                decisionRunId,
+                createdAt
+        );
     }
 
     private void seedPreOpenSymbols() {

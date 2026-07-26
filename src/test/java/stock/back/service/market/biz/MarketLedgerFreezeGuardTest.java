@@ -38,7 +38,8 @@ class MarketLedgerFreezeGuardTest {
                 """
                 create table stock_market_business_state (
                     state_id varchar(20) primary key,
-                    active_business_date date not null
+                    active_business_date date not null,
+                    preparing_business_date date
                 )
                 """
         );
@@ -56,7 +57,7 @@ class MarketLedgerFreezeGuardTest {
                 """
         );
         jdbcTemplate.update(
-                "insert into stock_market_business_state values ('DEFAULT', ?)",
+                "insert into stock_market_business_state values ('DEFAULT', ?, null)",
                 LocalDate.of(2026, 7, 3)
         );
     }
@@ -89,6 +90,45 @@ class MarketLedgerFreezeGuardTest {
         assertThatCode(() -> transactionTemplate.executeWithoutResult(
                 status -> guard.acquireMutationPermit("cash adjustment")
         )).doesNotThrowAnyException();
+    }
+
+    @Test
+    void acquireJdbcPreOpenMutationPermit_preparingDate_returnsPreparedBusinessDate() {
+        insertCycle("LEDGER_FROZEN", "PENDING");
+        jdbcTemplate.update(
+                """
+                update stock_market_business_state
+                   set preparing_business_date = ?
+                 where state_id = 'DEFAULT'
+                """,
+                LocalDate.of(2026, 7, 4)
+        );
+
+        LocalDate businessDate = transactionTemplate.execute(
+                status -> guard.acquireJdbcPreOpenMutationPermit("live role provisioning")
+        );
+
+        org.assertj.core.api.Assertions.assertThat(businessDate)
+                .isEqualTo(LocalDate.of(2026, 7, 4));
+    }
+
+    @Test
+    void acquireJdbcPreOpenMutationPermit_nonSequentialPreparingDate_rejectsMutation() {
+        insertCycle("LEDGER_FROZEN", "PENDING");
+        jdbcTemplate.update(
+                """
+                update stock_market_business_state
+                   set preparing_business_date = ?
+                 where state_id = 'DEFAULT'
+                """,
+                LocalDate.of(2026, 7, 5)
+        );
+
+        assertThatThrownBy(() -> transactionTemplate.executeWithoutResult(
+                status -> guard.acquireJdbcPreOpenMutationPermit("live role provisioning")
+        ))
+                .isInstanceOf(StockException.class)
+                .hasMessageContaining("not the next active date");
     }
 
     private void insertCycle(String phase, String status) {

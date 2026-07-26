@@ -1,7 +1,6 @@
 package stock.back.service.market.vo;
 
-public record InstitutionPilotActivationRequest(
-        String symbol,
+public record InstitutionSuspensionRequest(
         String changeReason
 ) {
 }

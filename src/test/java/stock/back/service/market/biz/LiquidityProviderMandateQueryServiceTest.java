@@ -59,7 +59,7 @@ class LiquidityProviderMandateQueryServiceTest {
 
         assertThat(result).singleElement().satisfies(mandate -> {
             assertThat(mandate.mandateCode()).isEqualTo("LP-DEMO001");
-            assertThat(mandate.executionMode()).isEqualTo("SHADOW");
+            assertThat(mandate.executionMode()).isEqualTo("LIVE");
             assertThat(mandate.simulationTradeDate()).isEqualTo(BUSINESS_DATE);
             assertThat(mandate.legacyListingLiquidityEnabled()).isTrue();
             assertThat(mandate.roleEligible()).isTrue();
@@ -77,7 +77,7 @@ class LiquidityProviderMandateQueryServiceTest {
             assertThat(mandate.transition()).isNotNull();
             assertThat(mandate.transition().transitionKey())
                     .isEqualTo("LIQUIDITY-TRANSITION:DEMO001");
-            assertThat(mandate.transition().stage()).isEqualTo("SHADOW_READY");
+            assertThat(mandate.transition().stage()).isEqualTo("LIVE_ACTIVE");
             assertThat(mandate.transition().sourceAccountId()).isEqualTo(201L);
             assertThat(mandate.transition().legacyAccountId()).isEqualTo(201L);
             assertThat(mandate.transition().referenceDailyVolume()).isEqualTo(20_000L);
@@ -86,11 +86,11 @@ class LiquidityProviderMandateQueryServiceTest {
                     .isEqualByComparingTo("500000.00");
             assertThat(mandate.transition().effectiveBusinessDate())
                     .isEqualTo(BUSINESS_DATE);
-            assertThat(mandate.transition().activatedAt()).isNull();
+            assertThat(mandate.transition().activatedAt()).isEqualTo(NOW);
             assertThat(mandate.transition().policyVersion()).isEqualTo(1L);
             assertThat(mandate.dailyState()).isNotNull();
-            assertThat(mandate.dailyState().stateStatus()).isEqualTo("SHADOW");
-            assertThat(mandate.dailyState().gateReason()).isEqualTo("SHADOW_ONLY");
+            assertThat(mandate.dailyState().stateStatus()).isEqualTo("QUOTING");
+            assertThat(mandate.dailyState().gateReason()).isEqualTo("WITHIN_LIMITS");
             assertThat(mandate.dailyState().openingNetAssetValue())
                     .isEqualByComparingTo("620000.00");
             assertThat(mandate.dailyState().currentNetAssetValue())
@@ -256,7 +256,7 @@ class LiquidityProviderMandateQueryServiceTest {
                     created_at, updated_at
                 ) values (
                     1, 11, 101, 'DEMO001', 'LP-DEMO001',
-                    'SHADOW', 'ACTIVE', ?, 100, 20000,
+                    'LIVE', 'ACTIVE', ?, 100, 20000,
                     1000, 200, 10000, ?, 3, ?, ?
                 )
                 """,
@@ -287,7 +287,7 @@ class LiquidityProviderMandateQueryServiceTest {
                     ?, 1, 20000, 2000, 4000, 100, 120, 20, 30,
                     620000, 625000, 5000, 500, 500, 400, 450,
                     3000, 2800, 119, 121, 1000, 1050,
-                    -0.10, 0.20, -0.30, 'SHADOW', 'SHADOW_ONLY',
+                    -0.10, 0.20, -0.30, 'QUOTING', 'WITHIN_LIMITS',
                     2, false, 3, 1, ?, ?
                 )
                 """,
@@ -302,16 +302,19 @@ class LiquidityProviderMandateQueryServiceTest {
                     liquidity_account_id, source_account_id, legacy_account_id,
                     stage, reference_daily_volume, seed_inventory_quantity,
                     seed_cash_amount, effective_business_date,
+                    legacy_disabled_at, activated_at,
                     requested_by, change_reason, policy_version,
                     created_at, updated_at
                 ) values (
                     'LIQUIDITY-TRANSITION:DEMO001', 'DEMO001', 1, 11,
-                    101, 201, 201, 'SHADOW_READY', 20000, 1000,
-                    500000, ?, 'admin-test', '축소 시장 LP 준비', 1,
+                    101, 201, 201, 'LIVE_ACTIVE', 20000, 1000,
+                    500000, ?, ?, ?, 'admin-test', '축소 시장 LP 준비', 1,
                     ?, ?
                 )
                 """,
                 BUSINESS_DATE,
+                NOW,
+                NOW,
                 NOW,
                 NOW
         );

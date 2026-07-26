@@ -8,7 +8,6 @@ import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
-import java.util.List;
 import java.util.Map;
 
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -17,11 +16,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import stock.back.service.common.exception.StockException;
-import stock.back.service.database.entity.StockAccount;
-import stock.back.service.database.repository.StockAccountRepository;
 import stock.back.service.market.vo.UnderwritingSupplyActivationRequest;
 import stock.back.service.market.vo.UnderwritingSupplySuspensionRequest;
-import stock.back.service.trading.biz.AccountOrderCleanupService;
 import web.common.core.simulation.SimulationClockSnapshot;
 import web.common.core.simulation.SimulationMarketSession;
 
@@ -41,8 +37,7 @@ public class UnderwritingSupplyTransitionService {
     private final SimulationClockService simulationClockService;
     private final SimulationMarketSessionService marketSessionService;
     private final MarketLedgerFreezeGuard marketLedgerFreezeGuard;
-    private final StockAccountRepository stockAccountRepository;
-    private final AccountOrderCleanupService accountOrderCleanupService;
+    private final MarketRoleOrderCleanupService marketRoleOrderCleanupService;
 
     public UnderwritingSupplyTransitionService(
             JdbcTemplate jdbcTemplate,
@@ -50,8 +45,7 @@ public class UnderwritingSupplyTransitionService {
             SimulationClockService simulationClockService,
             SimulationMarketSessionService marketSessionService,
             MarketLedgerFreezeGuard marketLedgerFreezeGuard,
-            StockAccountRepository stockAccountRepository,
-            AccountOrderCleanupService accountOrderCleanupService
+            MarketRoleOrderCleanupService marketRoleOrderCleanupService
     ) {
         this.jdbcTemplate = jdbcTemplate;
         this.jdbcClient = JdbcClient.create(jdbcTemplate);
@@ -59,11 +53,10 @@ public class UnderwritingSupplyTransitionService {
         this.simulationClockService = simulationClockService;
         this.marketSessionService = marketSessionService;
         this.marketLedgerFreezeGuard = marketLedgerFreezeGuard;
-        this.stockAccountRepository = stockAccountRepository;
-        this.accountOrderCleanupService = accountOrderCleanupService;
+        this.marketRoleOrderCleanupService = marketRoleOrderCleanupService;
     }
 
-    @Transactional
+    @Transactional(transactionManager = "pubJdbcTransactionManager")
     public void activate(
             long contractId,
             UnderwritingSupplyActivationRequest request,
@@ -71,7 +64,7 @@ public class UnderwritingSupplyTransitionService {
     ) {
         requirePositiveContractId(contractId);
         requirePausedPreOpen();
-        LocalDate businessDate = marketLedgerFreezeGuard.acquireMutationPermit(
+        LocalDate businessDate = marketLedgerFreezeGuard.acquireJdbcPreOpenMutationPermit(
                 "issue-underwriter scaled supply activation"
         );
         SimulationClockSnapshot clock = simulationClockService.currentSnapshot();
@@ -91,9 +84,8 @@ public class UnderwritingSupplyTransitionService {
             );
         }
         requireSupplyMarketPrerequisites(target.symbol());
-        StockAccount account = lockAccount(target.accountId());
         RoleSnapshot role = lockRoleSnapshot(target, businessDate);
-        validateDedicatedRole(target, account, role);
+        validateDedicatedRole(role);
         validateSupplyReconciliation(target);
         if (role.openContractOrderCount() > 0L) {
             throw StockException.conflict(
@@ -186,7 +178,7 @@ public class UnderwritingSupplyTransitionService {
         );
     }
 
-    @Transactional
+    @Transactional(transactionManager = "pubJdbcTransactionManager")
     public void suspend(
             long contractId,
             UnderwritingSupplySuspensionRequest request,
@@ -203,9 +195,8 @@ public class UnderwritingSupplyTransitionService {
                     "Only an active issue-underwriter supply contract can be suspended"
             );
         }
-        StockAccount account = lockAccount(target.accountId());
         RoleSnapshot role = lockRoleSnapshot(target, clock.simulationDate());
-        validateDedicatedRole(target, account, role);
+        validateDedicatedRole(role);
 
         LocalDateTime now = clock.simulationDateTime();
         long nextPolicyVersion = Math.addExact(target.policyVersion(), 1L);
@@ -225,11 +216,16 @@ public class UnderwritingSupplyTransitionService {
                 ),
                 "Issue-underwriter supply suspension"
         );
-        accountOrderCleanupService.cancelOpenOrderBookOrders(account, target.symbol());
+        int cancelledOrderCount = marketRoleOrderCleanupService.cancelOpenOrderBookOrders(
+                target.accountId(),
+                "ISSUE_UNDERWRITER",
+                target.symbol(),
+                now
+        );
         markDailyStateSuspended(
                 contractId,
                 clock.simulationDate(),
-                role.openContractOrderCount(),
+                cancelledOrderCount,
                 nextPolicyVersion,
                 now
         );
@@ -301,14 +297,6 @@ public class UnderwritingSupplyTransitionService {
                 .optional()
                 .orElseThrow(() -> StockException.notFound(
                         "Unknown underwriting contract: " + contractId
-                ));
-    }
-
-    private StockAccount lockAccount(long accountId) {
-        return stockAccountRepository.findAllByIdInForUpdate(List.of(accountId)).stream()
-                .findFirst()
-                .orElseThrow(() -> StockException.conflict(
-                        "Issue-underwriter account no longer exists: " + accountId
                 ));
     }
 
@@ -405,14 +393,7 @@ public class UnderwritingSupplyTransitionService {
                 ));
     }
 
-    private void validateDedicatedRole(
-            ContractTarget target,
-            StockAccount account,
-            RoleSnapshot role
-    ) {
-        if (account.getId() == null || account.getId() != target.accountId()) {
-            throw StockException.conflict("Issue-underwriter account lock mismatch");
-        }
+    private void validateDedicatedRole(RoleSnapshot role) {
         boolean roleDatesActive = role.effectiveFrom() != null
                 && !role.businessDate().isBefore(role.effectiveFrom())
                 && (role.effectiveTo() == null

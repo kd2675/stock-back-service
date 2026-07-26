@@ -7,7 +7,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.util.List;
 import java.util.UUID;
 
 import javax.sql.DataSource;
@@ -19,21 +18,16 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.SingleConnectionDataSource;
 import org.springframework.jdbc.datasource.init.ResourceDatabasePopulator;
-import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import stock.back.service.common.exception.StockException;
-import stock.back.service.database.entity.StockAccount;
-import stock.back.service.database.repository.StockAccountRepository;
 import stock.back.service.market.vo.UnderwritingSupplyActivationRequest;
 import stock.back.service.market.vo.UnderwritingSupplySuspensionRequest;
-import stock.back.service.trading.biz.AccountOrderCleanupService;
 import web.common.core.simulation.SimulationClockSnapshot;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class UnderwritingSupplyTransitionServiceTest {
@@ -45,10 +39,7 @@ class UnderwritingSupplyTransitionServiceTest {
     private TransactionTemplate transactionTemplate;
     private SimulationClockService simulationClockService;
     private MarketLedgerFreezeGuard freezeGuard;
-    private StockAccountRepository stockAccountRepository;
-    private AccountOrderCleanupService accountOrderCleanupService;
     private UnderwritingSupplyTransitionService service;
-    private StockAccount underwriterAccount;
 
     @BeforeEach
     void setUp() {
@@ -77,23 +68,16 @@ class UnderwritingSupplyTransitionServiceTest {
                         "18:00"
                 );
         freezeGuard = mock(MarketLedgerFreezeGuard.class);
-        when(freezeGuard.acquireMutationPermit(
+        when(freezeGuard.acquireJdbcPreOpenMutationPermit(
                 "issue-underwriter scaled supply activation"
         )).thenReturn(BUSINESS_DATE);
-        stockAccountRepository = mock(StockAccountRepository.class);
-        accountOrderCleanupService = mock(AccountOrderCleanupService.class);
-        underwriterAccount = StockAccount.open("stock-issue-underwriter-demo001");
-        ReflectionTestUtils.setField(underwriterAccount, "id", 101L);
-        when(stockAccountRepository.findAllByIdInForUpdate(List.of(101L)))
-                .thenReturn(List.of(underwriterAccount));
         service = new UnderwritingSupplyTransitionService(
                 jdbcTemplate,
                 new ObjectMapper(),
                 simulationClockService,
                 marketSessionService,
                 freezeGuard,
-                stockAccountRepository,
-                accountOrderCleanupService
+                new MarketRoleOrderCleanupService(jdbcTemplate)
         );
         seedContract();
     }
@@ -270,8 +254,19 @@ class UnderwritingSupplyTransitionServiceTest {
                 )
         );
 
-        verify(accountOrderCleanupService)
-                .cancelOpenOrderBookOrders(underwriterAccount, "DEMO001");
+        assertThat(jdbcTemplate.queryForMap(
+                "select status, reserved_cash from stock_order where id = 701"
+        )).containsEntry("status", "CANCELLED")
+                .containsEntry("reserved_cash", BigDecimal.ZERO.setScale(2));
+        assertThat(jdbcTemplate.queryForObject(
+                """
+                select reserved_quantity
+                  from stock_holding
+                 where account_id = 101
+                   and symbol = 'DEMO001'
+                """,
+                Long.class
+        )).isZero();
         assertThat(jdbcTemplate.queryForObject(
                 "select status from stock_underwriting_contract where id = 401",
                 String.class
@@ -321,22 +316,6 @@ class UnderwritingSupplyTransitionServiceTest {
         transactionTemplate.executeWithoutResult(status ->
                 service.suspend(401L, null, "stock-admin")
         );
-        jdbcTemplate.update(
-                """
-                update stock_order
-                   set status = 'CANCELLED'
-                 where id = 701
-                """
-        );
-        jdbcTemplate.update(
-                """
-                update stock_holding
-                   set reserved_quantity = 0
-                 where account_id = 101
-                   and symbol = 'DEMO001'
-                """
-        );
-
         transactionTemplate.executeWithoutResult(status ->
                 service.activate(401L, null, "stock-admin")
         );

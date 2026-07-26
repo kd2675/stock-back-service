@@ -187,7 +187,7 @@ class MarketServiceTest {
                 .thenReturn(pausedSimulationClockSnapshot(listingNow));
         lenient().when(listingSessionService.currentSession())
                 .thenReturn(SimulationMarketSession.PRE_OPEN);
-        lenient().when(marketLedgerFreezeGuard.acquireMutationPermit("order-book instrument listing"))
+        lenient().when(marketLedgerFreezeGuard.acquirePreOpenMutationPermit("order-book instrument listing"))
                 .thenReturn(listingNow.toLocalDate());
         AutoMarketStatusDataLoader autoMarketStatusDataLoader = new AutoMarketStatusDataLoader(
                 jdbcTemplate,

@@ -6,7 +6,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
-import java.util.List;
 import java.util.Map;
 
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -17,44 +16,38 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import stock.back.service.common.exception.StockException;
-import stock.back.service.database.entity.StockAccount;
-import stock.back.service.database.repository.StockAccountRepository;
-import stock.back.service.market.vo.InstitutionPilotSuspensionRequest;
-import stock.back.service.trading.biz.AccountOrderCleanupService;
+import stock.back.service.market.vo.InstitutionSuspensionRequest;
 import web.common.core.simulation.SimulationClockSnapshot;
 
 @Service
-public class InstitutionPilotEmergencyStopService {
+public class InstitutionEmergencyStopService {
 
     private final JdbcTemplate jdbcTemplate;
     private final JdbcClient jdbcClient;
     private final ObjectMapper objectMapper;
     private final SimulationClockService simulationClockService;
-    private final StockAccountRepository stockAccountRepository;
-    private final AccountOrderCleanupService accountOrderCleanupService;
+    private final MarketRoleOrderCleanupService marketRoleOrderCleanupService;
     private final TransactionTemplate transactionTemplate;
 
-    public InstitutionPilotEmergencyStopService(
+    public InstitutionEmergencyStopService(
             JdbcTemplate jdbcTemplate,
             ObjectMapper objectMapper,
             SimulationClockService simulationClockService,
-            StockAccountRepository stockAccountRepository,
-            AccountOrderCleanupService accountOrderCleanupService,
-            @Qualifier("pubTransactionManager")
+            MarketRoleOrderCleanupService marketRoleOrderCleanupService,
+            @Qualifier("pubJdbcTransactionManager")
             PlatformTransactionManager transactionManager
     ) {
         this.jdbcTemplate = jdbcTemplate;
         this.jdbcClient = JdbcClient.create(jdbcTemplate);
         this.objectMapper = objectMapper;
         this.simulationClockService = simulationClockService;
-        this.stockAccountRepository = stockAccountRepository;
-        this.accountOrderCleanupService = accountOrderCleanupService;
+        this.marketRoleOrderCleanupService = marketRoleOrderCleanupService;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
     }
 
     public void suspend(
             long portfolioId,
-            InstitutionPilotSuspensionRequest request,
+            InstitutionSuspensionRequest request,
             String changedBy
     ) {
         if (portfolioId <= 0L) {
@@ -74,15 +67,12 @@ public class InstitutionPilotEmergencyStopService {
                     reason,
                     actor
             );
-            StockAccount account = stockAccountRepository
-                    .findAllByIdInForUpdate(List.of(target.accountId()))
-                    .stream()
-                    .filter(candidate -> candidate.getId().equals(target.accountId()))
-                    .findFirst()
-                    .orElseThrow(() -> StockException.conflict(
-                            "Institution PILOT account no longer exists: " + target.accountId()
-                    ));
-            accountOrderCleanupService.cancelOpenOrderBookOrders(account);
+            marketRoleOrderCleanupService.cancelOpenOrderBookOrders(
+                    target.accountId(),
+                    "INSTITUTIONAL_INVESTOR",
+                    null,
+                    clock.simulationDateTime()
+            );
         });
     }
 
@@ -115,9 +105,9 @@ public class InstitutionPilotEmergencyStopService {
                 .orElseThrow(() -> StockException.notFound(
                         "Institution portfolio not found: " + portfolioId
                 ));
-        if (!"PILOT".equals(target.executionMode())) {
+        if (!"LIVE".equals(target.executionMode())) {
             throw StockException.conflict(
-                    "Emergency stop is limited to an institution PILOT portfolio"
+                    "Emergency stop is limited to an institution LIVE portfolio"
             );
         }
         if ("SUSPENDED".equals(target.status())) {
@@ -125,7 +115,7 @@ public class InstitutionPilotEmergencyStopService {
         }
         if (!"ACTIVE".equals(target.status())) {
             throw StockException.conflict(
-                    "Only an active or already suspended institution PILOT can be stopped"
+                    "Only an active or already suspended institution LIVE portfolio can be stopped"
             );
         }
 
@@ -138,7 +128,7 @@ public class InstitutionPilotEmergencyStopService {
                        policy_version = ?,
                        updated_at = ?
                  where id = ?
-                   and execution_mode = 'PILOT'
+                   and execution_mode = 'LIVE'
                    and status = 'ACTIVE'
                    and policy_version = ?
                 """,
@@ -147,7 +137,7 @@ public class InstitutionPilotEmergencyStopService {
                 target.portfolioId(),
                 target.policyVersion()
         );
-        requireSingleUpdate(updated, "Institution PILOT emergency stop");
+        requireSingleUpdate(updated, "Institution LIVE emergency stop");
         jdbcTemplate.update(
                 """
                 update stock_market_policy_version
@@ -207,7 +197,7 @@ public class InstitutionPilotEmergencyStopService {
             LocalDateTime now
     ) {
         Map<String, Object> config = new LinkedHashMap<>();
-        config.put("transition", "PILOT_EMERGENCY_SUSPEND");
+        config.put("transition", "LIVE_EMERGENCY_SUSPEND");
         config.put("portfolioCode", target.portfolioCode());
         config.put("executionMode", target.executionMode());
         config.put("status", "SUSPENDED");
@@ -245,11 +235,11 @@ public class InstitutionPilotEmergencyStopService {
         );
     }
 
-    private String normalizeReason(InstitutionPilotSuspensionRequest request) {
+    private String normalizeReason(InstitutionSuspensionRequest request) {
         String reason = request == null ? null : request.changeReason();
         String normalized = reason == null ? "" : reason.trim();
         if (normalized.isBlank()) {
-            return "Emergency stop of institution PILOT and cancellation of open orders";
+            return "Emergency stop of institution LIVE portfolio and cancellation of open orders";
         }
         return truncate(normalized, 500);
     }

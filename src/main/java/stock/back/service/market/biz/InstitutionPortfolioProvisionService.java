@@ -58,7 +58,7 @@ public class InstitutionPortfolioProvisionService {
         this.marketLedgerFreezeGuard = marketLedgerFreezeGuard;
     }
 
-    @Transactional
+    @Transactional(transactionManager = "pubJdbcTransactionManager")
     public long createPortfolio(
             InstitutionPortfolioCreateRequest request,
             String changedBy
@@ -77,7 +77,7 @@ public class InstitutionPortfolioProvisionService {
         requirePortfolioCodeAvailable(portfolioCode);
 
         SimulationClockSnapshot clock = requirePausedPreOpen();
-        LocalDate activeBusinessDate = marketLedgerFreezeGuard.acquireMutationPermit(
+        LocalDate activeBusinessDate = marketLedgerFreezeGuard.acquireJdbcPreOpenMutationPermit(
                 "institution portfolio creation"
         );
         if (!activeBusinessDate.equals(clock.simulationDate())) {
@@ -107,7 +107,7 @@ public class InstitutionPortfolioProvisionService {
             throw StockException.badRequest("Institution initial AUM must be positive");
         }
         LocalDateTime now = clock.simulationDateTime();
-        LocalDate firstDecisionDate = activeBusinessDate.plusDays(1);
+        LocalDate firstDecisionDate = activeBusinessDate;
         LocalDateTime firstDecisionAt = firstDecisionDate.atTime(marketSessionService.openTime());
         Map<String, BigDecimal> marketWeights = marketWeights(
                 symbols,
@@ -187,7 +187,7 @@ public class InstitutionPortfolioProvisionService {
         String reason = request.changeReason();
         String normalized = reason == null ? "" : reason.trim();
         if (normalized.isBlank()) {
-            return "Create one institution portfolio in shadow mode";
+            return "Create one institution portfolio in live mode";
         }
         return normalized.length() <= 500 ? normalized : normalized.substring(0, 500);
     }
@@ -419,7 +419,7 @@ public class InstitutionPortfolioProvisionService {
                     decision_interval_minutes, next_decision_at, policy_version,
                     created_at, updated_at
                 ) values (
-                    ?, ?, ?, ?, ?, 'SHADOW', 'ACTIVE',
+                    ?, ?, ?, ?, ?, 'LIVE', 'ACTIVE',
                     ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?
                 )
                 """,
@@ -531,7 +531,7 @@ public class InstitutionPortfolioProvisionService {
         Map<String, Object> config = new LinkedHashMap<>();
         config.put("preset", "INDEPENDENT_INSTITUTION_PORTFOLIO_V1");
         config.put("portfolioCode", preset.portfolioCode());
-        config.put("executionMode", "SHADOW");
+        config.put("executionMode", "LIVE");
         config.put("institutionAumRateOfMarketCap", aumRate);
         config.put("initialCash", initialCash);
         config.put("referenceDailyVolumeRate", REFERENCE_VOLUME_RATE);

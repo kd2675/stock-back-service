@@ -177,6 +177,42 @@ class StockSchemaReadinessValidatorTest {
     }
 
     @Test
+    void run_legacyInstitutionDecisionModeCheck_failsBeforeApiAcceptsRequests() {
+        DriverManagerDataSource dataSource = new DriverManagerDataSource(
+                "jdbc:h2:mem:back_schema_readiness_institution_mode;MODE=MySQL;DB_CLOSE_DELAY=-1;DATABASE_TO_UPPER=false",
+                "sa",
+                ""
+        );
+        dataSource.setDriverClassName("org.h2.Driver");
+        new ResourceDatabasePopulator(new FileSystemResource(batchH2Ddl())).execute(dataSource);
+        JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSource);
+        jdbcTemplate.execute(
+                "alter table stock_institution_decision_run "
+                        + "drop constraint chk_stock_institution_decision_run_mode"
+        );
+        jdbcTemplate.execute(
+                """
+                alter table stock_institution_decision_run
+                  add constraint chk_stock_institution_decision_run_mode
+                  check (execution_mode in ('SHADOW', 'PILOT', 'LIVE'))
+                """
+        );
+        @SuppressWarnings("unchecked")
+        ObjectProvider<BuildProperties> buildPropertiesProvider = mock(ObjectProvider.class);
+        StockSchemaReadinessValidator validator = new StockSchemaReadinessValidator(
+                dataSource,
+                buildPropertiesProvider,
+                "2026-07-23-auto-profile-v2-direct"
+        );
+
+        assertThatThrownBy(() -> validator.run(null))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining(
+                        "chk_stock_institution_decision_run_mode CHECK forbidden token shadow"
+                );
+    }
+
+    @Test
     void run_legacyShadowSchema_failsBeforeApiAcceptsRequests() {
         DriverManagerDataSource dataSource = new DriverManagerDataSource(
                 "jdbc:h2:mem:back_schema_readiness_legacy_shadow;MODE=MySQL;DB_CLOSE_DELAY=-1;DATABASE_TO_UPPER=false",

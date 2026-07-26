@@ -295,7 +295,7 @@ class StockMysqlDdlContractTest {
             "JSON_EXTRACT(policy.config_json, '$.initialCash')",
             "JOIN stock_liquidity_transition transition",
             "account.cash_balance = transition.seed_cash_amount",
-            "transition.stage IN ('SHADOW_READY', 'LIVE_ACTIVE', 'SUSPENDED')",
+            "transition.stage IN ('LIVE_ACTIVE', 'SUSPENDED')",
             "CREATE TEMPORARY TABLE tmp_stock_lp_seed_replay",
             "CREATE TEMPORARY TABLE tmp_stock_lp_seed_replay_guard",
             "CHECK (violation_count = 0)",
@@ -788,13 +788,13 @@ class StockMysqlDdlContractTest {
     }
 
     @Test
-    void institutionShadowEngineAlter_matchesCanonicalAndBatchCopies() throws IOException {
+    void institutionEngineAlter_matchesCanonicalAndBatchCopies() throws IOException {
         String backDdl = Files.readString(
-                Path.of("src/main/resources/db/ddl/stock_institution_shadow_engine_alter.sql"),
+                Path.of("src/main/resources/db/ddl/stock_institution_engine_alter.sql"),
                 StandardCharsets.UTF_8
         );
         String batchDdl = Files.readString(
-                Path.of("../stock-batch-service/src/main/resources/db/ddl/stock_institution_shadow_engine_alter.sql"),
+                Path.of("../stock-batch-service/src/main/resources/db/ddl/stock_institution_engine_alter.sql"),
                 StandardCharsets.UTF_8
         );
         String canonicalDdl = Files.readString(
@@ -816,7 +816,8 @@ class StockMysqlDdlContractTest {
                     .isEqualTo(normalizeSqlBlock(extractCreateTableBlock(canonicalDdl, tableName)));
         }
         assertThat(backDdl).contains(
-                "execution_mode VARCHAR(20) NOT NULL DEFAULT 'SHADOW'",
+                "execution_mode VARCHAR(20) NOT NULL DEFAULT 'LIVE'",
+                "CHECK (`execution_mode` = 'LIVE')",
                 "primary_regime_weight",
                 "reference_daily_volume",
                 "remaining_daily_quantity_budget",
@@ -827,6 +828,35 @@ class StockMysqlDdlContractTest {
                 "INSERT INTO stock_order",
                 "UPDATE stock_order",
                 "DELETE FROM stock_order"
+        );
+    }
+
+    @Test
+    void institutionLiveOnlyAlter_matchesBatchCopyAndRetiresPendingLegacyModes()
+            throws IOException {
+        String backDdl = Files.readString(
+                Path.of("src/main/resources/db/ddl/stock_institution_live_only_alter.sql"),
+                StandardCharsets.UTF_8
+        );
+        String batchDdl = Files.readString(
+                Path.of("../stock-batch-service/src/main/resources/db/ddl/stock_institution_live_only_alter.sql"),
+                StandardCharsets.UTF_8
+        );
+
+        assertThat(firstExecutableSqlLine(backDdl)).isEqualTo("USE STOCK_SERVICE;");
+        assertThat(normalizeSqlBlock(backDdl)).isEqualTo(normalizeSqlBlock(batchDdl));
+        assertThat(backDdl).contains(
+                "LEGACY_NON_LIVE_MODE_RETIRED",
+                "SET execution_mode = 'LIVE'",
+                "execution_mode SET DEFAULT 'LIVE'",
+                "table_name = 'stock_institution_decision_run'",
+                "chk_stock_institution_decision_run_mode",
+                "CHECK (`execution_mode` = 'LIVE')"
+        ).doesNotContain(
+                "UPDATE stock_account",
+                "UPDATE stock_holding",
+                "UPDATE stock_order",
+                "UPDATE stock_execution"
         );
     }
 
@@ -856,7 +886,7 @@ class StockMysqlDdlContractTest {
                     .isEqualTo(normalizeSqlBlock(extractCreateTableBlock(canonicalDdl, tableName)));
         }
         assertThat(backDdl).contains(
-                "execution_mode VARCHAR(20) NOT NULL DEFAULT 'SHADOW'",
+                "execution_mode VARCHAR(20) NOT NULL DEFAULT 'LIVE'",
                 "passive_only BOOLEAN NOT NULL DEFAULT TRUE",
                 "reference_daily_volume",
                 "daily_execution_participation_rate",
@@ -906,6 +936,32 @@ class StockMysqlDdlContractTest {
                 "DELETE FROM stock_holding",
                 "UPDATE stock_order",
                 "DELETE FROM stock_order"
+        );
+    }
+
+    @Test
+    void liquidityLiveOnlyAlter_matchesBatchCopyAndOnlyChangesDefaults()
+            throws IOException {
+        String backDdl = Files.readString(
+                Path.of("src/main/resources/db/ddl/stock_liquidity_live_only_alter.sql"),
+                StandardCharsets.UTF_8
+        );
+        String batchDdl = Files.readString(
+                Path.of("../stock-batch-service/src/main/resources/db/ddl/stock_liquidity_live_only_alter.sql"),
+                StandardCharsets.UTF_8
+        );
+
+        assertThat(firstExecutableSqlLine(backDdl)).isEqualTo("USE STOCK_SERVICE;");
+        assertThat(normalizeSqlBlock(backDdl)).isEqualTo(normalizeSqlBlock(batchDdl));
+        assertThat(backDdl).contains(
+                "execution_mode SET DEFAULT 'LIVE'",
+                "state_status SET DEFAULT 'QUOTING'",
+                "stage SET DEFAULT 'LIVE_ACTIVE'"
+        ).doesNotContain(
+                "stock_order",
+                "stock_execution",
+                "UPDATE stock_account",
+                "UPDATE stock_holding"
         );
     }
 

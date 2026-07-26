@@ -28,8 +28,7 @@ import stock.back.service.market.biz.AutoParticipantProfileConfigService;
 import stock.back.service.market.biz.AutoParticipantSymbolConfigQueryService;
 import stock.back.service.market.biz.AutoParticipantSymbolConfigService;
 import stock.back.service.market.biz.AutoParticipantWithdrawalQueryService;
-import stock.back.service.market.biz.InstitutionPilotTransitionService;
-import stock.back.service.market.biz.InstitutionPilotEmergencyStopService;
+import stock.back.service.market.biz.InstitutionEmergencyStopService;
 import stock.back.service.market.biz.InstitutionPortfolioQueryService;
 import stock.back.service.market.biz.InstitutionPortfolioProvisionService;
 import stock.back.service.market.biz.InstitutionPortfolioRecommendationService;
@@ -66,9 +65,7 @@ import stock.back.service.market.vo.ListingAutoAccountResponse;
 import stock.back.service.market.vo.InstitutionPortfolioResponse;
 import stock.back.service.market.vo.InstitutionPortfolioCreateRequest;
 import stock.back.service.market.vo.InstitutionPortfolioRecommendationResponse;
-import stock.back.service.market.vo.InstitutionPilotActivationRequest;
-import stock.back.service.market.vo.InstitutionPilotSuspensionRequest;
-import stock.back.service.market.vo.LiquidityProviderActivationRequest;
+import stock.back.service.market.vo.InstitutionSuspensionRequest;
 import stock.back.service.market.vo.LiquidityProviderMandateResponse;
 import stock.back.service.market.vo.LiquidityProviderRecommendationResponse;
 import stock.back.service.market.vo.LiquidityProviderProvisionRequest;
@@ -101,8 +98,7 @@ public class AutoMarketAdminController {
     private final InstitutionPortfolioProvisionService institutionPortfolioProvisionService;
     private final InstitutionPortfolioRecommendationService
             institutionPortfolioRecommendationService;
-    private final InstitutionPilotTransitionService institutionPilotTransitionService;
-    private final InstitutionPilotEmergencyStopService institutionPilotEmergencyStopService;
+    private final InstitutionEmergencyStopService institutionEmergencyStopService;
     private final LiquidityProviderMandateQueryService liquidityProviderMandateQueryService;
     private final LiquidityProviderRecommendationService liquidityProviderRecommendationService;
     private final LiquidityProviderTransitionService liquidityProviderTransitionService;
@@ -189,26 +185,12 @@ public class AutoMarketAdminController {
     }
 
     @PostMapping("/liquidity-mandates/{symbol}")
-    public ResponseDataDTO<LiquidityProviderMandateResponse> provisionLiquidityShadow(
+    public ResponseDataDTO<LiquidityProviderMandateResponse> createLiquidityProviderLive(
             @PathVariable String symbol,
             @RequestBody(required = false) LiquidityProviderProvisionRequest request,
             UserContext userContext
     ) {
-        liquidityProviderTransitionService.provisionShadow(
-                symbol,
-                request,
-                userContext.getUserKey()
-        );
-        return ResponseDataDTO.of(liquidityProviderMandateQueryService.getMandate(symbol));
-    }
-
-    @PostMapping("/liquidity-mandates/{symbol}/activate")
-    public ResponseDataDTO<LiquidityProviderMandateResponse> activateLiquidityMandate(
-            @PathVariable String symbol,
-            @RequestBody(required = false) LiquidityProviderActivationRequest request,
-            UserContext userContext
-    ) {
-        liquidityProviderTransitionService.activateLive(
+        liquidityProviderTransitionService.provisionLive(
                 symbol,
                 request,
                 userContext.getUserKey()
@@ -243,27 +225,13 @@ public class AutoMarketAdminController {
         );
     }
 
-    @PostMapping("/institution-portfolios/{portfolioId}/pilot")
-    public ResponseDataDTO<List<InstitutionPortfolioResponse>> activateInstitutionPilot(
-            @PathVariable long portfolioId,
-            @RequestBody InstitutionPilotActivationRequest request,
-            UserContext userContext
-    ) {
-        institutionPilotTransitionService.activatePilot(
-                portfolioId,
-                request,
-                userContext.getUserKey()
-        );
-        return ResponseDataDTO.of(institutionPortfolioQueryService.getPortfolios());
-    }
-
     @PostMapping("/institution-portfolios/{portfolioId}/suspend")
-    public ResponseDataDTO<List<InstitutionPortfolioResponse>> suspendInstitutionPilot(
+    public ResponseDataDTO<List<InstitutionPortfolioResponse>> suspendInstitution(
             @PathVariable long portfolioId,
-            @RequestBody(required = false) InstitutionPilotSuspensionRequest request,
+            @RequestBody(required = false) InstitutionSuspensionRequest request,
             UserContext userContext
     ) {
-        institutionPilotEmergencyStopService.suspend(
+        institutionEmergencyStopService.suspend(
                 portfolioId,
                 request,
                 userContext.getUserKey()

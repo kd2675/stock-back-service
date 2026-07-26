@@ -33,15 +33,13 @@
 - `GET /api/stock/v1/markets/virtual-market`
 - `GET /api/stock/v1/markets/order-book-market`
 - `GET /api/stock/v1/markets/auto-market`
-- `GET /api/stock/v1/markets/institution-portfolios` (`ADMIN`, 기관 계정·목표 비중·최근 shadow 결정 감사)
+- `GET /api/stock/v1/markets/institution-portfolios` (`ADMIN`, 기관 계정·목표 비중·최근 LIVE 결정·주문 감사)
 - `GET /api/stock/v1/markets/institution-portfolios/recommendations` (`ADMIN`, 활성 종목 수 기준 권장 기관 개수·기관당 AUM·운용 유형 수치)
-- `POST /api/stock/v1/markets/institution-portfolios` (`ADMIN`, 일시정지 장전에서 기관 포트폴리오 1개만 SHADOW로 생성)
-- `POST /api/stock/v1/markets/institution-portfolios/{portfolioId}/pilot` (`ADMIN`, 일시정지 장전에서 20개 완료 SHADOW 거래일과 최근 실패 0건을 검증하고 단일 종목 PILOT으로 전환)
+- `POST /api/stock/v1/markets/institution-portfolios` (`ADMIN`, 일시정지 장전에서 기관 포트폴리오 1개를 제한된 다종목 LIVE로 생성)
 - `POST /api/stock/v1/markets/institution-portfolios/{portfolioId}/suspend` (`ADMIN`, 실행 중 비상 중단. 정책 버전을 즉시 동결하고 대기 주문 의도·전용 계좌 미체결 주문과 예약을 정리)
 - `GET /api/stock/v1/markets/liquidity-mandates` (`ADMIN`, 전용 LP 계약·계정/STP·거래일 위험 상태 감사)
 - `GET /api/stock/v1/markets/liquidity-mandates/recommendations` (`ADMIN`, 종목별 권장 기준 거래량·시드 수량·초기 현금과 생성 가능 상태)
-- `POST /api/stock/v1/markets/liquidity-mandates/{symbol}` (`ADMIN`, 일시정지 장전에서 선택한 종목의 LP SHADOW만 준비)
-- `POST /api/stock/v1/markets/liquidity-mandates/{symbol}/activate` (`ADMIN`, 일시정지 장전에서 종목별 레거시 미체결 주문을 취소하고 기존 공급 설정을 끈 뒤 전용 LP만 LIVE로 전환. 역할 분리형 신규 상장은 이때 다음 장 개장 대상으로 활성화)
+- `POST /api/stock/v1/markets/liquidity-mandates/{symbol}` (`ADMIN`, 일시정지 장전에서 종목별 레거시 미체결 주문 취소·기존 공급 설정 비활성화·시드 자산 이전·전용 LP LIVE 생성을 한 트랜잭션으로 처리. 역할 분리형 신규 상장은 같은 커밋에서 다음 장 개장 대상으로 활성화)
 - `GET /api/stock/v1/markets/underwriting-contracts` (`ADMIN`, 인수재고·최초 배정·누적 제출/체결·최근 일일 공급 게이트 감사)
 - `GET /api/stock/v1/markets/underwriting-contracts/recommendations` (`ADMIN`, 권장 인수기관·종목별 계정 수와 발행 대기 수량)
 - `POST /api/stock/v1/markets/underwriting-contracts/{symbol}` (`ADMIN`, 발행 대기 유통분을 종목 전용 인수계정으로 옮기고 계약 1건만 생성)
@@ -125,12 +123,12 @@ scripts/stock-smoke.sh
 - `prod`의 `STOCK_DB_URL`, `STOCK_DB_SLAVE_URL`은 query string 없는 기본 JDBC URL로 넣습니다. 공통 JDBC 옵션은 설정 파일에서 `connectTimeout=5000`, `socketTimeout=30000`, `tcpKeepAlive=true`를 기본으로 붙입니다.
 - JPA datasource 구조는 다른 백엔드 JPA 서비스와 맞춰 `database.datasource.pub.master/slave1`과 `PubDataConfig`를 사용합니다.
 - `@Transactional(readOnly = true)` 트랜잭션은 `RoutingDataSource`에서 slave로 라우팅됩니다. 현재 local/dev는 master와 slave가 같은 `STOCK_SERVICE` 접속값을 봅니다.
-- 관리자 PILOT 중단은 의도적으로 장전·일시정지 제약을 두지 않습니다. 포트폴리오 `SUSPENDED` 전환, 정책 버전 감사, 대기 intent 거절, 전용 계정 미체결 주문 취소와 예약 반환을 하나의 트랜잭션에 처리합니다. 주문 정리가 실패하면 상태·intent·정책 변경도 함께 롤백되므로 “중단 상태지만 기존 주문은 살아 있는” 부분 완료를 커밋하지 않습니다.
+- 관리자 기관 LIVE 중단은 의도적으로 장전·일시정지 제약을 두지 않습니다. 포트폴리오 `SUSPENDED` 전환, 정책 버전 감사, 대기 intent 거절, 전용 계정 미체결 주문 취소와 예약 반환을 하나의 트랜잭션에 처리합니다. 주문 정리가 실패하면 상태·intent·정책 변경도 함께 롤백되므로 “중단 상태지만 기존 주문은 살아 있는” 부분 완료를 커밋하지 않습니다.
 - Hikari 풀은 local/dev 기본 8개이며, prod는 `STOCK_DB_MAX_POOL_SIZE`, `STOCK_DB_CONNECTION_TIMEOUT`, `STOCK_DB_MAX_LIFETIME`, `STOCK_DB_KEEPALIVE_TIME`로 조정합니다.
 - DDL은 schema와 제약만 생성합니다. 기본 종목, 최초 가격, 자동 참여자는 seed하지 않으며 관리자 API 또는 smoke/test 데이터에서 명시적으로 등록합니다.
-- 기존 DB에 축소시장 역할 재구성 스키마를 추가할 때는 서버와 스케줄러를 모두 중지하고 `stock_market_role_foundation_alter.sql` → `stock_system_custody_withdrawal_alter.sql` → `stock_institution_shadow_engine_alter.sql` → `stock_liquidity_provider_engine_alter.sql` → `stock_issuance_underwriting_alter.sql` → `stock_market_role_independent_provisioning_alter.sql` → `stock_underwriter_scaled_supply_alter.sql` → `stock_liquidity_transition_alter.sql` 순서로 적용합니다. 각 파일은 additive·재실행 가능하게 작성했지만 MySQL DDL 묶음 전체가 하나의 트랜잭션은 아니므로 파일별 적용 결과와 원장 대사를 남긴 뒤 다음 파일로 진행합니다. 코드 배포는 여덟 스키마의 readiness가 모두 통과한 뒤에만 합니다.
+- 기존 DB에 축소시장 역할 재구성 스키마를 추가할 때는 서버와 스케줄러를 모두 중지하고 `stock_market_role_foundation_alter.sql` → `stock_system_custody_withdrawal_alter.sql` → `stock_institution_engine_alter.sql` → `stock_institution_live_only_alter.sql` → `stock_liquidity_provider_engine_alter.sql` → `stock_issuance_underwriting_alter.sql` → `stock_market_role_independent_provisioning_alter.sql` → `stock_underwriter_scaled_supply_alter.sql` → `stock_liquidity_transition_alter.sql` → `stock_liquidity_live_only_alter.sql` 순서로 적용합니다. 기관 LIVE 정리 파일은 과거 비LIVE 대기 intent를 거절한 뒤 포트폴리오와 결정 실행모드를 모두 LIVE 계약으로 고정하며, 마지막 LP 파일은 소형 역할 테이블의 기본값과 CHECK를 LIVE 계약에 맞춥니다. 각 파일은 재실행 가능하게 작성했지만 MySQL DDL 묶음 전체가 하나의 트랜잭션은 아니므로 파일별 적용 결과와 원장 대사를 남긴 뒤 다음 파일로 진행합니다. 코드 배포는 역할 스키마 readiness가 모두 통과한 뒤에만 합니다.
 - 역할 분리형 신규 상장의 비유통·락업 물량은 종목별 `SYSTEM_CUSTODY` 하위계정(`ISSUANCE_LOCKUP:<symbol>`)에 보관합니다. 탈퇴자산을 받는 기본 `stock-system-custody` 계정과 실물 보유를 섞지 않으며, 두 계정군의 경제적 출처는 `stock_security_allocation_ledger`와 탈퇴 이전 감사 원장으로 각각 추적합니다.
-- 현재 역할 재구성 범위는 기반 스키마, 기관 SHADOW와 단일 종목 PILOT, 종목별 LP SHADOW/LIVE, 유한 인수 공급, 탈퇴 custody까지입니다. 기관 다종목 LIVE, 레짐 V2, 전체 종목의 legacy listing-auto 폐기, 역할별 별도 일일 snapshot, 락업 해제 workflow는 구현 완료로 간주하지 않습니다. `unlock_business_date`가 `NULL`인 최초 락업 배정은 현재 영구 보관 상태이며 운영자가 임의로 유통량에 포함하거나 계정 간 이전해서는 안 됩니다.
+- 현재 역할 재구성 범위는 기반 스키마, 기관 다종목 직접 LIVE, 종목별 LP 직접 LIVE, 유한 인수 공급, 탈퇴 custody까지입니다. 기관과 LP에는 SHADOW/PILOT 생성·활성화 단계를 두지 않습니다. 레짐 V2, 역할별 별도 일일 snapshot, 락업 해제 workflow는 구현 완료로 간주하지 않습니다. `unlock_business_date`가 `NULL`인 최초 락업 배정은 현재 영구 보관 상태이며 운영자가 임의로 유통량에 포함하거나 계정 간 이전해서는 안 됩니다.
 - 7종목에서 인수계정 7개, LP계정 7개, 종목별 유통 대기 custody 7개, 락업 custody 7개, 기관 포트폴리오 4개, 탈퇴 custody 1개를 모두 만들면 총 33계정입니다. 기관·인수·LP는 각각 단건 생성하며 이 수치는 전 역할을 모두 채웠을 때의 권장 상한 설명일 뿐 자동 생성 개수가 아닙니다.
 - 전체 stock 시뮬레이션 데이터를 지울 때는 `src/main/resources/db/maintenance/stock_clear_data.sql`을 사용합니다. 이 파일은 자동참여자, 계좌, 종목, 자동장 설정까지 모두 지우는 전체 초기화용입니다.
 - 자동참여자 등록, 프로필, 참여자별 전략, 종목, 자동장 설정은 남기고 실제시간으로 쌓인 주문/체결/차트/원장 히스토리만 새로 시작하려면 `src/main/resources/db/maintenance/stock_clear_runtime_history_keep_participants.sql`을 사용합니다. 이 파일은 계좌 식별 row는 보존하되 런타임 현금·보유·주문·체결을 초기화하고, 시뮬레이션 clock의 기준일과 1일 길이는 유지한 채 누적 시간을 0으로 되돌립니다. 거래 가능 여부와 소유권을 분리해 CLOSED·호가중지 상태의 기존 공급계정도 현재 유통주식 수량으로 복원하고, 역할 분리형 종목은 현재 발행·유통 수량을 최초 배정 계정에 재구성한 뒤 기관 초기 현금과 LP 시드 이전을 재생합니다. LP 시드 원장·출발 보유·도착 계정 중 하나라도 맞지 않거나 최종 보유합계가 발행주식과 다르면 CHECK guard에서 즉시 중단합니다.

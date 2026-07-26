@@ -98,7 +98,8 @@ class OrderBookInstrumentRoleSeparatedIntegrationTest {
         when(simulationClockService.currentMarketDateTime()).thenReturn(NOW);
         when(simulationClockService.currentSnapshot()).thenReturn(pausedClock());
         when(marketSessionService.currentSession()).thenReturn(SimulationMarketSession.PRE_OPEN);
-        when(freezeGuard.acquireMutationPermit(any())).thenReturn(NOW.toLocalDate());
+        when(freezeGuard.acquirePreOpenMutationPermit(any())).thenReturn(NOW.toLocalDate());
+        when(freezeGuard.acquireJdbcPreOpenMutationPermit(any())).thenReturn(NOW.toLocalDate());
 
         service = new OrderBookInstrumentCommandService(
                 virtualInstrumentRepository,

@@ -22,11 +22,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import stock.back.service.common.exception.StockException;
-import stock.back.service.database.entity.StockAccount;
-import stock.back.service.database.repository.StockAccountRepository;
-import stock.back.service.market.vo.LiquidityProviderActivationRequest;
 import stock.back.service.market.vo.LiquidityProviderProvisionRequest;
-import stock.back.service.trading.biz.AccountOrderCleanupService;
 import web.common.core.simulation.SimulationClockSnapshot;
 import web.common.core.simulation.SimulationMarketSession;
 
@@ -36,7 +32,6 @@ public class LiquidityProviderTransitionService {
     private static final String PARTICIPANT_CODE = "DEFAULT_LIQUIDITY_PROVIDER";
     private static final String PARTICIPANT_TYPE = "LIQUIDITY_PROVIDER";
     private static final String SELF_TRADE_GROUP_ID = "LIQUIDITY_PROVIDER:DEFAULT";
-    private static final String SHADOW_READY = "SHADOW_READY";
     private static final String LIVE_ACTIVE = "LIVE_ACTIVE";
 
     private static final BigDecimal DEFAULT_REFERENCE_VOLUME_RATE = new BigDecimal("0.030000");
@@ -55,8 +50,7 @@ public class LiquidityProviderTransitionService {
     private final SimulationClockService simulationClockService;
     private final SimulationMarketSessionService marketSessionService;
     private final MarketLedgerFreezeGuard marketLedgerFreezeGuard;
-    private final StockAccountRepository stockAccountRepository;
-    private final AccountOrderCleanupService accountOrderCleanupService;
+    private final MarketRoleOrderCleanupService marketRoleOrderCleanupService;
 
     public LiquidityProviderTransitionService(
             JdbcTemplate jdbcTemplate,
@@ -64,8 +58,7 @@ public class LiquidityProviderTransitionService {
             SimulationClockService simulationClockService,
             SimulationMarketSessionService marketSessionService,
             MarketLedgerFreezeGuard marketLedgerFreezeGuard,
-            StockAccountRepository stockAccountRepository,
-            AccountOrderCleanupService accountOrderCleanupService
+            MarketRoleOrderCleanupService marketRoleOrderCleanupService
     ) {
         this.jdbcTemplate = jdbcTemplate;
         this.jdbcClient = JdbcClient.create(jdbcTemplate);
@@ -73,12 +66,11 @@ public class LiquidityProviderTransitionService {
         this.simulationClockService = simulationClockService;
         this.marketSessionService = marketSessionService;
         this.marketLedgerFreezeGuard = marketLedgerFreezeGuard;
-        this.stockAccountRepository = stockAccountRepository;
-        this.accountOrderCleanupService = accountOrderCleanupService;
+        this.marketRoleOrderCleanupService = marketRoleOrderCleanupService;
     }
 
-    @Transactional
-    public void provisionShadow(
+    @Transactional(transactionManager = "pubJdbcTransactionManager")
+    public void provisionLive(
             String symbol,
             LiquidityProviderProvisionRequest request,
             String requestedBy
@@ -86,7 +78,7 @@ public class LiquidityProviderTransitionService {
         String normalizedSymbol = normalizedSymbol(symbol);
         ExistingTransition existing = lockTransition(normalizedSymbol);
         if (existing != null) {
-            if (SHADOW_READY.equals(existing.stage()) || LIVE_ACTIVE.equals(existing.stage())) {
+            if (LIVE_ACTIVE.equals(existing.stage())) {
                 return;
             }
             throw StockException.conflict(
@@ -94,8 +86,8 @@ public class LiquidityProviderTransitionService {
             );
         }
         requirePausedPreOpen();
-        LocalDate businessDate = marketLedgerFreezeGuard.acquireMutationPermit(
-                "liquidity-provider shadow provisioning"
+        LocalDate businessDate = marketLedgerFreezeGuard.acquireJdbcPreOpenMutationPermit(
+                "liquidity-provider live provisioning"
         );
         SimulationClockSnapshot clock = simulationClockService.currentSnapshot();
         requireBusinessDateAligned(clock, businessDate);
@@ -103,8 +95,7 @@ public class LiquidityProviderTransitionService {
         MarketSymbol marketSymbol = lockMarketSymbol(normalizedSymbol);
         ExistingTransition concurrentlyProvisioned = lockTransition(normalizedSymbol);
         if (concurrentlyProvisioned != null) {
-            if (SHADOW_READY.equals(concurrentlyProvisioned.stage())
-                    || LIVE_ACTIVE.equals(concurrentlyProvisioned.stage())) {
+            if (LIVE_ACTIVE.equals(concurrentlyProvisioned.stage())) {
                 return;
             }
             throw StockException.conflict(
@@ -117,12 +108,29 @@ public class LiquidityProviderTransitionService {
                     "A liquidity-provider mandate already exists for " + normalizedSymbol
             );
         }
-        Long legacyAccountId = findLegacyAccountId(normalizedSymbol);
+        LegacyLiquidity legacyLiquidity = lockLegacyLiquidity(normalizedSymbol);
+        Long legacyAccountId = legacyLiquidity == null
+                ? null
+                : legacyLiquidity.accountId();
         long sourceAccountId = resolveSourceAccountId(
                 normalizedSymbol,
                 request == null ? null : request.sourceAccountId(),
                 legacyAccountId
         );
+        if (legacyAccountId != null) {
+            marketRoleOrderCleanupService.cancelOpenOrderBookOrders(
+                    legacyAccountId,
+                    "LISTING_UNDERWRITER",
+                    normalizedSymbol,
+                    clock.simulationDateTime()
+            );
+            if (openLegacyOrderCount(legacyAccountId, normalizedSymbol) > 0L) {
+                throw new IllegalStateException(
+                        "Legacy liquidity orders remain after exact account cleanup: "
+                                + normalizedSymbol
+                );
+            }
+        }
         SourceHolding source = lockSourceHolding(sourceAccountId, normalizedSymbol);
         verifyIssuedShareReconciliation(normalizedSymbol, marketSymbol.issuedShares());
 
@@ -202,7 +210,7 @@ public class LiquidityProviderTransitionService {
                 normalizeRequestedBy(requestedBy),
                 now
         );
-        long mandateId = insertShadowMandate(
+        long mandateId = insertLiveMandate(
                 participant.id(),
                 liquidityAccountId,
                 normalizedSymbol,
@@ -215,7 +223,7 @@ public class LiquidityProviderTransitionService {
         );
         String changeReason = normalizeReason(
                 request == null ? null : request.changeReason(),
-                "Provision one liquidity provider mandate in shadow mode"
+                "Create live liquidity provider and retire legacy listing liquidity"
         );
         insertTransition(
                 normalizedSymbol,
@@ -228,100 +236,19 @@ public class LiquidityProviderTransitionService {
                 seedInventoryQuantity,
                 seedCashAmount,
                 businessDate,
+                legacyLiquidity != null && legacyLiquidity.enabled() ? now : null,
                 normalizeRequestedBy(requestedBy),
                 changeReason,
                 now
         );
-        insertAllocationAudit(
-                normalizedSymbol,
-                source.accountId(),
-                liquidityAccountId,
-                seedInventoryQuantity,
-                seedUnitPrice,
-                businessDate,
-                now
-        );
-        insertPolicyVersion(
-                normalizedSymbol,
-                1L,
-                "SHADOW",
-                referenceVolumeRate,
-                seedInventoryRate,
-                cashMultiplier,
-                referenceDailyVolume,
-                seedInventoryQuantity,
-                seedCashAmount,
-                businessDate,
-                changeReason,
-                normalizeRequestedBy(requestedBy),
-                now
-        );
-        verifyIssuedShareReconciliation(normalizedSymbol, marketSymbol.issuedShares());
-    }
-
-    @Transactional
-    public void activateLive(
-            String symbol,
-            LiquidityProviderActivationRequest request,
-            String requestedBy
-    ) {
-        String normalizedSymbol = normalizedSymbol(symbol);
-        ExistingTransition transition = lockTransition(normalizedSymbol);
-        if (transition == null) {
-            throw StockException.notFound(
-                    "Liquidity transition has not been provisioned for " + normalizedSymbol
-            );
-        }
-        if (LIVE_ACTIVE.equals(transition.stage())) {
-            return;
-        }
-        if (!SHADOW_READY.equals(transition.stage())) {
-            throw StockException.conflict(
-                    "Liquidity transition cannot be activated from stage " + transition.stage()
-            );
-        }
-        requirePausedPreOpen();
-        LocalDate businessDate = marketLedgerFreezeGuard.acquireMutationPermit(
-                "liquidity-provider live activation"
-        );
-        SimulationClockSnapshot clock = simulationClockService.currentSnapshot();
-        requireBusinessDateAligned(clock, businessDate);
-        if (businessDate.isBefore(transition.effectiveBusinessDate())) {
-            throw StockException.conflict(
-                    "Liquidity transition cannot activate before its provisioning business date"
-            );
-        }
-        requireLiquidityAccountEligible(transition, businessDate);
-        if (openOrderCount(transition.liquidityAccountId()) > 0L) {
-            throw StockException.conflict(
-                    "Shadow liquidity account unexpectedly has open orders; investigate before activation"
-            );
-        }
-        if (dailyStateCount(transition.mandateId(), businessDate) > 0L) {
-            throw StockException.conflict(
-                    "Liquidity daily state already exists for the activation date; activate on a clean pre-open"
-            );
-        }
-
-        Long currentLegacyAccountId = findLegacyAccountId(normalizedSymbol);
-        Long legacyAccountId = currentLegacyAccountId == null
-                ? transition.legacyAccountId()
-                : currentLegacyAccountId;
-        boolean legacyConfigEnabled = legacyConfigEnabled(normalizedSymbol);
-        if (legacyAccountId != null) {
-            StockAccount legacyAccount = lockAccount(legacyAccountId);
-            accountOrderCleanupService.cancelOpenOrderBookOrders(
-                    legacyAccount,
-                    normalizedSymbol
-            );
-        }
-        if (openLegacyOrderCount(normalizedSymbol) > 0L) {
+        ExistingTransition provisioned = lockTransition(normalizedSymbol);
+        if (provisioned == null) {
             throw new IllegalStateException(
-                    "Legacy liquidity orders remain after exact account cleanup: " + normalizedSymbol
+                    "Liquidity transition is missing after live provisioning"
             );
         }
-        LocalDateTime now = clock.simulationDateTime();
-        if (legacyConfigEnabled) {
+        requireLiquidityAccountEligible(provisioned, businessDate);
+        if (legacyLiquidity != null && legacyLiquidity.enabled()) {
             int disabled = jdbcTemplate.update(
                     """
                     update stock_listing_auto_account_config
@@ -340,85 +267,31 @@ public class LiquidityProviderTransitionService {
             }
         }
         activatePendingRoleSeparatedMarket(normalizedSymbol, now);
-        int mandateUpdated = jdbcTemplate.update(
-                """
-                update stock_liquidity_mandate
-                   set execution_mode = 'LIVE',
-                       status = 'ACTIVE',
-                       contract_start_date = ?,
-                       next_quote_at = ?,
-                       policy_version = policy_version + 1,
-                       updated_at = ?
-                 where id = ?
-                   and symbol = ?
-                   and execution_mode in ('SHADOW', 'PILOT')
-                   and status = 'ACTIVE'
-                """,
+        insertAllocationAudit(
+                normalizedSymbol,
+                source.accountId(),
+                liquidityAccountId,
+                seedInventoryQuantity,
+                seedUnitPrice,
                 businessDate,
-                businessDate.atTime(marketSessionService.openTime()),
-                now,
-                transition.mandateId(),
-                normalizedSymbol
-        );
-        if (mandateUpdated != 1) {
-            throw new IllegalStateException(
-                    "Liquidity mandate activation count mismatch: " + mandateUpdated
-            );
-        }
-        int transitionUpdated = jdbcTemplate.update(
-                """
-                update stock_liquidity_transition
-                   set legacy_account_id = ?,
-                       stage = 'LIVE_ACTIVE',
-                       legacy_disabled_at = ?,
-                       activated_at = ?,
-                       policy_version = policy_version + 1,
-                       updated_at = ?
-                 where id = ?
-                   and stage = 'SHADOW_READY'
-                """,
-                legacyAccountId,
-                legacyConfigEnabled ? now : null,
-                now,
-                now,
-                transition.id()
-        );
-        if (transitionUpdated != 1) {
-            throw new IllegalStateException(
-                    "Liquidity transition activation count mismatch: " + transitionUpdated
-            );
-        }
-        jdbcTemplate.update(
-                """
-                update stock_market_policy_version
-                   set status = 'RETIRED',
-                       updated_at = ?
-                 where policy_scope = 'LIQUIDITY_MANDATE'
-                   and scope_key = ?
-                   and status in ('DRAFT', 'SCHEDULED', 'ACTIVE')
-                """,
-                now,
-                normalizedSymbol
-        );
-        String changeReason = normalizeReason(
-                request == null ? null : request.changeReason(),
-                "Activate independent liquidity provider and retire legacy listing liquidity"
+                now
         );
         insertPolicyVersion(
                 normalizedSymbol,
-                transition.policyVersion() + 1L,
+                1L,
                 "LIVE",
-                null,
-                null,
-                null,
-                transition.referenceDailyVolume(),
-                transition.seedInventoryQuantity(),
-                transition.seedCashAmount(),
+                referenceVolumeRate,
+                seedInventoryRate,
+                cashMultiplier,
+                referenceDailyVolume,
+                seedInventoryQuantity,
+                seedCashAmount,
                 businessDate,
                 changeReason,
                 normalizeRequestedBy(requestedBy),
                 now
         );
+        verifyIssuedShareReconciliation(normalizedSymbol, marketSymbol.issuedShares());
     }
 
     private void requirePausedPreOpen() {
@@ -430,7 +303,7 @@ public class LiquidityProviderTransitionService {
         }
         if (marketSessionService.currentSession() != SimulationMarketSession.PRE_OPEN) {
             throw StockException.conflict(
-                    "Liquidity ownership can only be provisioned or activated during a paused pre-open"
+                    "Liquidity ownership can only move directly to LIVE during a paused pre-open"
             );
         }
     }
@@ -641,36 +514,23 @@ public class LiquidityProviderTransitionService {
         return underwriterAccounts.getFirst();
     }
 
-    private Long findLegacyAccountId(String symbol) {
+    private LegacyLiquidity lockLegacyLiquidity(String symbol) {
         return jdbcClient.sql(
                         """
-                        select account.id
+                        select account.id as account_id, config.enabled
                           from stock_listing_auto_account_config config
                           join stock_account account on account.user_key = config.user_key
                          where config.symbol = ?
+                         for update
                         """
                 )
                 .param(symbol)
-                .query(Long.class)
+                .query((rs, rowNum) -> new LegacyLiquidity(
+                        rs.getLong("account_id"),
+                        rs.getBoolean("enabled")
+                ))
                 .optional()
                 .orElse(null);
-    }
-
-    private boolean legacyConfigEnabled(String symbol) {
-        Boolean exists = jdbcClient.sql(
-                        """
-                        select exists(
-                            select 1
-                              from stock_listing_auto_account_config
-                             where symbol = ?
-                               and enabled = true
-                        )
-                        """
-                )
-                .param(symbol)
-                .query(Boolean.class)
-                .single();
-        return Boolean.TRUE.equals(exists);
     }
 
     private SourceHolding lockSourceHolding(long accountId, String symbol) {
@@ -855,7 +715,7 @@ public class LiquidityProviderTransitionService {
         );
     }
 
-    private long insertShadowMandate(
+    private long insertLiveMandate(
             long participantId,
             long accountId,
             String symbol,
@@ -901,7 +761,7 @@ public class LiquidityProviderTransitionService {
                     created_at, updated_at
                 ) values (
                     ?, ?, ?, ?,
-                    'SHADOW', 'ACTIVE', ?, null,
+                    'LIVE', 'ACTIVE', ?, null,
                     4, 12, ?,
                     ?, 0.050000, 0.080000,
                     0.010000, 5, 0.100000,
@@ -941,6 +801,7 @@ public class LiquidityProviderTransitionService {
             long seedInventoryQuantity,
             BigDecimal seedCashAmount,
             LocalDate businessDate,
+            LocalDateTime legacyDisabledAt,
             String requestedBy,
             String changeReason,
             LocalDateTime now
@@ -958,8 +819,8 @@ public class LiquidityProviderTransitionService {
                             created_at, updated_at
                         ) values (
                             ?, ?, ?, ?, ?, ?, ?,
-                            'SHADOW_READY', ?, ?, ?, ?,
-                            null, null, ?, ?, 1, ?, ?
+                            'LIVE_ACTIVE', ?, ?, ?, ?,
+                            ?, ?, ?, ?, 1, ?, ?
                         )
                         """,
                         "LP-TRANSITION:" + symbol,
@@ -973,6 +834,8 @@ public class LiquidityProviderTransitionService {
                         seedInventoryQuantity,
                         seedCashAmount,
                         businessDate,
+                        legacyDisabledAt,
+                        now,
                         requestedBy,
                         changeReason,
                         now,
@@ -1100,7 +963,7 @@ public class LiquidityProviderTransitionService {
                                and holding.symbol = mandate.symbol
                              where mandate.id = ?
                                and mandate.symbol = ?
-                               and mandate.execution_mode in ('SHADOW', 'PILOT')
+                               and mandate.execution_mode = 'LIVE'
                                and mandate.status = 'ACTIVE'
                                and mandate.reference_daily_volume = ?
                                and mandate.target_inventory_quantity = ?
@@ -1153,60 +1016,20 @@ public class LiquidityProviderTransitionService {
         }
     }
 
-    private StockAccount lockAccount(long accountId) {
-        return stockAccountRepository.findAllByIdInForUpdate(List.of(accountId)).stream()
-                .filter(account -> account.getId() != null && account.getId() == accountId)
-                .findFirst()
-                .orElseThrow(() -> StockException.notFound(
-                        "Legacy liquidity account not found: " + accountId
-                ));
-    }
-
-    private long openOrderCount(long accountId) {
+    private long openLegacyOrderCount(long accountId, String symbol) {
         Long count = jdbcClient.sql(
                         """
                         select count(*)
                           from stock_order
                          where account_id = ?
+                           and symbol = ?
+                           and market_type = 'ORDER_BOOK'
                            and status in ('PENDING', 'PARTIALLY_FILLED')
                            and quantity > filled_quantity
                         """
                 )
                 .param(accountId)
-                .query(Long.class)
-                .single();
-        return count == null ? 0L : count;
-    }
-
-    private long openLegacyOrderCount(String symbol) {
-        Long count = jdbcClient.sql(
-                        """
-                        select count(*)
-                          from stock_order
-                         where symbol = ?
-                           and market_type = 'ORDER_BOOK'
-                           and origin_type = 'LISTING_AUTO_LEGACY'
-                           and status in ('PENDING', 'PARTIALLY_FILLED')
-                           and quantity > filled_quantity
-                        """
-                )
                 .param(symbol)
-                .query(Long.class)
-                .single();
-        return count == null ? 0L : count;
-    }
-
-    private long dailyStateCount(long mandateId, LocalDate businessDate) {
-        Long count = jdbcClient.sql(
-                        """
-                        select count(*)
-                          from stock_liquidity_daily_state
-                         where mandate_id = ?
-                           and simulation_trade_date = ?
-                        """
-                )
-                .param(mandateId)
-                .param(businessDate)
                 .query(Long.class)
                 .single();
         return count == null ? 0L : count;
@@ -1351,6 +1174,12 @@ public class LiquidityProviderTransitionService {
         boolean pendingMarket() {
             return !enabled && "CLOSED".equals(marketStatus);
         }
+    }
+
+    private record LegacyLiquidity(
+            long accountId,
+            boolean enabled
+    ) {
     }
 
     private record SourceHolding(

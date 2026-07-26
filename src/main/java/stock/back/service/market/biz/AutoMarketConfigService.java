@@ -48,6 +48,23 @@ public class AutoMarketConfigService {
         if (request == null) {
             throw StockException.badRequest("Listing auto account update is required");
         }
+        Boolean migratedToLiquidityProvider = jdbcTemplate.queryForObject(
+                """
+                select exists(
+                    select 1
+                      from stock_liquidity_mandate
+                     where symbol = ?
+                )
+                """,
+                Boolean.class,
+                normalizedSymbol
+        );
+        if (Boolean.TRUE.equals(migratedToLiquidityProvider)) {
+            throw StockException.conflict(
+                    "Legacy listing liquidity is read-only after LP migration: "
+                            + normalizedSymbol
+            );
+        }
         StockListingAutoAccountConfig config = stockListingAutoAccountConfigRepository.findById(normalizedSymbol)
                 .orElseThrow(() -> StockException.notFound("Listing auto account not found: " + normalizedSymbol));
         String displayName = request.displayName() == null ? null : MarketTextNormalizer.text(request.displayName());

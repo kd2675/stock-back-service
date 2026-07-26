@@ -108,7 +108,7 @@ public class OrderBookInstrumentCommandService {
             market = "ORDERBOOK";
         }
         SimulationClockSnapshot clock = requirePausedPreOpen();
-        LocalDate activeBusinessDate = marketLedgerFreezeGuard.acquireMutationPermit(
+        LocalDate activeBusinessDate = marketLedgerFreezeGuard.acquirePreOpenMutationPermit(
                 "order-book instrument listing"
         );
         if (!activeBusinessDate.equals(clock.simulationDate())) {

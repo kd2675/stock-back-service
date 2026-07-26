@@ -298,6 +298,23 @@ class AutoMarketConfigServiceTest {
     }
 
     @Test
+    void updateListingAutoAccountConfig_migratedSymbol_rejectsLegacyMutation() {
+        when(jdbcTemplate.queryForObject(
+                org.mockito.ArgumentMatchers.contains("from stock_liquidity_mandate"),
+                org.mockito.ArgumentMatchers.eq(Boolean.class),
+                org.mockito.ArgumentMatchers.eq("ZQ001")
+        )).thenReturn(true);
+
+        assertThatThrownBy(() -> service.updateListingAutoAccountConfig(
+                "zq001",
+                listingRequest(ListingAutoPosition.SELL_ONLY, 20, 0L, 80L, 0L, 0L)
+        )).isInstanceOf(StockException.class)
+                .hasMessageContaining("read-only after LP migration");
+
+        verify(stockListingAutoAccountConfigRepository, never()).findById(any());
+    }
+
+    @Test
     void updateListingAutoAccountConfig_invalidOrderTtl_throwsBadRequest() {
         StockListingAutoAccountConfig config = defaultListingConfig();
         when(stockListingAutoAccountConfigRepository.findById("ZQ001")).thenReturn(Optional.of(config));
