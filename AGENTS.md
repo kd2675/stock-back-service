@@ -30,7 +30,18 @@
 - `GET /api/stock/v1/markets/auto-market/participants/symbol-configs?lifecycleScope=CURRENT|WITHDRAWN` (`ADMIN`, 저장된 종목별 전략)
 - `GET /api/stock/v1/markets/admin/investor-flow-summary` (`ADMIN`, 유저·자동 참여자·상장주관사 기준 현재 거래일 비동기 요약)
 - `GET /api/stock/v1/markets/admin/investor-flow-history` (`ADMIN`, 오늘은 비동기 요약, 과거 거래일은 권위 있는 full-market cycle의 역할 동결 스냅샷과 집계 상태를 반환)
+- `GET /api/stock/v1/markets/institution-portfolios` (`ADMIN`, 축소시장용 기관 계정·목표 비중·최근 shadow 결정 감사)
+- `POST /api/stock/v1/markets/institution-portfolios/scaled-defaults` (`ADMIN`, 일시정지 장전에서 4개 기관을 주문 없는 SHADOW로 생성)
+- `POST /api/stock/v1/markets/institution-portfolios/{portfolioId}/pilot` (`ADMIN`, 일시정지 장전에서 완료 SHADOW 20거래일·최근 실패 0건·깨끗한 원장을 검증하고 한 종목만 제한 실주문 PILOT으로 전환)
+- `POST /api/stock/v1/markets/institution-portfolios/{portfolioId}/suspend` (`ADMIN`, 실행 중에도 허용되는 비상 중단. 포트폴리오를 먼저 SUSPENDED로 고정한 뒤 대기 의도와 전용 계좌 미체결 주문을 취소하고 예약을 반환)
+- `GET /api/stock/v1/markets/liquidity-mandates` (`ADMIN`, 전용 LP 계약·계정 역할·자기체결 그룹·거래일 위험 상태 감사)
+- `POST /api/stock/v1/markets/liquidity-mandates/{symbol}/scaled-shadow` (`ADMIN`, 일시정지 장전에서 종목 전용 LP 계정·계약·시드 자산을 SHADOW로 준비)
+- `POST /api/stock/v1/markets/liquidity-mandates/{symbol}/activate` (`ADMIN`, 일시정지 장전에서 해당 종목 레거시 호가를 원자적으로 취소·중지하고 LP를 LIVE로 전환하며, 역할 분리형 신규 상장은 다음 장 개장 대상으로 활성화)
+- `GET /api/stock/v1/markets/underwriting-contracts` (`ADMIN`, 인수계정·최초 유통/잠금 배정원장·발행량 수량 대사)
+- `POST /api/stock/v1/markets/underwriting-contracts/{contractId}/scaled-supply/activate` (`ADMIN`, 일시정지 장전의 유한·수동 매도 전용 인수재고 공급 활성화)
+- `POST /api/stock/v1/markets/underwriting-contracts/{contractId}/scaled-supply/suspend` (`ADMIN`, 즉시 공급 중단·계약 주문 취소, 제출예산 비환급)
 - 현재 계좌 역할의 권위 소스는 `stock_account.participant_category`이며, 과거 자산·체결 역할은 장마감 스냅샷의 `participant_category`를 사용해 현재 역할 변경으로 재분류하지 않습니다.
+- 공개 사용자 랭킹은 `MANUAL_PARTICIPANT`, `AUTO_PARTICIPANT`만 포함합니다. 기관은 성과 정산 대상이지만 별도 기관 감사 화면으로 분리하고, LP·인수·보관 계정은 장마감 수량 대사에는 포함하되 성과 정산과 사용자 랭킹에서는 제외합니다.
 - `GET /api/stock/v1/markets/batch-jobs/eod/overview` (`ADMIN`)
 - `POST /api/stock/v1/markets/batch-jobs/eod/cycles/{cycleId}/retry` (`ADMIN`, `FAILED` 현재 phase만)
 - `/api/stock/v1/users/me`
@@ -64,7 +75,7 @@
 - `stock_order.market_type`은 현재가 체결용 `VIRTUAL_PRICE`와 주문장 체결용 `ORDER_BOOK`을 분리하는 핵심 계약입니다.
 - 주문장 API는 미체결/부분체결 LIMIT 주문만 가격대별로 집계합니다. 시장가 주문은 가격 레벨이 없으므로 호가에 넣지 않습니다.
 - 자동장 API는 `stock_auto_participant`, `stock_auto_market_config`, 자동 주문/체결 원장을 읽는 조회 API입니다. 주문 생성과 체결은 batch 서버 책임입니다.
-- 자동 참여자 탈퇴는 미체결 주문·예약을 해제하고 전용 예산을 만료한 뒤, 보유주식을 종목별 상장주관사에 반납하고 잔여 현금을 회수하는 원자적 정산입니다. 계좌 row는 과거 원장 연결을 위해 삭제하지 않고 `CLOSED`로 보존하며, 진행 중 기업행사 권리가 있으면 탈퇴를 거부합니다. 일반 관리 조회는 `CURRENT`, 탈퇴 감사 조회는 `WITHDRAWN` 생명주기 범위를 명시하며 두 범위의 캐시를 섞지 않습니다.
+- 자동 참여자 탈퇴는 미체결 주문·예약을 해제하고 전용 예산을 만료한 뒤, 보유주식을 비거래 `SYSTEM_CUSTODY` 계정으로 이전하고 잔여 현금을 회수하는 원자적 정산입니다. 계좌 row는 과거 원장 연결을 위해 삭제하지 않고 `CLOSED`로 보존하며, 진행 중 기업행사 권리가 있으면 탈퇴를 거부합니다. 일반 관리 조회는 `CURRENT`, 탈퇴 감사 조회는 `WITHDRAWN` 생명주기 범위를 명시하며 두 범위의 캐시를 섞지 않습니다.
 - `portfolio_snapshot`은 batch 정산 결과의 원장이며 사용자 화면에서는 최근 정산 기록/랭킹 근거로만 읽습니다.
 - MySQL business DDL의 단일 canonical source는 `src/main/resources/db/ddl/stock_all.sql`입니다.
 - 기능별 현재 구현과 다음 개발 순서는 `docs/market-simulation/00-overview.md`, 코드 파일별 책임은 `docs/market-simulation/13-code-ownership-map.md`, 기능별 변경 절차는 `docs/market-simulation/14-feature-change-playbooks.md`를 기준으로 확인합니다.

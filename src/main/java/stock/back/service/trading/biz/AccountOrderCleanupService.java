@@ -49,15 +49,33 @@ public class AccountOrderCleanupService {
 
     @Transactional(propagation = Propagation.MANDATORY)
     public void cancelOpenOrdersForDetach(StockAccount account) {
-        cancelOpenOrders(account.getId(), account, null);
+        cancelOpenOrders(account.getId(), account, null, null);
     }
 
     @Transactional(propagation = Propagation.MANDATORY)
     public void cancelOpenOrderBookOrders(StockAccount account) {
-        cancelOpenOrders(account.getId(), account, MarketType.ORDER_BOOK.name());
+        cancelOpenOrders(account.getId(), account, MarketType.ORDER_BOOK.name(), null);
     }
 
-    private void cancelOpenOrders(long accountId, StockAccount account, String marketType) {
+    @Transactional(propagation = Propagation.MANDATORY)
+    public void cancelOpenOrderBookOrders(StockAccount account, String symbol) {
+        if (symbol == null || symbol.isBlank()) {
+            throw new IllegalArgumentException("Order-book cleanup symbol is required");
+        }
+        cancelOpenOrders(
+                account.getId(),
+                account,
+                MarketType.ORDER_BOOK.name(),
+                symbol.trim().toUpperCase()
+        );
+    }
+
+    private void cancelOpenOrders(
+            long accountId,
+            StockAccount account,
+            String marketType,
+            String symbol
+    ) {
         List<String> openStatuses = List.of(OrderStatus.PENDING.name(), OrderStatus.PARTIALLY_FILLED.name());
         LocalDateTime cancelledAt = simulationClockService.currentMarketDateTime();
         for (String openStatus : openStatuses) {
@@ -67,6 +85,7 @@ public class AccountOrderCleanupService {
                         accountId,
                         openStatus,
                         marketType,
+                        symbol,
                         cursor
                 );
                 if (candidates.isEmpty()) {
@@ -94,9 +113,11 @@ public class AccountOrderCleanupService {
             long accountId,
             String openStatus,
             String marketType,
+            String symbol,
             OpenOrderCursor cursor
     ) {
         String marketFilter = marketType == null ? "" : "and market_type = :marketType";
+        String symbolFilter = symbol == null ? "" : "and symbol = :symbol";
         String cursorFilter = cursor == null
                 ? ""
                 : "and (created_at > :cursorCreatedAt or (created_at = :cursorCreatedAt and id > :cursorId))";
@@ -107,14 +128,18 @@ public class AccountOrderCleanupService {
                    %s
                    and status = :openStatus
                    %s
+                   %s
                  order by created_at asc, id asc
                  limit :chunkSize
-                """.formatted(marketFilter, cursorFilter))
+                """.formatted(marketFilter, symbolFilter, cursorFilter))
                 .param("accountId", accountId)
                 .param("openStatus", openStatus)
                 .param("chunkSize", ORDER_CLEANUP_CHUNK_SIZE);
         if (marketType != null) {
             statement = statement.param("marketType", marketType);
+        }
+        if (symbol != null) {
+            statement = statement.param("symbol", symbol);
         }
         if (cursor != null) {
             statement = statement

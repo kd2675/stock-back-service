@@ -2,6 +2,8 @@ package stock.back.service.trading.biz;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -13,6 +15,7 @@ import stock.back.service.database.entity.OrderStatus;
 import stock.back.service.database.entity.OrderType;
 import stock.back.service.database.entity.MarketType;
 import stock.back.service.database.entity.StockInstrument;
+import stock.back.service.database.entity.StockAccountParticipantCategory;
 import stock.back.service.database.entity.StockOrderBookInstrument;
 import stock.back.service.database.repository.StockAccountRepository;
 import stock.back.service.database.repository.StockHoldingRepository;
@@ -144,6 +147,61 @@ class TradingServiceTest {
 
         assertThat(account.getCashBalance()).isEqualByComparingTo(new BigDecimal("9860000.00"));
         assertThat(order.getStatus()).isEqualTo(OrderStatus.PENDING);
+    }
+
+    @ParameterizedTest
+    @EnumSource(
+            value = StockAccountParticipantCategory.class,
+            names = {
+                    "AUTO_PARTICIPANT",
+                    "LISTING_UNDERWRITER",
+                    "INSTITUTIONAL_INVESTOR",
+                    "LIQUIDITY_PROVIDER",
+                    "ISSUE_UNDERWRITER",
+                    "SYSTEM_CUSTODY"
+            }
+    )
+    void placeOrder_roleOwnedAccount_rejectsUserOrderApi(
+            StockAccountParticipantCategory participantCategory
+    ) {
+        String userKey = "stock-role-" + participantCategory.name().toLowerCase();
+        jdbcTemplate.update(
+                """
+                merge into stock_account(
+                    user_key, status, participant_category, self_trade_group_id,
+                    cash_balance, created_at, updated_at
+                )
+                key(user_key)
+                values (
+                    ?, 'ACTIVE', ?, ?,
+                    0.00, ?, ?
+                )
+                """,
+                userKey,
+                participantCategory.name(),
+                "ROLE:" + participantCategory.name(),
+                LocalDateTime.now(),
+                LocalDateTime.now()
+        );
+
+        assertThatThrownBy(() -> tradingService.placeOrder(
+                userKey,
+                new OrderRequest("005930", OrderSide.BUY, OrderType.LIMIT, new BigDecimal("70000"), 1)
+        ))
+                .isInstanceOf(StockException.class)
+                .hasMessageContaining(participantCategory.name());
+
+        Long orderCount = jdbcTemplate.queryForObject(
+                """
+                select count(*)
+                  from stock_order order_row
+                  join stock_account account on account.id = order_row.account_id
+                 where account.user_key = ?
+                """,
+                Long.class,
+                userKey
+        );
+        assertThat(orderCount).isZero();
     }
 
     @Test

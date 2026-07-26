@@ -75,6 +75,27 @@ class AccountOrderCleanupServiceTest {
     }
 
     @Test
+    void cancelOpenOrderBookOrders_symbolScope_keepsOtherSymbolOrdersOpen() {
+        JdbcTemplate jdbcTemplate = createJdbcTemplate();
+        StockHoldingRepository stockHoldingRepository = mock(StockHoldingRepository.class);
+        AccountOrderCleanupService cleanupService = createCleanupService(stockHoldingRepository, jdbcTemplate);
+        StockAccount account = StockAccount.open("cleanup-symbol-user");
+        ReflectionTestUtils.setField(account, "id", 10L);
+        account.depositCash(new BigDecimal("1000.00"));
+        account.reserveCash(new BigDecimal("300.00"));
+        insertOrder(jdbcTemplate, 10L, "ORDER_BOOK", "BUY", "PENDING", "STOCK001", 1L, 0L, "100.00", 1L);
+        insertOrder(jdbcTemplate, 10L, "ORDER_BOOK", "BUY", "PENDING", "STOCK002", 1L, 0L, "200.00", 2L);
+
+        cleanupService.cancelOpenOrderBookOrders(account, "stock001");
+
+        assertThat(account.getCashBalance()).isEqualByComparingTo(new BigDecimal("800.00"));
+        assertThat(count(jdbcTemplate, "select count(*) from stock_order where id = 1 and status = 'CANCELLED'"))
+                .isEqualTo(1L);
+        assertThat(count(jdbcTemplate, "select count(*) from stock_order where id = 2 and status = 'PENDING'"))
+                .isEqualTo(1L);
+    }
+
+    @Test
     void cancelOpenOrderBookOrders_lockedAccountPath_cancelsOrdersBeforeRefundingCash() {
         JdbcTemplate jdbcTemplate = createJdbcTemplate();
         StockHoldingRepository stockHoldingRepository = mock(StockHoldingRepository.class);

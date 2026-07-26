@@ -35,6 +35,13 @@ public class StockOrder {
     @Column(name = "account_id", nullable = false)
     private Long accountId;
 
+    @Enumerated(EnumType.STRING)
+    @Column(name = "origin_type", length = 40)
+    private StockOrderOriginType originType;
+
+    @Column(name = "self_trade_group_id", length = 80)
+    private String selfTradeGroupId;
+
     @Column(name = "symbol", nullable = false, length = 20)
     private String symbol;
 
@@ -104,9 +111,47 @@ public class StockOrder {
             BigDecimal reservedCash,
             LocalDateTime createdAt
     ) {
+        return pending(
+                clientOrderId,
+                accountId,
+                symbol,
+                marketType,
+                side,
+                orderType,
+                limitPrice,
+                quantity,
+                reservedCash,
+                StockOrderOriginType.MANUAL_PARTICIPANT,
+                defaultSelfTradeGroupId(accountId),
+                createdAt
+        );
+    }
+
+    public static StockOrder pending(
+            String clientOrderId,
+            Long accountId,
+            String symbol,
+            MarketType marketType,
+            OrderSide side,
+            OrderType orderType,
+            BigDecimal limitPrice,
+            long quantity,
+            BigDecimal reservedCash,
+            StockOrderOriginType originType,
+            String selfTradeGroupId,
+            LocalDateTime createdAt
+    ) {
+        if (originType == null) {
+            throw new IllegalArgumentException("Order origin type is required");
+        }
+        if (selfTradeGroupId == null || selfTradeGroupId.isBlank()) {
+            throw new IllegalArgumentException("Self-trade group id is required");
+        }
         StockOrder order = new StockOrder();
         order.clientOrderId = clientOrderId;
         order.accountId = accountId;
+        order.originType = originType;
+        order.selfTradeGroupId = selfTradeGroupId.trim();
         order.symbol = symbol;
         order.marketType = marketType == null ? MarketType.VIRTUAL_PRICE : marketType;
         order.side = side;
@@ -119,6 +164,13 @@ public class StockOrder {
         order.createdAt = createdAt == null ? LocalDateTime.now() : createdAt;
         order.updatedAt = order.createdAt;
         return order;
+    }
+
+    private static String defaultSelfTradeGroupId(Long accountId) {
+        if (accountId == null) {
+            throw new IllegalArgumentException("Account id is required");
+        }
+        return "ACCOUNT:" + accountId;
     }
 
     public void cancel() {

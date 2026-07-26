@@ -204,6 +204,14 @@ class StockMysqlDdlContractTest {
             "TRUNCATE TABLE stock_auto_participant_withdrawal;",
             "TRUNCATE TABLE stock_auto_participant_order_budget;",
             "TRUNCATE TABLE stock_auto_participant_funding_budget;",
+            "TRUNCATE TABLE stock_underwriting_daily_supply_state;",
+            "TRUNCATE TABLE stock_liquidity_daily_state;",
+            "TRUNCATE TABLE stock_liquidity_mandate;",
+            "TRUNCATE TABLE stock_institution_decision_item;",
+            "TRUNCATE TABLE stock_institution_decision_run;",
+            "TRUNCATE TABLE stock_institution_daily_budget;",
+            "TRUNCATE TABLE stock_institution_symbol_mandate;",
+            "TRUNCATE TABLE stock_institution_portfolio;",
             "TRUNCATE TABLE stock_auto_participant_position_state;",
             "TRUNCATE TABLE stock_auto_participant_performance_state;",
             "TRUNCATE TABLE stock_price_tick;",
@@ -238,6 +246,11 @@ class StockMysqlDdlContractTest {
             "TRUNCATE TABLE stock_auto_participant_cash_flow_run;",
             "TRUNCATE TABLE stock_auto_participant_order_budget;",
             "TRUNCATE TABLE stock_auto_participant_funding_budget;",
+            "TRUNCATE TABLE stock_underwriting_daily_supply_state;",
+            "TRUNCATE TABLE stock_liquidity_daily_state;",
+            "TRUNCATE TABLE stock_institution_decision_item;",
+            "TRUNCATE TABLE stock_institution_decision_run;",
+            "TRUNCATE TABLE stock_institution_daily_budget;",
             "TRUNCATE TABLE stock_auto_participant_position_state;",
             "TRUNCATE TABLE stock_auto_participant_performance_state;",
             "TRUNCATE TABLE stock_holding_snapshot;",
@@ -260,7 +273,8 @@ class StockMysqlDdlContractTest {
             "TRUNCATE TABLE stock_order;",
             "TRUNCATE TABLE stock_auto_participant_order_schedule;",
             "TRUNCATE TABLE stock_price_tick;",
-            "TRUNCATE TABLE stock_corporate_action;",
+            "DELETE FROM stock_corporate_action",
+            "WHERE action_type <> 'INITIAL_ISSUE';",
             "INSERT INTO stock_simulation_clock(",
             "ON DUPLICATE KEY UPDATE",
             "accumulated_real_seconds = 0",
@@ -273,13 +287,23 @@ class StockMysqlDdlContractTest {
             "current_price = VALUES(current_price)",
             "INSERT INTO stock_holding(account_id, symbol, quantity, reserved_quantity, average_price, updated_at)",
             "FROM stock_listing_auto_account_config c",
-            "JOIN stock_order_book_market_config m",
-            "m.market_status = 'OPEN'",
             "INSERT INTO stock_market_business_state(",
             "INSERT INTO stock_market_session_fence(",
-            "JOIN stock_price p",
             "i.tradable_shares",
-            "c.position_side = 'SELL_ONLY'"
+            "trading eligibility must never decide security ownership",
+            "JOIN stock_institution_portfolio portfolio",
+            "JSON_EXTRACT(policy.config_json, '$.initialCash')",
+            "JOIN stock_liquidity_transition transition",
+            "account.cash_balance = transition.seed_cash_amount",
+            "transition.stage IN ('SHADOW_READY', 'LIVE_ACTIVE', 'SUSPENDED')",
+            "CREATE TEMPORARY TABLE tmp_stock_lp_seed_replay",
+            "CREATE TEMPORARY TABLE tmp_stock_lp_seed_replay_guard",
+            "CHECK (violation_count = 0)",
+            "allocation.allocation_reason = 'LIQUIDITY_SEED_TRANSFER'",
+            "allocation.idempotency_key = CONCAT('LP-SEED:', transition.symbol)",
+            "replay.source_quantity_before - replay.seed_inventory_quantity",
+            "CREATE TEMPORARY TABLE tmp_stock_reset_share_guard",
+            "COALESCE(holding_sum.holding_quantity, 0) <> instrument.issued_shares"
     );
 
     private static final List<String> CLEAR_RUNTIME_HISTORY_KEEP_PARTICIPANTS_FORBIDDEN_TRUNCATES = List.of(
@@ -712,9 +736,13 @@ class StockMysqlDdlContractTest {
                 "CREATE TABLE IF NOT EXISTS stock_auto_participant_share_return",
                 "uk_stock_auto_participant_withdrawal_user",
                 "idx_stock_auto_share_return_underwriter",
+                "idx_stock_auto_share_return_receiver",
                 "returned_cash_amount",
                 "returned_share_quantity",
-                "source_average_price"
+                "source_average_price",
+                "receiver_account_id",
+                "receiver_role",
+                "transfer_reason"
         );
         assertThat(canonicalDdl).contains(
                 "CREATE TABLE IF NOT EXISTS stock_auto_participant_withdrawal",
@@ -728,6 +756,237 @@ class StockMysqlDdlContractTest {
                     .isEqualTo(normalizeSqlBlock(extractCreateTableBlock(canonicalDdl, tableName)));
         }
         assertThat(alterDdl).doesNotContain("ALTER TABLE", "UPDATE ", "DELETE FROM");
+    }
+
+    @Test
+    void systemCustodyWithdrawalAlter_matchesBatchCopyAndPreservesLegacyReceiver() throws IOException {
+        String backDdl = Files.readString(
+                Path.of("src/main/resources/db/ddl/stock_system_custody_withdrawal_alter.sql"),
+                StandardCharsets.UTF_8
+        );
+        String batchDdl = Files.readString(
+                Path.of("../stock-batch-service/src/main/resources/db/ddl/stock_system_custody_withdrawal_alter.sql"),
+                StandardCharsets.UTF_8
+        );
+
+        assertThat(normalizeSqlBlock(backDdl)).isEqualTo(normalizeSqlBlock(batchDdl));
+        assertThat(firstExecutableSqlLine(backDdl)).isEqualTo("USE STOCK_SERVICE;");
+        assertThat(backDdl).contains(
+                "receiver_account_id",
+                "receiver_role",
+                "transfer_reason",
+                "LEGACY_UNDERWRITER_RETURN",
+                "AUTO_PARTICIPANT_WITHDRAWAL_CUSTODY",
+                "stock-system-custody",
+                "SYSTEM_CUSTODY:DEFAULT",
+                "idx_stock_auto_share_return_receiver"
+        );
+        assertThat(backDdl).doesNotContain(
+                "DELETE FROM stock_auto_participant_share_return",
+                "TRUNCATE TABLE stock_auto_participant_share_return"
+        );
+    }
+
+    @Test
+    void institutionShadowEngineAlter_matchesCanonicalAndBatchCopies() throws IOException {
+        String backDdl = Files.readString(
+                Path.of("src/main/resources/db/ddl/stock_institution_shadow_engine_alter.sql"),
+                StandardCharsets.UTF_8
+        );
+        String batchDdl = Files.readString(
+                Path.of("../stock-batch-service/src/main/resources/db/ddl/stock_institution_shadow_engine_alter.sql"),
+                StandardCharsets.UTF_8
+        );
+        String canonicalDdl = Files.readString(
+                Path.of("src/main/resources/db/ddl/stock_all.sql"),
+                StandardCharsets.UTF_8
+        );
+
+        assertThat(firstExecutableSqlLine(backDdl)).isEqualTo("USE STOCK_SERVICE;");
+        assertThat(normalizeSqlBlock(backDdl)).isEqualTo(normalizeSqlBlock(batchDdl));
+        for (String tableName : List.of(
+                "stock_institution_portfolio",
+                "stock_institution_symbol_mandate",
+                "stock_institution_decision_run",
+                "stock_institution_decision_item",
+                "stock_institution_daily_budget"
+        )) {
+            assertThat(normalizeSqlBlock(extractCreateTableBlock(backDdl, tableName)))
+                    .as(tableName)
+                    .isEqualTo(normalizeSqlBlock(extractCreateTableBlock(canonicalDdl, tableName)));
+        }
+        assertThat(backDdl).contains(
+                "execution_mode VARCHAR(20) NOT NULL DEFAULT 'SHADOW'",
+                "primary_regime_weight",
+                "reference_daily_volume",
+                "remaining_daily_quantity_budget",
+                "planned_buy_quantity",
+                "uk_stock_institution_decision_slot"
+        );
+        assertThat(backDdl).doesNotContain(
+                "INSERT INTO stock_order",
+                "UPDATE stock_order",
+                "DELETE FROM stock_order"
+        );
+    }
+
+    @Test
+    void liquidityProviderEngineAlter_matchesCanonicalAndBatchCopies() throws IOException {
+        String backDdl = Files.readString(
+                Path.of("src/main/resources/db/ddl/stock_liquidity_provider_engine_alter.sql"),
+                StandardCharsets.UTF_8
+        );
+        String batchDdl = Files.readString(
+                Path.of("../stock-batch-service/src/main/resources/db/ddl/stock_liquidity_provider_engine_alter.sql"),
+                StandardCharsets.UTF_8
+        );
+        String canonicalDdl = Files.readString(
+                Path.of("src/main/resources/db/ddl/stock_all.sql"),
+                StandardCharsets.UTF_8
+        );
+
+        assertThat(firstExecutableSqlLine(backDdl)).isEqualTo("USE STOCK_SERVICE;");
+        assertThat(normalizeSqlBlock(backDdl)).isEqualTo(normalizeSqlBlock(batchDdl));
+        for (String tableName : List.of(
+                "stock_liquidity_mandate",
+                "stock_liquidity_daily_state"
+        )) {
+            assertThat(normalizeSqlBlock(extractCreateTableBlock(backDdl, tableName)))
+                    .as(tableName)
+                    .isEqualTo(normalizeSqlBlock(extractCreateTableBlock(canonicalDdl, tableName)));
+        }
+        assertThat(backDdl).contains(
+                "execution_mode VARCHAR(20) NOT NULL DEFAULT 'SHADOW'",
+                "passive_only BOOLEAN NOT NULL DEFAULT TRUE",
+                "reference_daily_volume",
+                "daily_execution_participation_rate",
+                "minimum_quote_lifetime_seconds",
+                "submitted_buy_amount",
+                "executed_sell_amount",
+                "uk_stock_liquidity_mandate_symbol"
+        );
+        assertThat(backDdl).doesNotContain(
+                "INSERT INTO stock_order",
+                "UPDATE stock_order",
+                "DELETE FROM stock_order"
+        );
+    }
+
+    @Test
+    void liquidityTransitionAlter_matchesCanonicalAndBatchCopiesWithoutMutatingHotLedgers()
+            throws IOException {
+        String backDdl = Files.readString(
+                Path.of("src/main/resources/db/ddl/stock_liquidity_transition_alter.sql"),
+                StandardCharsets.UTF_8
+        );
+        String batchDdl = Files.readString(
+                Path.of("../stock-batch-service/src/main/resources/db/ddl/stock_liquidity_transition_alter.sql"),
+                StandardCharsets.UTF_8
+        );
+        String canonicalDdl = Files.readString(
+                Path.of("src/main/resources/db/ddl/stock_all.sql"),
+                StandardCharsets.UTF_8
+        );
+
+        assertThat(firstExecutableSqlLine(backDdl)).isEqualTo("USE STOCK_SERVICE;");
+        assertThat(normalizeSqlBlock(backDdl)).isEqualTo(normalizeSqlBlock(batchDdl));
+        assertThat(normalizeSqlBlock(
+                extractCreateTableBlock(backDdl, "stock_liquidity_transition")
+        )).isEqualTo(normalizeSqlBlock(
+                extractCreateTableBlock(canonicalDdl, "stock_liquidity_transition")
+        ));
+        assertThat(backDdl).contains(
+                "DEFAULT_LIQUIDITY_PROVIDER",
+                "LIQUIDITY_PROVIDER:DEFAULT",
+                "LIQUIDITY_SEED_TRANSFER",
+                "uk_stock_liquidity_transition_symbol",
+                "chk_stock_liquidity_transition_activation"
+        ).doesNotContain(
+                "UPDATE stock_holding",
+                "DELETE FROM stock_holding",
+                "UPDATE stock_order",
+                "DELETE FROM stock_order"
+        );
+    }
+
+    @Test
+    void issuanceUnderwritingAlter_matchesCanonicalAndBatchCopiesWithoutRewritingExistingHoldings() throws IOException {
+        String backDdl = Files.readString(
+                Path.of("src/main/resources/db/ddl/stock_issuance_underwriting_alter.sql"),
+                StandardCharsets.UTF_8
+        );
+        String batchDdl = Files.readString(
+                Path.of("../stock-batch-service/src/main/resources/db/ddl/stock_issuance_underwriting_alter.sql"),
+                StandardCharsets.UTF_8
+        );
+        String canonicalDdl = Files.readString(
+                Path.of("src/main/resources/db/ddl/stock_all.sql"),
+                StandardCharsets.UTF_8
+        );
+
+        assertThat(firstExecutableSqlLine(backDdl)).isEqualTo("USE STOCK_SERVICE;");
+        assertThat(normalizeSqlBlock(backDdl)).isEqualTo(normalizeSqlBlock(batchDdl));
+        for (String tableName : List.of(
+                "stock_underwriting_contract",
+                "stock_security_allocation_ledger"
+        )) {
+            assertThat(normalizeSqlBlock(extractCreateTableBlock(backDdl, tableName)))
+                    .as(tableName)
+                    .isEqualTo(normalizeSqlBlock(extractCreateTableBlock(canonicalDdl, tableName)));
+        }
+        assertThat(backDdl).contains(
+                "DEFAULT_ISSUE_UNDERWRITER",
+                "ISSUE_UNDERWRITER:DEFAULT",
+                "tradable_allocation_quantity + locked_allocation_quantity = total_issue_quantity",
+                "external_allocation_quantity + underwritten_quantity = tradable_allocation_quantity",
+                "uk_stock_security_allocation_idempotency",
+                "tradability_status VARCHAR(20) NOT NULL"
+        );
+        assertThat(backDdl).doesNotContain(
+                "UPDATE stock_holding",
+                "DELETE FROM stock_holding",
+                "UPDATE stock_order",
+                "DELETE FROM stock_order"
+        );
+    }
+
+    @Test
+    void underwriterScaledSupplyAlter_matchesCanonicalAndBatchCopiesWithoutHotLedgerMutation()
+            throws IOException {
+        String backDdl = Files.readString(
+                Path.of("src/main/resources/db/ddl/stock_underwriter_scaled_supply_alter.sql"),
+                StandardCharsets.UTF_8
+        );
+        String batchDdl = Files.readString(
+                Path.of("../stock-batch-service/src/main/resources/db/ddl/stock_underwriter_scaled_supply_alter.sql"),
+                StandardCharsets.UTF_8
+        );
+        String canonicalDdl = Files.readString(
+                Path.of("src/main/resources/db/ddl/stock_all.sql"),
+                StandardCharsets.UTF_8
+        );
+
+        assertThat(firstExecutableSqlLine(backDdl)).isEqualTo("USE STOCK_SERVICE;");
+        assertThat(normalizeSqlBlock(backDdl)).isEqualTo(normalizeSqlBlock(batchDdl));
+        assertThat(normalizeSqlBlock(extractCreateTableBlock(
+                backDdl,
+                "stock_underwriting_daily_supply_state"
+        ))).isEqualTo(normalizeSqlBlock(extractCreateTableBlock(
+                canonicalDdl,
+                "stock_underwriting_daily_supply_state"
+        )));
+        assertThat(backDdl).contains(
+                "submitted_quantity <= submission_quantity_limit",
+                "submitted_amount <= submission_amount_limit",
+                "idx_stock_underwriting_supply_contract",
+                "idx_stock_underwriting_supply_status"
+        ).doesNotContain(
+                "INSERT INTO stock_order",
+                "UPDATE stock_order",
+                "DELETE FROM stock_order",
+                "UPDATE stock_holding",
+                "DELETE FROM stock_holding"
+        );
     }
 
     @Test
@@ -1427,6 +1686,11 @@ class StockMysqlDdlContractTest {
         assertThat(firstExecutableSqlLine(maintenanceSql)).isEqualTo("USE STOCK_SERVICE;");
         assertThat(maintenanceSql).contains(CLEAR_RUNTIME_HISTORY_KEEP_PARTICIPANTS_REQUIRED_MARKERS.toArray(String[]::new));
         assertThat(maintenanceSql).doesNotContain(CLEAR_RUNTIME_HISTORY_KEEP_PARTICIPANTS_FORBIDDEN_TRUNCATES.toArray(String[]::new));
+        assertThat(maintenanceSql).doesNotContain(
+                "m.market_status = 'OPEN'",
+                "c.position_side = 'SELL_ONLY'",
+                "source_holding.quantity - transition.seed_inventory_quantity"
+        );
     }
 
     @Test

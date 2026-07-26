@@ -33,12 +33,20 @@ class AdminFlowQueryServiceTest {
         var summary = breakdown.categories().getFirst().summary();
 
         assertThat(breakdown.categories()).extracting(category -> category.participantCategory().name())
-                .containsExactly("MANUAL_PARTICIPANT", "AUTO_PARTICIPANT", "LISTING_UNDERWRITER");
+                .containsExactly(
+                        "MANUAL_PARTICIPANT",
+                        "AUTO_PARTICIPANT",
+                        "INSTITUTIONAL_INVESTOR",
+                        "LIQUIDITY_PROVIDER",
+                        "ISSUE_UNDERWRITER",
+                        "LISTING_UNDERWRITER",
+                        "SYSTEM_CUSTODY"
+                );
         assertThat(breakdown.total().activeAccountCount()).isEqualTo(3L);
         assertThat(breakdown.total().totalAsset()).isEqualByComparingTo(new BigDecimal("2083328.00"));
         assertThat(breakdown.categories().get(1).summary().activeAccountCount()).isZero();
         assertThat(breakdown.categories().get(1).summary().totalAsset()).isZero();
-        assertThat(breakdown.categories().get(2).summary().activeAccountCount()).isEqualTo(1L);
+        assertThat(breakdown.categories().get(5).summary().activeAccountCount()).isEqualTo(1L);
         assertThat(summary.activeAccountCount()).isEqualTo(2L);
         assertThat(summary.totalCashBalance()).isEqualByComparingTo(new BigDecimal("2880.00"));
         assertThat(summary.totalReservedBuyCash()).isEqualByComparingTo(new BigDecimal("270.00"));
@@ -378,7 +386,11 @@ class AdminFlowQueryServiceTest {
                 .containsExactly(
                         org.assertj.core.groups.Tuple.tuple("MANUAL_PARTICIPANT", 100L, 20L, 80L, 120L),
                         org.assertj.core.groups.Tuple.tuple("AUTO_PARTICIPANT", 30L, 60L, -30L, 90L),
-                        org.assertj.core.groups.Tuple.tuple("LISTING_UNDERWRITER", 10L, 40L, -30L, 50L)
+                        org.assertj.core.groups.Tuple.tuple("INSTITUTIONAL_INVESTOR", 0L, 0L, 0L, 0L),
+                        org.assertj.core.groups.Tuple.tuple("LIQUIDITY_PROVIDER", 0L, 0L, 0L, 0L),
+                        org.assertj.core.groups.Tuple.tuple("ISSUE_UNDERWRITER", 0L, 0L, 0L, 0L),
+                        org.assertj.core.groups.Tuple.tuple("LISTING_UNDERWRITER", 10L, 40L, -30L, 50L),
+                        org.assertj.core.groups.Tuple.tuple("SYSTEM_CUSTODY", 0L, 0L, 0L, 0L)
                 );
         assertThat(investorFlow.categories().getFirst().buyShareRate()).isEqualByComparingTo("71.4286");
         assertThat(investorFlow.categories().getFirst().executionShareRate()).isEqualByComparingTo("46.1538");
@@ -399,7 +411,11 @@ class AdminFlowQueryServiceTest {
                 .containsExactly(
                         org.assertj.core.groups.Tuple.tuple("MANUAL_PARTICIPANT", new BigDecimal("0.0000")),
                         org.assertj.core.groups.Tuple.tuple("AUTO_PARTICIPANT", new BigDecimal("0.0000")),
-                        org.assertj.core.groups.Tuple.tuple("LISTING_UNDERWRITER", new BigDecimal("0.0000"))
+                        org.assertj.core.groups.Tuple.tuple("INSTITUTIONAL_INVESTOR", new BigDecimal("0.0000")),
+                        org.assertj.core.groups.Tuple.tuple("LIQUIDITY_PROVIDER", new BigDecimal("0.0000")),
+                        org.assertj.core.groups.Tuple.tuple("ISSUE_UNDERWRITER", new BigDecimal("0.0000")),
+                        org.assertj.core.groups.Tuple.tuple("LISTING_UNDERWRITER", new BigDecimal("0.0000")),
+                        org.assertj.core.groups.Tuple.tuple("SYSTEM_CUSTODY", new BigDecimal("0.0000"))
                 );
     }
 
@@ -459,7 +475,11 @@ class AdminFlowQueryServiceTest {
                 .containsExactly(
                         org.assertj.core.groups.Tuple.tuple("MANUAL_PARTICIPANT", 0L),
                         org.assertj.core.groups.Tuple.tuple("AUTO_PARTICIPANT", -20L),
-                        org.assertj.core.groups.Tuple.tuple("LISTING_UNDERWRITER", 20L)
+                        org.assertj.core.groups.Tuple.tuple("INSTITUTIONAL_INVESTOR", 0L),
+                        org.assertj.core.groups.Tuple.tuple("LIQUIDITY_PROVIDER", 0L),
+                        org.assertj.core.groups.Tuple.tuple("ISSUE_UNDERWRITER", 0L),
+                        org.assertj.core.groups.Tuple.tuple("LISTING_UNDERWRITER", 20L),
+                        org.assertj.core.groups.Tuple.tuple("SYSTEM_CUSTODY", 0L)
                 );
         var closedFlow = history.dailyFlows().get(1);
         assertThat(closedFlow.sourceStatus()).isEqualTo(AdminInvestorFlowSourceStatus.CLOSED_SNAPSHOT);

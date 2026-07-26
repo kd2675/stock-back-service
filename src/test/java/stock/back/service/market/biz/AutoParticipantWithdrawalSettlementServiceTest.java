@@ -43,7 +43,7 @@ class AutoParticipantWithdrawalSettlementServiceTest {
     private TransactionTemplate transactionTemplate;
     private AutoParticipantWithdrawalSettlementService service;
     private StockAccount participantAccount;
-    private StockAccount underwriterAccount;
+    private StockAccount custodyAccount;
 
     @BeforeEach
     void setUp() {
@@ -74,31 +74,30 @@ class AutoParticipantWithdrawalSettlementServiceTest {
                 StockAccountParticipantCategory.AUTO_PARTICIPANT,
                 new BigDecimal("5000000.00")
         );
-        underwriterAccount = account(
+        custodyAccount = account(
                 201L,
-                "listing-auto-demo001",
-                StockAccountParticipantCategory.LISTING_UNDERWRITER,
+                "stock-system-custody",
+                StockAccountParticipantCategory.SYSTEM_CUSTODY,
                 BigDecimal.ZERO
         );
+        custodyAccount.assignSelfTradeGroupId("SYSTEM_CUSTODY:DEFAULT", SETTLED_AT);
         when(stockAccountRepository.findByUserKey("stock-auto-withdraw"))
                 .thenReturn(Optional.of(participantAccount));
         when(stockAccountRepository.findAllByIdInForUpdate(any()))
                 .thenAnswer(invocation -> lockedAccounts(invocation.getArgument(0)));
 
         insertAccount(participantAccount);
-        insertAccount(underwriterAccount);
+        insertAccount(custodyAccount);
+        insertSystemCustodyMapping();
     }
 
     @Test
     void settle_assetsExist_returnsSharesWithdrawsCashAndClosesAccount() {
         jdbcTemplate.update(
-                "insert into stock_listing_auto_account_config(symbol, user_key) values ('DEMO001', 'listing-auto-demo001')"
-        );
-        jdbcTemplate.update(
                 """
                 insert into stock_holding(account_id, symbol, quantity, reserved_quantity, average_price, updated_at)
                 values (101, 'DEMO001', 10, 0, 100.00, current_timestamp),
-                       (201, 'DEMO001', 5, 2, 200.00, current_timestamp)
+                       (201, 'DEMO001', 5, 0, 200.00, current_timestamp)
                 """
         );
 
@@ -124,6 +123,16 @@ class AutoParticipantWithdrawalSettlementServiceTest {
         )).isEqualByComparingTo("133.33");
         assertThat(queryLong("select count(*) from stock_auto_participant_withdrawal")).isEqualTo(1L);
         assertThat(queryLong("select count(*) from stock_auto_participant_share_return")).isEqualTo(1L);
+        assertThat(jdbcTemplate.queryForMap(
+                """
+                select receiver_account_id, receiver_role, transfer_reason
+                  from stock_auto_participant_share_return
+                 where withdrawal_id = 1
+                   and symbol = 'DEMO001'
+                """
+        )).containsEntry("RECEIVER_ACCOUNT_ID", 201L)
+                .containsEntry("RECEIVER_ROLE", "SYSTEM_CUSTODY")
+                .containsEntry("TRANSFER_REASON", "AUTO_PARTICIPANT_WITHDRAWAL_CUSTODY");
 
         verify(strategyTransitionService).retireAllOpenOrdersAndFundingBudgets(participantAccount, SETTLED_AT);
         ArgumentCaptor<StockAccountCashFlow> cashFlowCaptor = ArgumentCaptor.forClass(StockAccountCashFlow.class);
@@ -134,7 +143,32 @@ class AutoParticipantWithdrawalSettlementServiceTest {
     }
 
     @Test
-    void settle_missingListingUnderwriter_rollsBackWithoutChangingAssets() {
+    void settle_withoutListingUnderwriter_transfersSharesToSystemCustody() {
+        jdbcTemplate.update(
+                """
+                insert into stock_holding(account_id, symbol, quantity, reserved_quantity, average_price, updated_at)
+                values (101, 'DEMO404', 10, 0, 100.00, current_timestamp)
+                """
+        );
+
+        transactionTemplate.executeWithoutResult(status ->
+                service.settle("stock-auto-withdraw", "stock-admin", SETTLED_AT)
+        );
+
+        assertThat(participantAccount.getStatus()).isEqualTo(StockAccountStatus.CLOSED);
+        assertThat(participantAccount.getCashBalance()).isEqualByComparingTo(BigDecimal.ZERO);
+        assertThat(queryLong("select quantity from stock_holding where account_id = 101 and symbol = 'DEMO404'"))
+                .isZero();
+        assertThat(queryLong("select quantity from stock_holding where account_id = 201 and symbol = 'DEMO404'"))
+                .isEqualTo(10L);
+        assertThat(queryLong("select count(*) from stock_auto_participant_withdrawal")).isEqualTo(1L);
+        verify(strategyTransitionService).retireAllOpenOrdersAndFundingBudgets(participantAccount, SETTLED_AT);
+        verify(stockAccountCashFlowRepository).save(any());
+    }
+
+    @Test
+    void settle_missingSystemCustodyMapping_rollsBackWithoutChangingAssets() {
+        jdbcTemplate.update("delete from stock_market_participant_account");
         jdbcTemplate.update(
                 """
                 insert into stock_holding(account_id, symbol, quantity, reserved_quantity, average_price, updated_at)
@@ -146,7 +180,7 @@ class AutoParticipantWithdrawalSettlementServiceTest {
                 service.settle("stock-auto-withdraw", "stock-admin", SETTLED_AT)
         ))
                 .isInstanceOf(StockException.class)
-                .hasMessageContaining("Listing-underwriter account is missing");
+                .hasMessageContaining("SYSTEM_CUSTODY");
 
         assertThat(participantAccount.getStatus()).isEqualTo(StockAccountStatus.ACTIVE);
         assertThat(participantAccount.getCashBalance()).isEqualByComparingTo("5000000.00");
@@ -155,6 +189,77 @@ class AutoParticipantWithdrawalSettlementServiceTest {
         assertThat(queryLong("select count(*) from stock_auto_participant_withdrawal")).isZero();
         verify(strategyTransitionService, never()).retireAllOpenOrdersAndFundingBudgets(any(), any());
         verify(stockAccountCashFlowRepository, never()).save(any());
+    }
+
+    @Test
+    void settle_futureSystemCustodyMapping_rejectsBeforeOrderCleanup() {
+        jdbcTemplate.update(
+                """
+                update stock_market_participant_account
+                   set effective_from = date '2027-01-23'
+                 where account_id = 201
+                """
+        );
+        jdbcTemplate.update(
+                """
+                insert into stock_holding(account_id, symbol, quantity, reserved_quantity, average_price, updated_at)
+                values (101, 'DEMO404', 10, 0, 100.00, current_timestamp)
+                """
+        );
+
+        assertThatThrownBy(() -> transactionTemplate.executeWithoutResult(status ->
+                service.settle("stock-auto-withdraw", "stock-admin", SETTLED_AT)
+        ))
+                .isInstanceOf(StockException.class)
+                .hasMessageContaining("SYSTEM_CUSTODY");
+
+        verify(strategyTransitionService, never()).retireAllOpenOrdersAndFundingBudgets(any(), any());
+        assertThat(participantAccount.getStatus()).isEqualTo(StockAccountStatus.ACTIVE);
+    }
+
+    @Test
+    void settle_systemCustodyHasReservedHolding_rejectsBeforeOrderCleanup() {
+        jdbcTemplate.update(
+                """
+                insert into stock_holding(account_id, symbol, quantity, reserved_quantity, average_price, updated_at)
+                values (101, 'DEMO001', 10, 0, 100.00, current_timestamp),
+                       (201, 'DEMO001', 5, 1, 200.00, current_timestamp)
+                """
+        );
+
+        assertThatThrownBy(() -> transactionTemplate.executeWithoutResult(status ->
+                service.settle("stock-auto-withdraw", "stock-admin", SETTLED_AT)
+        ))
+                .isInstanceOf(StockException.class)
+                .hasMessageContaining("must not contain open orders or reserved holdings");
+
+        verify(strategyTransitionService, never()).retireAllOpenOrdersAndFundingBudgets(any(), any());
+        assertThat(participantAccount.getStatus()).isEqualTo(StockAccountStatus.ACTIVE);
+    }
+
+    @Test
+    void settle_systemCustodyHasOpenOrder_rejectsBeforeOrderCleanup() {
+        jdbcTemplate.update(
+                """
+                insert into stock_holding(account_id, symbol, quantity, reserved_quantity, average_price, updated_at)
+                values (101, 'DEMO001', 10, 0, 100.00, current_timestamp)
+                """
+        );
+        jdbcTemplate.update(
+                """
+                insert into stock_order(id, account_id, status, quantity, filled_quantity)
+                values (1, 201, 'PENDING', 1, 0)
+                """
+        );
+
+        assertThatThrownBy(() -> transactionTemplate.executeWithoutResult(status ->
+                service.settle("stock-auto-withdraw", "stock-admin", SETTLED_AT)
+        ))
+                .isInstanceOf(StockException.class)
+                .hasMessageContaining("must not contain open orders or reserved holdings");
+
+        verify(strategyTransitionService, never()).retireAllOpenOrdersAndFundingBudgets(any(), any());
+        assertThat(participantAccount.getStatus()).isEqualTo(StockAccountStatus.ACTIVE);
     }
 
     @Test
@@ -219,7 +324,7 @@ class AutoParticipantWithdrawalSettlementServiceTest {
     }
 
     private List<StockAccount> lockedAccounts(Collection<Long> accountIds) {
-        return List.of(participantAccount, underwriterAccount).stream()
+        return List.of(participantAccount, custodyAccount).stream()
                 .filter(account -> accountIds.contains(account.getId()))
                 .sorted((left, right) -> left.getId().compareTo(right.getId()))
                 .toList();
@@ -228,13 +333,36 @@ class AutoParticipantWithdrawalSettlementServiceTest {
     private void insertAccount(StockAccount account) {
         jdbcTemplate.update(
                 """
-                insert into stock_account(id, user_key, status, participant_category)
-                values (?, ?, ?, ?)
+                insert into stock_account(
+                    id, user_key, status, participant_category, self_trade_group_id
+                )
+                values (?, ?, ?, ?, ?)
                 """,
                 account.getId(),
                 account.getUserKey(),
                 account.getStatus().name(),
-                account.getParticipantCategory().name()
+                account.getParticipantCategory().name(),
+                account.getSelfTradeGroupId()
+        );
+    }
+
+    private void insertSystemCustodyMapping() {
+        jdbcTemplate.update(
+                """
+                insert into stock_market_participant(
+                    id, participant_code, participant_type, status
+                )
+                values (301, 'SYSTEM_CUSTODY', 'SYSTEM_CUSTODY', 'ACTIVE')
+                """
+        );
+        jdbcTemplate.update(
+                """
+                insert into stock_market_participant_account(
+                    participant_id, account_id, account_role, status,
+                    effective_from, effective_to
+                )
+                values (301, 201, 'SYSTEM_CUSTODY', 'ACTIVE', date '1970-01-01', null)
+                """
         );
     }
 
@@ -250,15 +378,30 @@ class AutoParticipantWithdrawalSettlementServiceTest {
                     id bigint primary key,
                     user_key varchar(64) not null,
                     status varchar(20) not null,
-                    participant_category varchar(30) not null
+                    participant_category varchar(30) not null,
+                    self_trade_group_id varchar(80)
                 )
                 """
         );
         jdbcTemplate.execute(
                 """
-                create table stock_listing_auto_account_config(
-                    symbol varchar(20) primary key,
-                    user_key varchar(64) not null
+                create table stock_market_participant(
+                    id bigint primary key,
+                    participant_code varchar(64) not null,
+                    participant_type varchar(40) not null,
+                    status varchar(20) not null
+                )
+                """
+        );
+        jdbcTemplate.execute(
+                """
+                create table stock_market_participant_account(
+                    participant_id bigint not null,
+                    account_id bigint not null,
+                    account_role varchar(40) not null,
+                    status varchar(20) not null,
+                    effective_from date not null,
+                    effective_to date
                 )
                 """
         );
@@ -272,6 +415,17 @@ class AutoParticipantWithdrawalSettlementServiceTest {
                     average_price decimal(19,2) not null,
                     updated_at timestamp not null,
                     primary key(account_id, symbol)
+                )
+                """
+        );
+        jdbcTemplate.execute(
+                """
+                create table stock_order(
+                    id bigint primary key,
+                    account_id bigint not null,
+                    status varchar(30) not null,
+                    quantity bigint not null,
+                    filled_quantity bigint not null
                 )
                 """
         );
@@ -325,6 +479,9 @@ class AutoParticipantWithdrawalSettlementServiceTest {
                     withdrawal_id bigint not null,
                     symbol varchar(20) not null,
                     underwriter_account_id bigint not null,
+                    receiver_account_id bigint not null,
+                    receiver_role varchar(40) not null,
+                    transfer_reason varchar(50) not null,
                     quantity bigint not null,
                     source_average_price decimal(19,2) not null,
                     created_at timestamp not null,

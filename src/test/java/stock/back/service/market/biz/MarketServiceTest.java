@@ -61,11 +61,13 @@ import stock.back.service.market.vo.AutoParticipantRequest;
 import stock.back.service.market.vo.AutoParticipantSymbolConfigRequest;
 import stock.back.service.market.vo.CorporateActionRequest;
 import stock.back.service.market.vo.InstrumentReportRequest;
+import stock.back.service.market.vo.InitialIssueAllocationRequest;
 import stock.back.service.market.vo.OrderBookInstrumentRequest;
 import stock.back.service.market.vo.OrderBookInstrumentTradingRulesRequest;
 import stock.back.service.market.vo.AutoMarketStatusResponse;
 import stock.back.service.trading.biz.AccountOrderCleanupService;
 import web.common.core.simulation.SimulationClockSnapshot;
+import web.common.core.simulation.SimulationMarketSession;
 
 import java.math.BigDecimal;
 import java.sql.ResultSet;
@@ -177,6 +179,16 @@ class MarketServiceTest {
         lenient().when(simulationClockService.currentSnapshot()).thenAnswer(invocation -> currentSimulationClockSnapshot());
         SimulationMarketSessionService simulationMarketSessionService =
                 new SimulationMarketSessionService(simulationClockService, "00:00", "23:59");
+        SimulationClockService listingClockService = mock(SimulationClockService.class);
+        SimulationMarketSessionService listingSessionService =
+                mock(SimulationMarketSessionService.class);
+        LocalDateTime listingNow = LocalDate.now().atTime(5, 0);
+        lenient().when(listingClockService.currentSnapshot())
+                .thenReturn(pausedSimulationClockSnapshot(listingNow));
+        lenient().when(listingSessionService.currentSession())
+                .thenReturn(SimulationMarketSession.PRE_OPEN);
+        lenient().when(marketLedgerFreezeGuard.acquireMutationPermit("order-book instrument listing"))
+                .thenReturn(listingNow.toLocalDate());
         AutoMarketStatusDataLoader autoMarketStatusDataLoader = new AutoMarketStatusDataLoader(
                 jdbcTemplate,
                 stockAutoParticipantSymbolConfigRepository,
@@ -192,7 +204,8 @@ class MarketServiceTest {
                         stockCorporateActionRepository,
                         stockListingAutoAccountConfigRepository,
                         commandJdbcTemplate,
-                        simulationClockService,
+                        listingClockService,
+                        listingSessionService,
                         marketLedgerFreezeGuard
                 ),
                 new MarketCatalogQueryService(
@@ -337,6 +350,23 @@ class MarketServiceTest {
         );
     }
 
+    private SimulationClockSnapshot pausedSimulationClockSnapshot(LocalDateTime simulationDateTime) {
+        LocalDate simulationDate = simulationDateTime.toLocalDate();
+        return new SimulationClockSnapshot(
+                simulationDate,
+                simulationDateTime,
+                simulationDate.atStartOfDay(),
+                simulationDateTime,
+                simulationDate.atStartOfDay(),
+                (int) SimulationDayClock.DAY_DURATION.toSeconds(),
+                false,
+                false,
+                0L,
+                null,
+                null
+        );
+    }
+
     private JdbcTemplate createCommandJdbcTemplate() {
         JdbcTemplate template = new JdbcTemplate(new DriverManagerDataSource(
                 "jdbc:h2:mem:market_service_command_%d;MODE=MySQL;DB_CLOSE_DELAY=-1;DATABASE_TO_UPPER=false".formatted(System.nanoTime()),
@@ -460,7 +490,8 @@ class MarketServiceTest {
                         new BigDecimal("70000.00"),
                         100000L,
                         new BigDecimal("30.00"),
-                        null
+                        null,
+                        new InitialIssueAllocationRequest("LEGACY_FULL_FLOAT", null)
                 )
         );
 
@@ -2166,7 +2197,8 @@ class MarketServiceTest {
         PortfolioSnapshot second = snapshot("user-b", "10050000.00", "0.5000", latestSnapshotDate);
         StockAccount firstAccount = account(101L, "user-a");
         StockAccount secondAccount = account(102L, "user-b");
-        when(portfolioSnapshotRepository.findTopByOrderBySnapshotDateDesc()).thenReturn(Optional.of(latestSnapshotMarker));
+        when(portfolioSnapshotRepository.findTopRankingEligibleByOrderBySnapshotDateDesc())
+                .thenReturn(Optional.of(latestSnapshotMarker));
         when(portfolioSnapshotRepository.findTop20BySnapshotDateOrderByReturnRateDesc(latestSnapshotDate))
                 .thenReturn(List.of(first, second));
         when(stockAccountRepository.findAllById(List.of(101L, 102L))).thenReturn(List.of(firstAccount, secondAccount));
@@ -2189,7 +2221,8 @@ class MarketServiceTest {
 
     @Test
     void getRankings_noSnapshots_returnsEmptyList() {
-        when(portfolioSnapshotRepository.findTopByOrderBySnapshotDateDesc()).thenReturn(Optional.empty());
+        when(portfolioSnapshotRepository.findTopRankingEligibleByOrderBySnapshotDateDesc())
+                .thenReturn(Optional.empty());
 
         var rankings = marketService.getRankings();
 
@@ -2201,7 +2234,8 @@ class MarketServiceTest {
         LocalDate latestSnapshotDate = LocalDate.of(2026, 6, 16);
         PortfolioSnapshot latestSnapshotMarker = org.mockito.Mockito.mock(PortfolioSnapshot.class);
         when(latestSnapshotMarker.getSnapshotDate()).thenReturn(latestSnapshotDate);
-        when(portfolioSnapshotRepository.findTopByOrderBySnapshotDateDesc()).thenReturn(Optional.of(latestSnapshotMarker));
+        when(portfolioSnapshotRepository.findTopRankingEligibleByOrderBySnapshotDateDesc())
+                .thenReturn(Optional.of(latestSnapshotMarker));
         when(portfolioSnapshotRepository.findTop20BySnapshotDateOrderByReturnRateDesc(latestSnapshotDate))
                 .thenReturn(List.of());
 

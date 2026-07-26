@@ -21,9 +21,9 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.sql.PreparedStatement;
 import java.sql.Statement;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -38,6 +38,10 @@ class AutoParticipantWithdrawalSettlementService {
 
     private static final int MAX_RETURN_SYMBOL_COUNT = 500;
     private static final String SYSTEM_WITHDRAWAL_ACTOR = "AUTO_PARTICIPANT_WITHDRAWAL";
+    private static final String SYSTEM_CUSTODY_USER_KEY = "stock-system-custody";
+    private static final String SYSTEM_CUSTODY_SELF_TRADE_GROUP = "SYSTEM_CUSTODY:DEFAULT";
+    private static final String WITHDRAWAL_CUSTODY_TRANSFER_REASON =
+            "AUTO_PARTICIPANT_WITHDRAWAL_CUSTODY";
 
     private final StockAccountRepository stockAccountRepository;
     private final StockAccountCashFlowRepository stockAccountCashFlowRepository;
@@ -73,14 +77,15 @@ class AutoParticipantWithdrawalSettlementService {
 
         List<String> potentialSymbols = findPotentialReturnSymbols(discoveredAccount.getId());
         requireBoundedSymbols(potentialSymbols);
-        Map<String, UnderwriterTarget> discoveredTargets = findUnderwriterTargets(potentialSymbols);
-        requireEverySymbolMapped(potentialSymbols, discoveredTargets);
+        CustodyTarget discoveredTarget = potentialSymbols.isEmpty()
+                ? null
+                : findSystemCustodyTarget();
 
         Set<Long> accountIdsToLock = new TreeSet<>();
         accountIdsToLock.add(discoveredAccount.getId());
-        discoveredTargets.values().stream()
-                .map(UnderwriterTarget::accountId)
-                .forEach(accountIdsToLock::add);
+        if (discoveredTarget != null) {
+            accountIdsToLock.add(discoveredTarget.accountId());
+        }
         Map<Long, StockAccount> lockedAccounts = stockAccountRepository
                 .findAllByIdInForUpdate(accountIdsToLock)
                 .stream()
@@ -89,9 +94,9 @@ class AutoParticipantWithdrawalSettlementService {
                         Function.identity(),
                         (left, right) -> left,
                         LinkedHashMap::new
-                ));
+        ));
         if (lockedAccounts.size() != accountIdsToLock.size()) {
-            throw StockException.conflict("Auto-participant or listing-underwriter account changed; retry withdrawal");
+            throw StockException.conflict("Auto-participant or system-custody account changed; retry withdrawal");
         }
 
         StockAccount participantAccount = requireParticipantAccount(
@@ -99,28 +104,39 @@ class AutoParticipantWithdrawalSettlementService {
                 discoveredAccount.getId(),
                 lockedAccounts
         );
-        requireUnderwriterAccounts(discoveredTargets.values(), lockedAccounts);
+        if (discoveredTarget != null) {
+            requireSystemCustodyAccount(
+                    discoveredTarget,
+                    lockedAccounts,
+                    settledAt.toLocalDate()
+            );
+        }
         requireNoPendingCorporateActionRights(participantAccount.getId());
 
         strategyTransitionService.retireAllOpenOrdersAndFundingBudgets(participantAccount, settledAt);
 
         List<HoldingReturn> holdings = lockParticipantHoldings(participantAccount.getId());
         requireBoundedSymbols(holdings.stream().map(HoldingReturn::symbol).toList());
-        requireEverySymbolMapped(
-                holdings.stream().map(HoldingReturn::symbol).toList(),
-                discoveredTargets
-        );
+        if (!holdings.isEmpty() && discoveredTarget == null) {
+            throw StockException.conflict("System-custody account is required for withdrawal share transfer");
+        }
         requireNoReservedHoldings(holdings);
 
         List<CompletedShareReturn> completedReturns = new ArrayList<>(holdings.size());
         long returnedShareQuantity = 0L;
         for (HoldingReturn holding : holdings) {
-            UnderwriterTarget target = discoveredTargets.get(holding.symbol());
-            returnHoldingToUnderwriter(participantAccount.getId(), holding, target, settledAt);
+            returnHoldingToSystemCustody(
+                    participantAccount.getId(),
+                    holding,
+                    discoveredTarget,
+                    settledAt
+            );
             returnedShareQuantity = Math.addExact(returnedShareQuantity, holding.quantity());
             completedReturns.add(new CompletedShareReturn(
                     holding.symbol(),
-                    target.accountId(),
+                    discoveredTarget.accountId(),
+                    StockAccountParticipantCategory.SYSTEM_CUSTODY.name(),
+                    WITHDRAWAL_CUSTODY_TRANSFER_REASON,
                     holding.quantity(),
                     holding.averagePrice()
             ));
@@ -194,36 +210,44 @@ class AutoParticipantWithdrawalSettlementService {
                 .list();
     }
 
-    private Map<String, UnderwriterTarget> findUnderwriterTargets(List<String> symbols) {
-        if (symbols.isEmpty()) {
-            return Map.of();
-        }
+    private CustodyTarget findSystemCustodyTarget() {
         return jdbcClient.sql(
                         """
-                        select c.symbol,
-                               a.id as account_id,
-                               a.status,
-                               a.participant_category
-                          from stock_listing_auto_account_config c
-                          join stock_account a on a.user_key = c.user_key
-                         where c.symbol in (:symbols)
-                         order by c.symbol asc
+                        select account.id as account_id,
+                               account.status as account_status,
+                               account.participant_category,
+                               account.self_trade_group_id,
+                               participant.participant_type,
+                               participant.status as participant_status,
+                               participant_account.account_role,
+                               participant_account.status as participant_account_status,
+                               participant_account.effective_from,
+                               participant_account.effective_to
+                          from stock_account account
+                          join stock_market_participant_account participant_account
+                            on participant_account.account_id = account.id
+                          join stock_market_participant participant
+                            on participant.id = participant_account.participant_id
+                         where account.user_key = :userKey
+                           and participant.participant_code = 'SYSTEM_CUSTODY'
                         """
                 )
-                .param("symbols", symbols)
-                .query((rs, rowNum) -> new UnderwriterTarget(
-                        rs.getString("symbol"),
+                .param("userKey", SYSTEM_CUSTODY_USER_KEY)
+                .query((rs, rowNum) -> new CustodyTarget(
                         rs.getLong("account_id"),
-                        rs.getString("status"),
-                        rs.getString("participant_category")
+                        rs.getString("account_status"),
+                        rs.getString("participant_category"),
+                        rs.getString("self_trade_group_id"),
+                        rs.getString("participant_type"),
+                        rs.getString("participant_status"),
+                        rs.getString("account_role"),
+                        rs.getString("participant_account_status"),
+                        rs.getObject("effective_from", LocalDate.class),
+                        rs.getObject("effective_to", LocalDate.class)
                 ))
-                .list()
-                .stream()
-                .collect(Collectors.toMap(
-                        UnderwriterTarget::symbol,
-                        Function.identity(),
-                        (left, right) -> left,
-                        LinkedHashMap::new
+                .optional()
+                .orElseThrow(() -> StockException.conflict(
+                        "Active SYSTEM_CUSTODY account is not provisioned"
                 ));
     }
 
@@ -242,21 +266,60 @@ class AutoParticipantWithdrawalSettlementService {
         return account;
     }
 
-    private void requireUnderwriterAccounts(
-            Collection<UnderwriterTarget> targets,
-            Map<Long, StockAccount> lockedAccounts
+    private void requireSystemCustodyAccount(
+            CustodyTarget target,
+            Map<Long, StockAccount> lockedAccounts,
+            LocalDate settlementDate
     ) {
-        for (UnderwriterTarget target : targets) {
-            StockAccount account = lockedAccounts.get(target.accountId());
-            if (account == null
-                    || account.getStatus() != StockAccountStatus.ACTIVE
-                    || account.getParticipantCategory() != StockAccountParticipantCategory.LISTING_UNDERWRITER
-                    || !StockAccountStatus.ACTIVE.name().equals(target.status())
-                    || !StockAccountParticipantCategory.LISTING_UNDERWRITER.name().equals(target.participantCategory())) {
-                throw StockException.conflict(
-                        "Listing-underwriter account is not active for symbol: " + target.symbol()
-                );
-            }
+        StockAccount account = lockedAccounts.get(target.accountId());
+        if (account == null
+                || account.getStatus() != StockAccountStatus.ACTIVE
+                || account.getParticipantCategory() != StockAccountParticipantCategory.SYSTEM_CUSTODY
+                || !SYSTEM_CUSTODY_SELF_TRADE_GROUP.equals(account.getSelfTradeGroupId())
+                || !StockAccountStatus.ACTIVE.name().equals(target.accountStatus())
+                || !StockAccountParticipantCategory.SYSTEM_CUSTODY.name().equals(target.participantCategory())
+                || !SYSTEM_CUSTODY_SELF_TRADE_GROUP.equals(target.selfTradeGroupId())
+                || !StockAccountParticipantCategory.SYSTEM_CUSTODY.name().equals(target.participantType())
+                || !"ACTIVE".equals(target.participantStatus())
+                || !StockAccountParticipantCategory.SYSTEM_CUSTODY.name().equals(target.accountRole())
+                || !"ACTIVE".equals(target.participantAccountStatus())
+                || target.effectiveFrom() == null
+                || settlementDate.isBefore(target.effectiveFrom())
+                || (target.effectiveTo() != null && settlementDate.isAfter(target.effectiveTo()))) {
+            throw StockException.conflict("SYSTEM_CUSTODY account mapping is not active or consistent");
+        }
+        requireCustodyNonTradingState(target.accountId());
+    }
+
+    private void requireCustodyNonTradingState(long custodyAccountId) {
+        Long openOrderCount = jdbcClient.sql(
+                        """
+                        select count(*)
+                          from stock_order
+                         where account_id = :accountId
+                           and status in ('PENDING', 'PARTIALLY_FILLED')
+                           and quantity > filled_quantity
+                        """
+                )
+                .param("accountId", custodyAccountId)
+                .query(Long.class)
+                .single();
+        Long reservedHoldingCount = jdbcClient.sql(
+                        """
+                        select count(*)
+                          from stock_holding
+                         where account_id = :accountId
+                           and reserved_quantity > 0
+                        """
+                )
+                .param("accountId", custodyAccountId)
+                .query(Long.class)
+                .single();
+        if ((openOrderCount != null && openOrderCount > 0L)
+                || (reservedHoldingCount != null && reservedHoldingCount > 0L)) {
+            throw StockException.conflict(
+                    "SYSTEM_CUSTODY must not contain open orders or reserved holdings"
+            );
         }
     }
 
@@ -340,13 +403,13 @@ class AutoParticipantWithdrawalSettlementService {
         }
     }
 
-    private void returnHoldingToUnderwriter(
+    private void returnHoldingToSystemCustody(
             long participantAccountId,
             HoldingReturn holding,
-            UnderwriterTarget target,
+            CustodyTarget target,
             LocalDateTime settledAt
     ) {
-        Optional<UnderwriterHolding> underwriterHolding = jdbcClient.sql(
+        Optional<ReceiverHolding> receiverHolding = jdbcClient.sql(
                         """
                         select quantity, reserved_quantity, average_price
                           from stock_holding
@@ -357,14 +420,14 @@ class AutoParticipantWithdrawalSettlementService {
                 )
                 .param("accountId", target.accountId())
                 .param("symbol", holding.symbol())
-                .query((rs, rowNum) -> new UnderwriterHolding(
+                .query((rs, rowNum) -> new ReceiverHolding(
                         rs.getLong("quantity"),
                         rs.getLong("reserved_quantity"),
                         rs.getBigDecimal("average_price")
                 ))
                 .optional();
-        if (underwriterHolding.isPresent()) {
-            UnderwriterHolding current = underwriterHolding.get();
+        if (receiverHolding.isPresent()) {
+            ReceiverHolding current = receiverHolding.get();
             long nextQuantity = Math.addExact(current.quantity(), holding.quantity());
             BigDecimal nextAveragePrice = weightedAveragePrice(
                     current.quantity(),
@@ -389,7 +452,7 @@ class AutoParticipantWithdrawalSettlementService {
                     .param("symbol", holding.symbol())
                     .update();
             if (updated != 1) {
-                throw new IllegalStateException("Listing-underwriter holding update failed: " + holding.symbol());
+                throw new IllegalStateException("System-custody holding update failed: " + holding.symbol());
             }
         } else {
             int inserted = jdbcClient.sql(
@@ -407,7 +470,7 @@ class AutoParticipantWithdrawalSettlementService {
                     .param("updatedAt", settledAt)
                     .update();
             if (inserted != 1) {
-                throw new IllegalStateException("Listing-underwriter holding insert failed: " + holding.symbol());
+                throw new IllegalStateException("System-custody holding insert failed: " + holding.symbol());
             }
         }
 
@@ -494,17 +557,22 @@ class AutoParticipantWithdrawalSettlementService {
                             """
                             insert into stock_auto_participant_share_return(
                                 withdrawal_id, symbol, underwriter_account_id,
+                                receiver_account_id, receiver_role, transfer_reason,
                                 quantity, source_average_price, created_at
                             )
                             values (
                                 :withdrawalId, :symbol, :underwriterAccountId,
+                                :receiverAccountId, :receiverRole, :transferReason,
                                 :quantity, :sourceAveragePrice, :createdAt
                             )
                             """
                     )
                     .param("withdrawalId", withdrawalId)
                     .param("symbol", completedReturn.symbol())
-                    .param("underwriterAccountId", completedReturn.underwriterAccountId())
+                    .param("underwriterAccountId", completedReturn.receiverAccountId())
+                    .param("receiverAccountId", completedReturn.receiverAccountId())
+                    .param("receiverRole", completedReturn.receiverRole())
+                    .param("transferReason", completedReturn.transferReason())
                     .param("quantity", completedReturn.quantity())
                     .param("sourceAveragePrice", completedReturn.sourceAveragePrice())
                     .param("createdAt", createdAt)
@@ -514,20 +582,6 @@ class AutoParticipantWithdrawalSettlementService {
                         "Auto-participant share-return audit insert failed: " + completedReturn.symbol()
                 );
             }
-        }
-    }
-
-    private void requireEverySymbolMapped(
-            List<String> symbols,
-            Map<String, UnderwriterTarget> targets
-    ) {
-        List<String> missingSymbols = symbols.stream()
-                .filter(symbol -> !targets.containsKey(symbol))
-                .toList();
-        if (!missingSymbols.isEmpty()) {
-            throw StockException.conflict(
-                    "Listing-underwriter account is missing for symbols: " + String.join(",", missingSymbols)
-            );
         }
     }
 
@@ -562,11 +616,17 @@ class AutoParticipantWithdrawalSettlementService {
         }
     }
 
-    private record UnderwriterTarget(
-            String symbol,
+    private record CustodyTarget(
             long accountId,
-            String status,
-            String participantCategory
+            String accountStatus,
+            String participantCategory,
+            String selfTradeGroupId,
+            String participantType,
+            String participantStatus,
+            String accountRole,
+            String participantAccountStatus,
+            LocalDate effectiveFrom,
+            LocalDate effectiveTo
     ) {
     }
 
@@ -578,7 +638,7 @@ class AutoParticipantWithdrawalSettlementService {
     ) {
     }
 
-    private record UnderwriterHolding(
+    private record ReceiverHolding(
             long quantity,
             long reservedQuantity,
             BigDecimal averagePrice
@@ -587,7 +647,9 @@ class AutoParticipantWithdrawalSettlementService {
 
     private record CompletedShareReturn(
             String symbol,
-            long underwriterAccountId,
+            long receiverAccountId,
+            String receiverRole,
+            String transferReason,
             long quantity,
             BigDecimal sourceAveragePrice
     ) {

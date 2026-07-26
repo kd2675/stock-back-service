@@ -77,7 +77,7 @@
 
 - 자동장이 주문을 넣을 때 사용하는 시스템 투자자 풀이다.
 - 사용자의 실제 계좌와 분리된 자동장 전용 참가자이며, 자동장 주문 생성과 체결 테스트에 사용한다.
-- 표시명, 가동 여부, 탈퇴 시각을 가진다. 운용 현금은 계좌 잔고와 현금 흐름 원장이 가진다. 탈퇴 시 `stock_auto_participant_withdrawal`에 회수 현금·반납 주식 합계를, `stock_auto_participant_share_return`에 종목별 상장주관사 반납 내역을 기록하고 계좌는 `CLOSED`로 보존한다.
+- 표시명, 가동 여부, 탈퇴 시각을 가진다. 운용 현금은 계좌 잔고와 현금 흐름 원장이 가진다. 탈퇴 시 `stock_auto_participant_withdrawal`에 회수 현금·이전 주식 합계를, `stock_auto_participant_share_return`에 종목별 `SYSTEM_CUSTODY` 이전 내역을 기록하고 계좌는 `CLOSED`로 보존한다. 과거 `LISTING_UNDERWRITER` 반환 행은 `receiver_role`로 구분하며 신규 조회는 legacy 이름의 `underwriter_account_id`가 아니라 `receiver_account_id`를 권위값으로 사용한다.
 - 초기 보유 주식은 없다. 자동 참여자의 보유는 주문장 매수 체결 결과로만 생긴다.
 
 `stock_auto_participant_symbol_config`

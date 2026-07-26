@@ -50,6 +50,9 @@ public class StockAccount {
     @Column(name = "participant_category", nullable = false, length = 30, columnDefinition = "varchar(30) default 'MANUAL_PARTICIPANT'")
     private StockAccountParticipantCategory participantCategory;
 
+    @Column(name = "self_trade_group_id", length = 80)
+    private String selfTradeGroupId;
+
     @Column(name = "cash_balance", nullable = false, precision = 19, scale = 2)
     private BigDecimal cashBalance;
 
@@ -122,6 +125,24 @@ public class StockAccount {
         }
         this.participantCategory = participantCategory;
         this.updatedAt = changedAt == null ? LocalDateTime.now() : changedAt;
+    }
+
+    public void assignSelfTradeGroupId(String selfTradeGroupId, LocalDateTime changedAt) {
+        if (selfTradeGroupId == null || selfTradeGroupId.isBlank()) {
+            throw new IllegalArgumentException("Self-trade group id is required");
+        }
+        this.selfTradeGroupId = selfTradeGroupId.trim();
+        this.updatedAt = changedAt == null ? LocalDateTime.now() : changedAt;
+    }
+
+    public String resolveSelfTradeGroupId() {
+        if (selfTradeGroupId != null && !selfTradeGroupId.isBlank()) {
+            return selfTradeGroupId;
+        }
+        if (id == null) {
+            throw new IllegalStateException("Account id is required to resolve the self-trade group");
+        }
+        return "ACCOUNT:" + id;
     }
 
     public void assignAccountCodeIfMissing(String accountCode) {

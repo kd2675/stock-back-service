@@ -427,6 +427,17 @@ class StockBackAuthorizationBoundaryTest {
 
     @Test
     void createOrderBookInstrument_adminPrincipalHeaders_isAllowed() throws Exception {
+        jdbcTemplate.update(
+                """
+                update stock_simulation_clock
+                   set accumulated_real_seconds = 0,
+                       running = false,
+                       last_started_at = null,
+                       updated_at = ?
+                 where clock_id = 'DEFAULT'
+                """,
+                LocalDateTime.now()
+        );
         mockMvc.perform(post("/api/stock/v1/markets/order-book-instruments")
                         .header("X-User-Key", "stock-admin-key")
                         .header("X-User-Role", "ROLE_ADMIN")
@@ -437,7 +448,10 @@ class StockBackAuthorizationBoundaryTest {
                                   "name": "권한 테스트",
                                   "market": "ORDERBOOK",
                                   "initialPrice": 70000,
-                                  "issuedShares": 100000
+                                  "issuedShares": 100000,
+                                  "initialIssueAllocation": {
+                                    "mode": "LEGACY_FULL_FLOAT"
+                                  }
                                 }
                                 """))
                 .andExpect(status().isOk())
@@ -783,7 +797,17 @@ class StockBackAuthorizationBoundaryTest {
             "POST /api/stock/v1/markets/batch-jobs/eod/cycles/1/retry",
             "GET /api/stock/v1/markets/batch-jobs/runtime-controls",
             "PATCH /api/stock/v1/markets/batch-jobs/runtime-controls/auto-market",
-            "PATCH /api/stock/v1/markets/simulation-clock"
+            "PATCH /api/stock/v1/markets/simulation-clock",
+            "GET /api/stock/v1/markets/institution-portfolios",
+            "POST /api/stock/v1/markets/institution-portfolios/scaled-defaults",
+            "POST /api/stock/v1/markets/institution-portfolios/1/pilot",
+            "POST /api/stock/v1/markets/institution-portfolios/1/suspend",
+            "GET /api/stock/v1/markets/liquidity-mandates",
+            "POST /api/stock/v1/markets/liquidity-mandates/ZQAUTH01/scaled-shadow",
+            "POST /api/stock/v1/markets/liquidity-mandates/ZQAUTH01/activate",
+            "POST /api/stock/v1/markets/underwriting-contracts/1/scaled-supply/activate",
+            "POST /api/stock/v1/markets/underwriting-contracts/1/scaled-supply/suspend",
+            "GET /api/stock/v1/markets/underwriting-contracts"
     })
     void autoParticipantCashFlowAdminEndpoints_withoutPrincipalHeaders_returnUnauthorized(String requestLine) throws Exception {
         String[] parts = requestLine.split(" ", 2);
@@ -821,7 +845,17 @@ class StockBackAuthorizationBoundaryTest {
             "POST /api/stock/v1/markets/batch-jobs/eod/cycles/1/retry",
             "GET /api/stock/v1/markets/batch-jobs/runtime-controls",
             "PATCH /api/stock/v1/markets/batch-jobs/runtime-controls/auto-market",
-            "PATCH /api/stock/v1/markets/simulation-clock"
+            "PATCH /api/stock/v1/markets/simulation-clock",
+            "GET /api/stock/v1/markets/institution-portfolios",
+            "POST /api/stock/v1/markets/institution-portfolios/scaled-defaults",
+            "POST /api/stock/v1/markets/institution-portfolios/1/pilot",
+            "POST /api/stock/v1/markets/institution-portfolios/1/suspend",
+            "GET /api/stock/v1/markets/liquidity-mandates",
+            "POST /api/stock/v1/markets/liquidity-mandates/ZQAUTH01/scaled-shadow",
+            "POST /api/stock/v1/markets/liquidity-mandates/ZQAUTH01/activate",
+            "POST /api/stock/v1/markets/underwriting-contracts/1/scaled-supply/activate",
+            "POST /api/stock/v1/markets/underwriting-contracts/1/scaled-supply/suspend",
+            "GET /api/stock/v1/markets/underwriting-contracts"
     })
     void autoParticipantCashFlowAdminEndpoints_userPrincipalHeaders_returnForbidden(String requestLine) throws Exception {
         String[] parts = requestLine.split(" ", 2);

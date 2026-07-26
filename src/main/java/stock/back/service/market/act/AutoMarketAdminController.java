@@ -27,6 +27,15 @@ import stock.back.service.market.biz.AutoParticipantOverviewQueryService;
 import stock.back.service.market.biz.AutoParticipantProfileConfigService;
 import stock.back.service.market.biz.AutoParticipantSymbolConfigQueryService;
 import stock.back.service.market.biz.AutoParticipantSymbolConfigService;
+import stock.back.service.market.biz.AutoParticipantWithdrawalQueryService;
+import stock.back.service.market.biz.InstitutionPilotTransitionService;
+import stock.back.service.market.biz.InstitutionPilotEmergencyStopService;
+import stock.back.service.market.biz.InstitutionPortfolioQueryService;
+import stock.back.service.market.biz.InstitutionScaledPresetService;
+import stock.back.service.market.biz.LiquidityProviderMandateQueryService;
+import stock.back.service.market.biz.LiquidityProviderTransitionService;
+import stock.back.service.market.biz.UnderwritingContractQueryService;
+import stock.back.service.market.biz.UnderwritingSupplyTransitionService;
 import stock.back.service.market.vo.AutoMarketConfigResponse;
 import stock.back.service.market.vo.AutoMarketConfigUpdateRequest;
 import stock.back.service.market.vo.AutoMarketRegimeHistoryRangeResponse;
@@ -46,8 +55,19 @@ import stock.back.service.market.vo.AutoParticipantRequest;
 import stock.back.service.market.vo.AutoParticipantResponse;
 import stock.back.service.market.vo.AutoParticipantSymbolConfigRequest;
 import stock.back.service.market.vo.AutoParticipantSymbolConfigResponse;
+import stock.back.service.market.vo.AutoParticipantWithdrawalAuditResponse;
 import stock.back.service.market.vo.ListingAutoAccountRequest;
 import stock.back.service.market.vo.ListingAutoAccountResponse;
+import stock.back.service.market.vo.InstitutionPortfolioResponse;
+import stock.back.service.market.vo.InstitutionPilotActivationRequest;
+import stock.back.service.market.vo.InstitutionPilotSuspensionRequest;
+import stock.back.service.market.vo.InstitutionScaledPresetRequest;
+import stock.back.service.market.vo.LiquidityProviderActivationRequest;
+import stock.back.service.market.vo.LiquidityProviderMandateResponse;
+import stock.back.service.market.vo.LiquidityProviderScaledProvisionRequest;
+import stock.back.service.market.vo.UnderwritingContractResponse;
+import stock.back.service.market.vo.UnderwritingSupplyActivationRequest;
+import stock.back.service.market.vo.UnderwritingSupplySuspensionRequest;
 import web.common.core.response.base.dto.ResponseDataDTO;
 
 @RestController
@@ -66,6 +86,123 @@ public class AutoMarketAdminController {
     private final AutoParticipantSymbolConfigService autoParticipantSymbolConfigService;
     private final AutoParticipantSymbolConfigQueryService autoParticipantSymbolConfigQueryService;
     private final AutoParticipantPerformanceSummaryQueryService autoParticipantPerformanceSummaryQueryService;
+    private final AutoParticipantWithdrawalQueryService autoParticipantWithdrawalQueryService;
+    private final InstitutionPortfolioQueryService institutionPortfolioQueryService;
+    private final InstitutionScaledPresetService institutionScaledPresetService;
+    private final InstitutionPilotTransitionService institutionPilotTransitionService;
+    private final InstitutionPilotEmergencyStopService institutionPilotEmergencyStopService;
+    private final LiquidityProviderMandateQueryService liquidityProviderMandateQueryService;
+    private final LiquidityProviderTransitionService liquidityProviderTransitionService;
+    private final UnderwritingContractQueryService underwritingContractQueryService;
+    private final UnderwritingSupplyTransitionService underwritingSupplyTransitionService;
+
+    @GetMapping("/underwriting-contracts")
+    public ResponseDataDTO<List<UnderwritingContractResponse>> getUnderwritingContracts() {
+        return ResponseDataDTO.of(underwritingContractQueryService.getContracts());
+    }
+
+    @PostMapping("/underwriting-contracts/{contractId}/scaled-supply/activate")
+    public ResponseDataDTO<UnderwritingContractResponse> activateUnderwritingSupply(
+            @PathVariable long contractId,
+            @RequestBody(required = false) UnderwritingSupplyActivationRequest request,
+            UserContext userContext
+    ) {
+        underwritingSupplyTransitionService.activate(
+                contractId,
+                request,
+                userContext.getUserKey()
+        );
+        return ResponseDataDTO.of(underwritingContractQueryService.getContract(contractId));
+    }
+
+    @PostMapping("/underwriting-contracts/{contractId}/scaled-supply/suspend")
+    public ResponseDataDTO<UnderwritingContractResponse> suspendUnderwritingSupply(
+            @PathVariable long contractId,
+            @RequestBody(required = false) UnderwritingSupplySuspensionRequest request,
+            UserContext userContext
+    ) {
+        underwritingSupplyTransitionService.suspend(
+                contractId,
+                request,
+                userContext.getUserKey()
+        );
+        return ResponseDataDTO.of(underwritingContractQueryService.getContract(contractId));
+    }
+
+    @GetMapping("/liquidity-mandates")
+    public ResponseDataDTO<List<LiquidityProviderMandateResponse>> getLiquidityMandates() {
+        return ResponseDataDTO.of(liquidityProviderMandateQueryService.getMandates());
+    }
+
+    @PostMapping("/liquidity-mandates/{symbol}/scaled-shadow")
+    public ResponseDataDTO<LiquidityProviderMandateResponse> provisionScaledLiquidityShadow(
+            @PathVariable String symbol,
+            @RequestBody(required = false) LiquidityProviderScaledProvisionRequest request,
+            UserContext userContext
+    ) {
+        liquidityProviderTransitionService.provisionScaledShadow(
+                symbol,
+                request,
+                userContext.getUserKey()
+        );
+        return ResponseDataDTO.of(liquidityProviderMandateQueryService.getMandate(symbol));
+    }
+
+    @PostMapping("/liquidity-mandates/{symbol}/activate")
+    public ResponseDataDTO<LiquidityProviderMandateResponse> activateLiquidityMandate(
+            @PathVariable String symbol,
+            @RequestBody(required = false) LiquidityProviderActivationRequest request,
+            UserContext userContext
+    ) {
+        liquidityProviderTransitionService.activateLive(
+                symbol,
+                request,
+                userContext.getUserKey()
+        );
+        return ResponseDataDTO.of(liquidityProviderMandateQueryService.getMandate(symbol));
+    }
+
+    @GetMapping("/institution-portfolios")
+    public ResponseDataDTO<List<InstitutionPortfolioResponse>> getInstitutionPortfolios() {
+        return ResponseDataDTO.of(institutionPortfolioQueryService.getPortfolios());
+    }
+
+    @PostMapping("/institution-portfolios/scaled-defaults")
+    public ResponseDataDTO<List<InstitutionPortfolioResponse>> createScaledInstitutionDefaults(
+            @RequestBody(required = false) InstitutionScaledPresetRequest request,
+            UserContext userContext
+    ) {
+        institutionScaledPresetService.createScaledDefaults(request, userContext.getUserKey());
+        return ResponseDataDTO.of(institutionPortfolioQueryService.getPortfolios());
+    }
+
+    @PostMapping("/institution-portfolios/{portfolioId}/pilot")
+    public ResponseDataDTO<List<InstitutionPortfolioResponse>> activateInstitutionPilot(
+            @PathVariable long portfolioId,
+            @RequestBody InstitutionPilotActivationRequest request,
+            UserContext userContext
+    ) {
+        institutionPilotTransitionService.activatePilot(
+                portfolioId,
+                request,
+                userContext.getUserKey()
+        );
+        return ResponseDataDTO.of(institutionPortfolioQueryService.getPortfolios());
+    }
+
+    @PostMapping("/institution-portfolios/{portfolioId}/suspend")
+    public ResponseDataDTO<List<InstitutionPortfolioResponse>> suspendInstitutionPilot(
+            @PathVariable long portfolioId,
+            @RequestBody(required = false) InstitutionPilotSuspensionRequest request,
+            UserContext userContext
+    ) {
+        institutionPilotEmergencyStopService.suspend(
+                portfolioId,
+                request,
+                userContext.getUserKey()
+        );
+        return ResponseDataDTO.of(institutionPortfolioQueryService.getPortfolios());
+    }
 
     @GetMapping("/auto-market/participants/overviews")
     public ResponseDataDTO<List<AutoParticipantOverviewResponse>> getAutoParticipantOverviews(
@@ -105,6 +242,15 @@ public class AutoMarketAdminController {
             @RequestParam(defaultValue = "") List<String> userKeys
     ) {
         return ResponseDataDTO.of(autoParticipantOverviewQueryService.getAutoParticipantHoldings(userKeys));
+    }
+
+    @GetMapping("/auto-market/participants/withdrawal-audits")
+    public ResponseDataDTO<List<AutoParticipantWithdrawalAuditResponse>> getAutoParticipantWithdrawalAudits(
+            @RequestParam(defaultValue = "") List<String> userKeys
+    ) {
+        return ResponseDataDTO.of(
+                autoParticipantWithdrawalQueryService.getWithdrawalAudits(userKeys)
+        );
     }
 
     @GetMapping("/auto-market/participants/profile-overviews")

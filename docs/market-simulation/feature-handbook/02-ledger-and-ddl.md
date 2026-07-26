@@ -27,7 +27,8 @@ stock 원장은 주문, 체결, 계좌, 보유, 가격, 주문장 종목, 기업
 ## 개발 초기화 SQL
 
 - `stock-back-service/src/main/resources/db/maintenance/stock_clear_data.sql`: `STOCK_SERVICE` stock business schema 전체 초기화. 자동참여자, 계좌, 종목, 자동장 설정까지 모두 지운다.
-- `stock-back-service/src/main/resources/db/maintenance/stock_clear_runtime_history_keep_participants.sql`: 자동참여자, 프로필, 참여자별 전략, 종목, 자동장 설정은 보존하고 주문/체결/가격틱/현금원장/스냅샷을 지운다. 현금원장을 지우는 만큼 계좌 현금과 일반 보유는 0 상태로 맞추고, 시뮬레이션 clock은 기준일과 1일 길이를 유지한 채 누적 시간만 0으로 되돌린다. enabled 주문장 종목 가격은 초기 상장가와 시뮬레이션 기준일 00:00으로 되돌린다. 자동장 batch가 거래 가능한 `OPEN` 종목의 `SELL_ONLY` 상장주관 자동계정에는 현재 유통주식수만큼 공급 보유분을 재생성해 새 시뮬레이션 손익 기준, 최신가 기준, 주문장 공급 상태를 깨끗하게 만든다.
+- `stock-back-service/src/main/resources/db/maintenance/stock_clear_runtime_history_keep_participants.sql`: 자동참여자, 프로필, 참여자별 전략, 종목, 자동장 설정은 보존하고 주문/체결/가격틱/현금원장/스냅샷을 지운다. 현금원장을 지우는 만큼 계좌 현금과 일반 보유는 0 상태로 맞추고, 시뮬레이션 clock은 기준일과 1일 길이를 유지한 채 누적 시간만 0으로 되돌린다. enabled 주문장 종목 가격은 초기 상장가와 시뮬레이션 기준일 00:00으로 되돌린다. 거래 가능 여부와 주식 소유권을 분리해 CLOSED·호가중지 상태의 기존 공급계정도 현재 유통주식으로 복원하고, 역할 분리형 인수·보관계정과 LP 시드 이전을 현재 발행량에 맞춰 재구성한다. LP 원장이나 최종 `보유합계 = 발행주식` 대사가 맞지 않으면 CHECK guard에서 중단한다.
+- 역할 분리형 신규 상장의 락업 물량은 종목별 `SYSTEM_CUSTODY` 하위계정과 `ISSUANCE_LOCKUP:<symbol>` desk에 둔다. 탈퇴자산 전용 기본 보관계정과 물량을 합치지 않으므로 초기 배정 원장, 기업행사 권리, 탈퇴 이전 원장을 서로 독립적으로 대사할 수 있다.
 - 두 SQL 모두 stock-back과 stock-batch 스케줄러를 멈춘 뒤 적용한다.
 
 ## 계좌 복구 정책

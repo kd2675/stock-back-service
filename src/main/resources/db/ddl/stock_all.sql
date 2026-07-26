@@ -107,6 +107,7 @@ CREATE TABLE IF NOT EXISTS stock_account (
   recovery_code_hash VARCHAR(128) NULL,
   status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE',
   participant_category VARCHAR(30) NOT NULL DEFAULT 'MANUAL_PARTICIPANT',
+  self_trade_group_id VARCHAR(80) NULL,
   cash_balance DECIMAL(19,2) NOT NULL,
   created_at DATETIME NOT NULL,
   updated_at DATETIME NOT NULL,
@@ -128,13 +129,128 @@ CREATE TABLE IF NOT EXISTS stock_account (
       WHEN 'MANUAL_PARTICIPANT' THEN 1
       WHEN 'AUTO_PARTICIPANT' THEN 1
       WHEN 'LISTING_UNDERWRITER' THEN 1
+      WHEN 'INSTITUTIONAL_INVESTOR' THEN 1
+      WHEN 'LIQUIDITY_PROVIDER' THEN 1
+      WHEN 'ISSUE_UNDERWRITER' THEN 1
+      WHEN 'SYSTEM_CUSTODY' THEN 1
       ELSE 0
     END = 1
+  ),
+  CONSTRAINT chk_stock_account_self_trade_group CHECK (
+    self_trade_group_id IS NULL OR self_trade_group_id <> ''
   ),
   CONSTRAINT chk_stock_account_detached_user_scope CHECK (status <> 'DETACHED' OR user_key IS NULL),
   CONSTRAINT chk_stock_account_recovery_window CHECK (
     recovery_expires_at IS NULL OR purge_after IS NULL OR purge_after >= recovery_expires_at
   )
+);
+
+CREATE TABLE IF NOT EXISTS stock_market_participant (
+  id BIGINT NOT NULL AUTO_INCREMENT,
+  participant_code VARCHAR(64) NOT NULL,
+  display_name VARCHAR(120) NOT NULL,
+  participant_type VARCHAR(40) NOT NULL,
+  status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE',
+  self_trade_group_id VARCHAR(80) NOT NULL,
+  created_at DATETIME NOT NULL,
+  updated_at DATETIME NOT NULL,
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_stock_market_participant_code (participant_code),
+  UNIQUE KEY uk_stock_market_participant_self_trade_group (self_trade_group_id),
+  KEY idx_stock_market_participant_type_status (participant_type, status, id),
+  CONSTRAINT chk_stock_market_participant_code CHECK (participant_code <> ''),
+  CONSTRAINT chk_stock_market_participant_name CHECK (display_name <> ''),
+  CONSTRAINT chk_stock_market_participant_type CHECK (
+    CASE `participant_type`
+      WHEN 'ISSUE_UNDERWRITER' THEN 1
+      WHEN 'LIQUIDITY_PROVIDER' THEN 1
+      WHEN 'INSTITUTIONAL_INVESTOR' THEN 1
+      WHEN 'SYSTEM_CUSTODY' THEN 1
+      ELSE 0
+    END = 1
+  ),
+  CONSTRAINT chk_stock_market_participant_status CHECK (
+    CASE `status` WHEN 'ACTIVE' THEN 1 WHEN 'SUSPENDED' THEN 1 WHEN 'RETIRED' THEN 1 ELSE 0 END = 1
+  ),
+  CONSTRAINT chk_stock_market_participant_self_trade_group CHECK (self_trade_group_id <> '')
+);
+
+CREATE TABLE IF NOT EXISTS stock_market_participant_account (
+  id BIGINT NOT NULL AUTO_INCREMENT,
+  participant_id BIGINT NOT NULL,
+  account_id BIGINT NOT NULL,
+  account_role VARCHAR(40) NOT NULL,
+  desk_code VARCHAR(64) NOT NULL,
+  effective_from DATE NOT NULL,
+  effective_to DATE NULL,
+  status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE',
+  created_at DATETIME NOT NULL,
+  updated_at DATETIME NOT NULL,
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_stock_market_participant_account (account_id),
+  UNIQUE KEY uk_stock_market_participant_role_desk (
+    participant_id, account_role, desk_code
+  ),
+  KEY idx_stock_market_participant_account_lookup (
+    participant_id, status, account_role, account_id
+  ),
+  CONSTRAINT chk_stock_market_participant_account_role CHECK (
+    CASE `account_role`
+      WHEN 'ISSUE_UNDERWRITER' THEN 1
+      WHEN 'LIQUIDITY_PROVIDER' THEN 1
+      WHEN 'INSTITUTIONAL_INVESTOR' THEN 1
+      WHEN 'SYSTEM_CUSTODY' THEN 1
+      ELSE 0
+    END = 1
+  ),
+  CONSTRAINT chk_stock_market_participant_account_status CHECK (
+    CASE `status` WHEN 'ACTIVE' THEN 1 WHEN 'SUSPENDED' THEN 1 WHEN 'CLOSED' THEN 1 ELSE 0 END = 1
+  ),
+  CONSTRAINT chk_stock_market_participant_account_dates CHECK (
+    effective_to IS NULL OR effective_to >= effective_from
+  ),
+  CONSTRAINT chk_stock_market_participant_account_desk CHECK (desk_code <> '')
+);
+
+CREATE TABLE IF NOT EXISTS stock_market_policy_version (
+  id BIGINT NOT NULL AUTO_INCREMENT,
+  policy_scope VARCHAR(40) NOT NULL,
+  scope_key VARCHAR(80) NOT NULL,
+  version_no BIGINT NOT NULL,
+  effective_business_date DATE NOT NULL,
+  status VARCHAR(20) NOT NULL DEFAULT 'DRAFT',
+  config_json JSON NOT NULL,
+  change_reason VARCHAR(500) NOT NULL,
+  changed_by VARCHAR(64) NOT NULL,
+  created_at DATETIME NOT NULL,
+  updated_at DATETIME NOT NULL,
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_stock_market_policy_version (policy_scope, scope_key, version_no),
+  KEY idx_stock_market_policy_effective (
+    status, effective_business_date, policy_scope, scope_key, version_no
+  ),
+  CONSTRAINT chk_stock_market_policy_scope CHECK (
+    CASE `policy_scope`
+      WHEN 'GLOBAL_RISK' THEN 1
+      WHEN 'AUTO_PARTICIPANT' THEN 1
+      WHEN 'INSTITUTIONAL_PORTFOLIO' THEN 1
+      WHEN 'LIQUIDITY_MANDATE' THEN 1
+      WHEN 'UNDERWRITING_CONTRACT' THEN 1
+      ELSE 0
+    END = 1
+  ),
+  CONSTRAINT chk_stock_market_policy_status CHECK (
+    CASE `status`
+      WHEN 'DRAFT' THEN 1
+      WHEN 'SCHEDULED' THEN 1
+      WHEN 'ACTIVE' THEN 1
+      WHEN 'RETIRED' THEN 1
+      ELSE 0
+    END = 1
+  ),
+  CONSTRAINT chk_stock_market_policy_scope_key CHECK (scope_key <> ''),
+  CONSTRAINT chk_stock_market_policy_version_no CHECK (version_no > 0),
+  CONSTRAINT chk_stock_market_policy_reason CHECK (change_reason <> '')
 );
 
 CREATE TABLE IF NOT EXISTS stock_account_cash_flow (
@@ -500,6 +616,8 @@ CREATE TABLE IF NOT EXISTS stock_order (
   id BIGINT NOT NULL AUTO_INCREMENT,
   client_order_id VARCHAR(64) NOT NULL,
   account_id BIGINT NOT NULL,
+  origin_type VARCHAR(40) NULL,
+  self_trade_group_id VARCHAR(80) NULL,
   symbol VARCHAR(20) NOT NULL,
   market_type VARCHAR(30) NOT NULL DEFAULT 'VIRTUAL_PRICE',
   side VARCHAR(10) NOT NULL,
@@ -533,6 +651,20 @@ CREATE TABLE IF NOT EXISTS stock_order (
   KEY idx_stock_order_order_book_match (market_type, symbol, side, status, order_type, limit_price, created_at, id),
   KEY idx_stock_order_order_book_expiry (market_type, symbol, created_at, id, status, account_id),
   CONSTRAINT chk_stock_order_market_type_valid CHECK (CASE `market_type` WHEN 'VIRTUAL_PRICE' THEN 1 WHEN 'ORDER_BOOK' THEN 1 ELSE 0 END = 1),
+  CONSTRAINT chk_stock_order_origin_type CHECK (
+    origin_type IS NULL OR CASE `origin_type`
+      WHEN 'MANUAL_PARTICIPANT' THEN 1
+      WHEN 'AUTO_PARTICIPANT' THEN 1
+      WHEN 'LISTING_AUTO_LEGACY' THEN 1
+      WHEN 'INSTITUTIONAL_INVESTOR' THEN 1
+      WHEN 'LIQUIDITY_PROVIDER' THEN 1
+      WHEN 'ISSUE_UNDERWRITER' THEN 1
+      ELSE 0
+    END = 1
+  ),
+  CONSTRAINT chk_stock_order_self_trade_group CHECK (
+    self_trade_group_id IS NULL OR self_trade_group_id <> ''
+  ),
   CONSTRAINT chk_stock_order_side_valid CHECK (CASE `side` WHEN 'BUY' THEN 1 WHEN 'SELL' THEN 1 ELSE 0 END = 1),
   CONSTRAINT chk_stock_order_type_valid CHECK (CASE `order_type` WHEN 'LIMIT' THEN 1 WHEN 'MARKET' THEN 1 ELSE 0 END = 1),
   CONSTRAINT chk_stock_order_status_valid CHECK (CASE `status` WHEN 'PENDING' THEN 1 WHEN 'PARTIALLY_FILLED' THEN 1 WHEN 'FILLED' THEN 1 WHEN 'CANCELLED' THEN 1 WHEN 'REJECTED' THEN 1 ELSE 0 END = 1),
@@ -556,6 +688,63 @@ CREATE TABLE IF NOT EXISTS stock_order (
     )
   ),
   CONSTRAINT chk_stock_order_terminal_reserved_cash_zero CHECK ((status <> 'FILLED' AND status <> 'CANCELLED' AND status <> 'REJECTED') OR reserved_cash = 0)
+);
+
+CREATE TABLE IF NOT EXISTS stock_order_strategy_origin (
+  order_id BIGINT NOT NULL,
+  origin_type VARCHAR(40) NOT NULL,
+  participant_id BIGINT NOT NULL,
+  portfolio_id BIGINT NULL,
+  decision_run_id BIGINT NULL,
+  liquidity_mandate_id BIGINT NULL,
+  underwriting_contract_id BIGINT NULL,
+  policy_version BIGINT NOT NULL,
+  created_at DATETIME NOT NULL,
+  PRIMARY KEY (order_id),
+  KEY idx_stock_order_strategy_participant (
+    participant_id, origin_type, order_id
+  ),
+  KEY idx_stock_order_strategy_decision (
+    decision_run_id, order_id
+  ),
+  KEY idx_stock_order_strategy_liquidity (
+    liquidity_mandate_id, order_id
+  ),
+  KEY idx_stock_order_strategy_underwriting (
+    underwriting_contract_id, order_id
+  ),
+  CONSTRAINT chk_stock_order_strategy_origin_type CHECK (
+    CASE origin_type
+      WHEN 'INSTITUTIONAL_INVESTOR' THEN 1
+      WHEN 'LIQUIDITY_PROVIDER' THEN 1
+      WHEN 'ISSUE_UNDERWRITER' THEN 1
+      ELSE 0
+    END = 1
+  ),
+  CONSTRAINT chk_stock_order_strategy_owner CHECK (
+    (
+      origin_type = 'INSTITUTIONAL_INVESTOR'
+      AND portfolio_id IS NOT NULL
+      AND decision_run_id IS NOT NULL
+      AND liquidity_mandate_id IS NULL
+      AND underwriting_contract_id IS NULL
+    )
+    OR (
+      origin_type = 'LIQUIDITY_PROVIDER'
+      AND portfolio_id IS NULL
+      AND decision_run_id IS NULL
+      AND liquidity_mandate_id IS NOT NULL
+      AND underwriting_contract_id IS NULL
+    )
+    OR (
+      origin_type = 'ISSUE_UNDERWRITER'
+      AND portfolio_id IS NULL
+      AND decision_run_id IS NULL
+      AND liquidity_mandate_id IS NULL
+      AND underwriting_contract_id IS NOT NULL
+    )
+  ),
+  CONSTRAINT chk_stock_order_strategy_policy_version CHECK (policy_version > 0)
 );
 
 CREATE TABLE IF NOT EXISTS stock_execution (
@@ -851,6 +1040,10 @@ CREATE TABLE IF NOT EXISTS stock_close_account_snapshot (
       WHEN 'MANUAL_PARTICIPANT' THEN 1
       WHEN 'AUTO_PARTICIPANT' THEN 1
       WHEN 'LISTING_UNDERWRITER' THEN 1
+      WHEN 'INSTITUTIONAL_INVESTOR' THEN 1
+      WHEN 'LIQUIDITY_PROVIDER' THEN 1
+      WHEN 'ISSUE_UNDERWRITER' THEN 1
+      WHEN 'SYSTEM_CUSTODY' THEN 1
       ELSE 0
     END = 1
   ),
@@ -1024,7 +1217,18 @@ CREATE TABLE IF NOT EXISTS stock_execution_daily_account_snapshot (
   UNIQUE KEY uk_stock_execution_daily_account_run_symbol_account (close_run_id, symbol, account_id),
   KEY idx_stock_execution_daily_account_symbol_date (symbol, simulation_trade_date, close_run_id, account_id),
   KEY idx_stock_execution_daily_account_account_date (account_id, simulation_trade_date, close_run_id),
-  CONSTRAINT chk_stock_execution_daily_account_category CHECK (CASE `participant_category` WHEN 'LISTING_UNDERWRITER' THEN 1 WHEN 'AUTO_PARTICIPANT' THEN 1 WHEN 'MANUAL_PARTICIPANT' THEN 1 ELSE 0 END = 1),
+  CONSTRAINT chk_stock_execution_daily_account_category CHECK (
+    CASE `participant_category`
+      WHEN 'LISTING_UNDERWRITER' THEN 1
+      WHEN 'AUTO_PARTICIPANT' THEN 1
+      WHEN 'MANUAL_PARTICIPANT' THEN 1
+      WHEN 'INSTITUTIONAL_INVESTOR' THEN 1
+      WHEN 'LIQUIDITY_PROVIDER' THEN 1
+      WHEN 'ISSUE_UNDERWRITER' THEN 1
+      WHEN 'SYSTEM_CUSTODY' THEN 1
+      ELSE 0
+    END = 1
+  ),
   CONSTRAINT chk_stock_execution_daily_account_quantity CHECK (execution_count >= 0 AND buy_quantity >= 0 AND sell_quantity >= 0),
   CONSTRAINT chk_stock_execution_daily_account_amount CHECK (buy_amount >= 0 AND sell_amount >= 0 AND execution_amount >= 0)
 );
@@ -1149,14 +1353,89 @@ CREATE TABLE IF NOT EXISTS stock_auto_participant_share_return (
   withdrawal_id BIGINT NOT NULL,
   symbol VARCHAR(20) NOT NULL,
   underwriter_account_id BIGINT NOT NULL,
+  receiver_account_id BIGINT NOT NULL,
+  receiver_role VARCHAR(40) NOT NULL,
+  transfer_reason VARCHAR(50) NOT NULL,
   quantity BIGINT NOT NULL,
   source_average_price DECIMAL(19,2) NOT NULL,
   created_at DATETIME NOT NULL,
   PRIMARY KEY (withdrawal_id, symbol),
   KEY idx_stock_auto_share_return_underwriter (underwriter_account_id, symbol, withdrawal_id),
+  KEY idx_stock_auto_share_return_receiver (receiver_account_id, symbol, withdrawal_id),
   CONSTRAINT chk_stock_auto_share_return_quantity CHECK (quantity > 0),
-  CONSTRAINT chk_stock_auto_share_return_average_price CHECK (source_average_price >= 0)
+  CONSTRAINT chk_stock_auto_share_return_average_price CHECK (source_average_price >= 0),
+  CONSTRAINT chk_stock_auto_share_return_receiver_role CHECK (
+    CASE `receiver_role`
+      WHEN 'LISTING_UNDERWRITER' THEN 1
+      WHEN 'SYSTEM_CUSTODY' THEN 1
+      ELSE 0
+    END = 1
+  ),
+  CONSTRAINT chk_stock_auto_share_return_reason CHECK (
+    CASE `transfer_reason`
+      WHEN 'LEGACY_UNDERWRITER_RETURN' THEN 1
+      WHEN 'AUTO_PARTICIPANT_WITHDRAWAL_CUSTODY' THEN 1
+      ELSE 0
+    END = 1
+  )
 );
+
+INSERT INTO stock_market_participant(
+    participant_code, display_name, participant_type, status,
+    self_trade_group_id, created_at, updated_at
+)
+SELECT
+    'SYSTEM_CUSTODY', '시스템 보관기관', 'SYSTEM_CUSTODY', 'ACTIVE',
+    'SYSTEM_CUSTODY:DEFAULT', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+WHERE NOT EXISTS (
+    SELECT 1
+      FROM stock_market_participant
+     WHERE participant_code = 'SYSTEM_CUSTODY'
+);
+
+INSERT INTO stock_account(
+    user_key, account_code, status, participant_category,
+    self_trade_group_id, cash_balance, created_at, updated_at
+)
+SELECT
+    'stock-system-custody', 'SYSTEM-CUSTODY', 'ACTIVE', 'SYSTEM_CUSTODY',
+    'SYSTEM_CUSTODY:DEFAULT', 0.00, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+WHERE NOT EXISTS (
+    SELECT 1
+      FROM stock_account
+     WHERE user_key = 'stock-system-custody'
+);
+
+DELETE FROM stock_market_participant_account
+ WHERE account_role = 'SYSTEM_CUSTODY'
+   AND desk_code = 'DEFAULT'
+   AND participant_id IN (
+       SELECT id
+         FROM stock_market_participant
+        WHERE participant_code = 'SYSTEM_CUSTODY'
+   )
+   AND NOT EXISTS (
+       SELECT 1
+         FROM stock_account
+        WHERE stock_account.id = stock_market_participant_account.account_id
+   );
+
+INSERT INTO stock_market_participant_account(
+    participant_id, account_id, account_role, desk_code,
+    effective_from, effective_to, status, created_at, updated_at
+)
+SELECT
+    participant.id, account.id, 'SYSTEM_CUSTODY', 'DEFAULT',
+    DATE '1970-01-01', NULL, 'ACTIVE', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+  FROM stock_market_participant participant
+  JOIN stock_account account
+    ON account.user_key = 'stock-system-custody'
+ WHERE participant.participant_code = 'SYSTEM_CUSTODY'
+   AND NOT EXISTS (
+       SELECT 1
+         FROM stock_market_participant_account existing
+        WHERE existing.account_id = account.id
+   );
 
 CREATE TABLE IF NOT EXISTS stock_auto_participant_position_state (
   account_id BIGINT NOT NULL,
@@ -1506,6 +1785,650 @@ CREATE TABLE IF NOT EXISTS stock_auto_market_config (
   CONSTRAINT chk_stock_auto_market_order_ttl_seconds CHECK (order_ttl_seconds > 0)
 );
 
+CREATE TABLE IF NOT EXISTS stock_institution_portfolio (
+  id BIGINT NOT NULL AUTO_INCREMENT,
+  participant_id BIGINT NOT NULL,
+  account_id BIGINT NOT NULL,
+  portfolio_code VARCHAR(64) NOT NULL,
+  display_name VARCHAR(120) NOT NULL,
+  investment_style VARCHAR(40) NOT NULL,
+  execution_mode VARCHAR(20) NOT NULL DEFAULT 'SHADOW',
+  status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE',
+  base_stock_allocation_rate DECIMAL(8,6) NOT NULL,
+  min_stock_allocation_rate DECIMAL(8,6) NOT NULL,
+  max_stock_allocation_rate DECIMAL(8,6) NOT NULL,
+  primary_regime_weight DECIMAL(8,6) NOT NULL DEFAULT 0.700000,
+  asset_preference_sensitivity DECIMAL(8,6) NOT NULL DEFAULT 0.020000,
+  volatility_sensitivity DECIMAL(8,6) NOT NULL DEFAULT 0.020000,
+  entry_threshold_rate DECIMAL(8,6) NOT NULL DEFAULT 0.005000,
+  exit_threshold_rate DECIMAL(8,6) NOT NULL DEFAULT 0.002000,
+  daily_turnover_limit_rate DECIMAL(8,6) NOT NULL DEFAULT 0.010000,
+  max_decision_turnover_rate DECIMAL(8,6) NOT NULL DEFAULT 0.002000,
+  decision_interval_minutes INT NOT NULL DEFAULT 60,
+  next_decision_at DATETIME NULL,
+  policy_version BIGINT NOT NULL DEFAULT 1,
+  created_at DATETIME NOT NULL,
+  updated_at DATETIME NOT NULL,
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_stock_institution_portfolio_code (portfolio_code),
+  UNIQUE KEY uk_stock_institution_portfolio_account (account_id),
+  KEY idx_stock_institution_portfolio_due (status, execution_mode, next_decision_at, id),
+  KEY idx_stock_institution_portfolio_participant (participant_id, status, id),
+  CONSTRAINT chk_stock_institution_portfolio_style CHECK (
+    CASE `investment_style`
+      WHEN 'BALANCED_LONG_TERM' THEN 1
+      WHEN 'VALUE_CONTRARIAN' THEN 1
+      WHEN 'MOMENTUM' THEN 1
+      WHEN 'ACTIVE_SHORT_TERM' THEN 1
+      ELSE 0
+    END = 1
+  ),
+  CONSTRAINT chk_stock_institution_portfolio_mode CHECK (
+    CASE `execution_mode`
+      WHEN 'SHADOW' THEN 1
+      WHEN 'PILOT' THEN 1
+      WHEN 'LIVE' THEN 1
+      ELSE 0
+    END = 1
+  ),
+  CONSTRAINT chk_stock_institution_portfolio_status CHECK (
+    CASE `status` WHEN 'ACTIVE' THEN 1 WHEN 'SUSPENDED' THEN 1 WHEN 'RETIRED' THEN 1 ELSE 0 END = 1
+  ),
+  CONSTRAINT chk_stock_institution_portfolio_allocation CHECK (
+    min_stock_allocation_rate >= 0
+    AND min_stock_allocation_rate <= base_stock_allocation_rate
+    AND base_stock_allocation_rate <= max_stock_allocation_rate
+    AND max_stock_allocation_rate <= 1
+  ),
+  CONSTRAINT chk_stock_institution_portfolio_regime_weight CHECK (
+    primary_regime_weight >= 0 AND primary_regime_weight <= 1
+  ),
+  CONSTRAINT chk_stock_institution_portfolio_sensitivity CHECK (
+    asset_preference_sensitivity >= 0
+    AND asset_preference_sensitivity <= 1
+    AND volatility_sensitivity >= 0
+    AND volatility_sensitivity <= 1
+  ),
+  CONSTRAINT chk_stock_institution_portfolio_threshold CHECK (
+    exit_threshold_rate >= 0
+    AND exit_threshold_rate <= entry_threshold_rate
+    AND entry_threshold_rate <= 1
+  ),
+  CONSTRAINT chk_stock_institution_portfolio_turnover CHECK (
+    daily_turnover_limit_rate > 0
+    AND daily_turnover_limit_rate <= 1
+    AND max_decision_turnover_rate > 0
+    AND max_decision_turnover_rate <= daily_turnover_limit_rate
+  ),
+  CONSTRAINT chk_stock_institution_portfolio_interval CHECK (
+    decision_interval_minutes BETWEEN 5 AND 1440
+  ),
+  CONSTRAINT chk_stock_institution_portfolio_version CHECK (policy_version > 0)
+);
+
+CREATE TABLE IF NOT EXISTS stock_institution_symbol_mandate (
+  id BIGINT NOT NULL AUTO_INCREMENT,
+  portfolio_id BIGINT NOT NULL,
+  symbol VARCHAR(20) NOT NULL,
+  base_symbol_weight DECIMAL(8,6) NOT NULL,
+  min_portfolio_allocation_rate DECIMAL(8,6) NOT NULL DEFAULT 0.000000,
+  max_portfolio_allocation_rate DECIMAL(8,6) NOT NULL,
+  price_pressure_sensitivity DECIMAL(8,6) NOT NULL DEFAULT 0.000000,
+  momentum_sensitivity DECIMAL(8,6) NOT NULL DEFAULT 0.000000,
+  value_sensitivity DECIMAL(8,6) NOT NULL DEFAULT 0.000000,
+  report_sensitivity DECIMAL(8,6) NOT NULL DEFAULT 0.000000,
+  reference_daily_volume BIGINT NOT NULL,
+  daily_participation_rate DECIMAL(8,6) NOT NULL DEFAULT 0.020000,
+  enabled BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at DATETIME NOT NULL,
+  updated_at DATETIME NOT NULL,
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_stock_institution_symbol_mandate (portfolio_id, symbol),
+  KEY idx_stock_institution_symbol_mandate_symbol (symbol, enabled, portfolio_id),
+  CONSTRAINT chk_stock_institution_mandate_base_weight CHECK (
+    base_symbol_weight > 0 AND base_symbol_weight <= 1
+  ),
+  CONSTRAINT chk_stock_institution_mandate_allocation CHECK (
+    min_portfolio_allocation_rate >= 0
+    AND min_portfolio_allocation_rate <= max_portfolio_allocation_rate
+    AND max_portfolio_allocation_rate <= 1
+  ),
+  CONSTRAINT chk_stock_institution_mandate_sensitivity CHECK (
+    price_pressure_sensitivity BETWEEN -1 AND 1
+    AND momentum_sensitivity BETWEEN -1 AND 1
+    AND value_sensitivity BETWEEN -1 AND 1
+    AND report_sensitivity BETWEEN -1 AND 1
+  ),
+  CONSTRAINT chk_stock_institution_mandate_reference CHECK (reference_daily_volume > 0),
+  CONSTRAINT chk_stock_institution_mandate_participation CHECK (
+    daily_participation_rate > 0 AND daily_participation_rate <= 0.200000
+  )
+);
+
+CREATE TABLE IF NOT EXISTS stock_institution_decision_run (
+  id BIGINT NOT NULL AUTO_INCREMENT,
+  decision_slot DATETIME NOT NULL,
+  simulation_trade_date DATE NOT NULL,
+  portfolio_id BIGINT NOT NULL,
+  execution_mode VARCHAR(20) NOT NULL,
+  policy_version BIGINT NOT NULL,
+  deterministic_seed BIGINT NOT NULL,
+  status VARCHAR(20) NOT NULL DEFAULT 'CLAIMED',
+  error_message VARCHAR(1000) NULL,
+  created_at DATETIME NOT NULL,
+  completed_at DATETIME NULL,
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_stock_institution_decision_slot (portfolio_id, decision_slot),
+  KEY idx_stock_institution_decision_run_date (simulation_trade_date, portfolio_id, decision_slot),
+  KEY idx_stock_institution_decision_run_status (status, decision_slot, id),
+  CONSTRAINT chk_stock_institution_decision_run_mode CHECK (
+    CASE `execution_mode` WHEN 'SHADOW' THEN 1 WHEN 'PILOT' THEN 1 WHEN 'LIVE' THEN 1 ELSE 0 END = 1
+  ),
+  CONSTRAINT chk_stock_institution_decision_run_status CHECK (
+    CASE `status` WHEN 'CLAIMED' THEN 1 WHEN 'COMPLETED' THEN 1 WHEN 'FAILED' THEN 1 ELSE 0 END = 1
+  ),
+  CONSTRAINT chk_stock_institution_decision_run_version CHECK (policy_version > 0)
+);
+
+CREATE TABLE IF NOT EXISTS stock_institution_decision_item (
+  decision_run_id BIGINT NOT NULL,
+  symbol VARCHAR(20) NOT NULL,
+  primary_price_pressure INT NOT NULL,
+  primary_asset_preference_pressure INT NOT NULL,
+  primary_volatility_pressure INT NOT NULL,
+  primary_liquidity_pressure INT NOT NULL,
+  primary_execution_aggression_pressure INT NOT NULL,
+  secondary_price_pressure INT NOT NULL,
+  secondary_asset_preference_pressure INT NOT NULL,
+  secondary_volatility_pressure INT NOT NULL,
+  secondary_liquidity_pressure INT NOT NULL,
+  secondary_execution_aggression_pressure INT NOT NULL,
+  blended_price_pressure DECIMAL(8,6) NOT NULL,
+  blended_asset_preference_pressure DECIMAL(8,6) NOT NULL,
+  blended_volatility_pressure DECIMAL(8,6) NOT NULL,
+  blended_liquidity_pressure DECIMAL(8,6) NOT NULL,
+  blended_execution_aggression_pressure DECIMAL(8,6) NOT NULL,
+  return_5_day DECIMAL(12,8) NOT NULL,
+  return_20_day DECIMAL(12,8) NOT NULL,
+  report_pressure DECIMAL(8,6) NOT NULL,
+  current_price DECIMAL(19,2) NOT NULL,
+  liquid_asset_amount DECIMAL(19,2) NOT NULL,
+  actual_quantity BIGINT NOT NULL,
+  open_buy_quantity BIGINT NOT NULL,
+  open_sell_quantity BIGINT NOT NULL,
+  projected_quantity BIGINT NOT NULL,
+  actual_allocation_rate DECIMAL(12,8) NOT NULL,
+  projected_allocation_rate DECIMAL(12,8) NOT NULL,
+  base_allocation_rate DECIMAL(12,8) NOT NULL,
+  target_stock_allocation_rate DECIMAL(12,8) NOT NULL,
+  target_allocation_rate DECIMAL(12,8) NOT NULL,
+  target_amount DECIMAL(19,2) NOT NULL,
+  raw_trade_amount DECIMAL(19,2) NOT NULL,
+  gated_trade_amount DECIMAL(19,2) NOT NULL,
+  gated_quantity BIGINT NOT NULL,
+  action VARCHAR(10) NOT NULL,
+  decision_reason VARCHAR(50) NOT NULL,
+  gate_reason VARCHAR(100) NOT NULL,
+  reference_daily_volume BIGINT NOT NULL,
+  remaining_daily_quantity_budget BIGINT NOT NULL,
+  remaining_daily_notional_budget DECIMAL(19,2) NOT NULL,
+  created_at DATETIME NOT NULL,
+  PRIMARY KEY (decision_run_id, symbol),
+  KEY idx_stock_institution_decision_item_symbol (symbol, decision_run_id),
+  KEY idx_stock_institution_decision_item_action (action, decision_run_id, symbol),
+  CONSTRAINT chk_stock_institution_decision_item_pressure CHECK (
+    primary_price_pressure BETWEEN -100 AND 100
+    AND primary_asset_preference_pressure BETWEEN -100 AND 100
+    AND primary_volatility_pressure BETWEEN -100 AND 100
+    AND primary_liquidity_pressure BETWEEN -100 AND 100
+    AND primary_execution_aggression_pressure BETWEEN -100 AND 100
+    AND secondary_price_pressure BETWEEN -100 AND 100
+    AND secondary_asset_preference_pressure BETWEEN -100 AND 100
+    AND secondary_volatility_pressure BETWEEN -100 AND 100
+    AND secondary_liquidity_pressure BETWEEN -100 AND 100
+    AND secondary_execution_aggression_pressure BETWEEN -100 AND 100
+  ),
+  CONSTRAINT chk_stock_institution_decision_item_blended CHECK (
+    blended_price_pressure BETWEEN -1 AND 1
+    AND blended_asset_preference_pressure BETWEEN -1 AND 1
+    AND blended_volatility_pressure BETWEEN -1 AND 1
+    AND blended_liquidity_pressure BETWEEN -1 AND 1
+    AND blended_execution_aggression_pressure BETWEEN -1 AND 1
+    AND report_pressure BETWEEN -1 AND 1
+  ),
+  CONSTRAINT chk_stock_institution_decision_item_asset CHECK (
+    current_price >= 0
+    AND liquid_asset_amount >= 0
+    AND actual_quantity >= 0
+    AND open_buy_quantity >= 0
+    AND open_sell_quantity >= 0
+    AND projected_quantity >= 0
+  ),
+  CONSTRAINT chk_stock_institution_decision_item_rate CHECK (
+    actual_allocation_rate >= 0
+    AND projected_allocation_rate >= 0
+    AND base_allocation_rate >= 0
+    AND target_stock_allocation_rate BETWEEN 0 AND 1
+    AND target_allocation_rate BETWEEN 0 AND 1
+  ),
+  CONSTRAINT chk_stock_institution_decision_item_trade CHECK (
+    target_amount >= 0
+    AND raw_trade_amount >= 0
+    AND gated_trade_amount >= 0
+    AND gated_trade_amount <= raw_trade_amount
+    AND gated_quantity >= 0
+    AND reference_daily_volume > 0
+    AND remaining_daily_quantity_budget >= 0
+    AND remaining_daily_notional_budget >= 0
+  ),
+  CONSTRAINT chk_stock_institution_decision_item_action CHECK (
+    CASE `action` WHEN 'BUY' THEN 1 WHEN 'SELL' THEN 1 WHEN 'HOLD' THEN 1 ELSE 0 END = 1
+  )
+);
+
+CREATE TABLE IF NOT EXISTS stock_institution_daily_budget (
+  simulation_trade_date DATE NOT NULL,
+  portfolio_id BIGINT NOT NULL,
+  symbol VARCHAR(20) NOT NULL,
+  reference_daily_volume BIGINT NOT NULL,
+  gross_quantity_limit BIGINT NOT NULL,
+  gross_notional_limit DECIMAL(19,2) NOT NULL,
+  planned_buy_quantity BIGINT NOT NULL DEFAULT 0,
+  planned_sell_quantity BIGINT NOT NULL DEFAULT 0,
+  planned_buy_amount DECIMAL(19,2) NOT NULL DEFAULT 0.00,
+  planned_sell_amount DECIMAL(19,2) NOT NULL DEFAULT 0.00,
+  submitted_buy_amount DECIMAL(19,2) NOT NULL DEFAULT 0.00,
+  submitted_sell_amount DECIMAL(19,2) NOT NULL DEFAULT 0.00,
+  executed_buy_amount DECIMAL(19,2) NOT NULL DEFAULT 0.00,
+  executed_sell_amount DECIMAL(19,2) NOT NULL DEFAULT 0.00,
+  policy_version BIGINT NOT NULL,
+  version BIGINT NOT NULL DEFAULT 0,
+  created_at DATETIME NOT NULL,
+  updated_at DATETIME NOT NULL,
+  PRIMARY KEY (simulation_trade_date, portfolio_id, symbol),
+  KEY idx_stock_institution_daily_budget_portfolio (
+    portfolio_id, simulation_trade_date, symbol
+  ),
+  KEY idx_stock_institution_daily_budget_symbol (
+    simulation_trade_date, symbol, portfolio_id
+  ),
+  CONSTRAINT chk_stock_institution_daily_budget_limit CHECK (
+    reference_daily_volume > 0
+    AND gross_quantity_limit > 0
+    AND gross_notional_limit > 0
+  ),
+  CONSTRAINT chk_stock_institution_daily_budget_usage CHECK (
+    planned_buy_quantity >= 0
+    AND planned_sell_quantity >= 0
+    AND planned_buy_quantity + planned_sell_quantity <= gross_quantity_limit
+    AND planned_buy_amount >= 0
+    AND planned_sell_amount >= 0
+    AND planned_buy_amount + planned_sell_amount <= gross_notional_limit
+    AND submitted_buy_amount >= 0
+    AND submitted_sell_amount >= 0
+    AND executed_buy_amount >= 0
+    AND executed_sell_amount >= 0
+  ),
+  CONSTRAINT chk_stock_institution_daily_budget_version CHECK (
+    policy_version > 0 AND version >= 0
+  )
+);
+
+CREATE TABLE IF NOT EXISTS stock_institution_order_intent (
+  decision_run_id BIGINT NOT NULL,
+  symbol VARCHAR(20) NOT NULL,
+  portfolio_id BIGINT NOT NULL,
+  participant_id BIGINT NOT NULL,
+  account_id BIGINT NOT NULL,
+  side VARCHAR(10) NOT NULL,
+  requested_quantity BIGINT NOT NULL,
+  planned_amount DECIMAL(19,2) NOT NULL,
+  reference_daily_volume BIGINT NOT NULL,
+  execution_aggression_pressure DECIMAL(8,6) NOT NULL,
+  policy_version BIGINT NOT NULL,
+  status VARCHAR(20) NOT NULL DEFAULT 'PENDING',
+  attempt_count INT NOT NULL DEFAULT 0,
+  submitted_order_id BIGINT NULL,
+  submitted_price DECIMAL(19,2) NULL,
+  submitted_quantity BIGINT NOT NULL DEFAULT 0,
+  submission_reason VARCHAR(200) NULL,
+  created_at DATETIME NOT NULL,
+  updated_at DATETIME NOT NULL,
+  submitted_at DATETIME NULL,
+  PRIMARY KEY (decision_run_id, symbol),
+  UNIQUE KEY uk_stock_institution_order_intent_order (submitted_order_id),
+  KEY idx_stock_institution_order_intent_pending (
+    status, created_at, decision_run_id, symbol
+  ),
+  KEY idx_stock_institution_order_intent_portfolio (
+    portfolio_id, status, decision_run_id, symbol
+  ),
+  CONSTRAINT chk_stock_institution_order_intent_side CHECK (
+    CASE side WHEN 'BUY' THEN 1 WHEN 'SELL' THEN 1 ELSE 0 END = 1
+  ),
+  CONSTRAINT chk_stock_institution_order_intent_quantity CHECK (
+    requested_quantity > 0
+    AND planned_amount > 0
+    AND reference_daily_volume > 0
+    AND submitted_quantity >= 0
+    AND submitted_quantity <= requested_quantity
+  ),
+  CONSTRAINT chk_stock_institution_order_intent_pressure CHECK (
+    execution_aggression_pressure BETWEEN -1 AND 1
+  ),
+  CONSTRAINT chk_stock_institution_order_intent_status CHECK (
+    CASE status
+      WHEN 'PENDING' THEN 1
+      WHEN 'SUBMITTED' THEN 1
+      WHEN 'REJECTED' THEN 1
+      WHEN 'FAILED' THEN 1
+      ELSE 0
+    END = 1
+  ),
+  CONSTRAINT chk_stock_institution_order_intent_submission CHECK (
+    (
+      status = 'SUBMITTED'
+      AND submitted_order_id IS NOT NULL
+      AND submitted_price > 0
+      AND submitted_quantity > 0
+      AND submitted_at IS NOT NULL
+    )
+    OR (
+      status <> 'SUBMITTED'
+      AND submitted_order_id IS NULL
+      AND submitted_price IS NULL
+      AND submitted_quantity = 0
+      AND submitted_at IS NULL
+    )
+  ),
+  CONSTRAINT chk_stock_institution_order_intent_version CHECK (policy_version > 0),
+  CONSTRAINT chk_stock_institution_order_intent_attempt CHECK (
+    attempt_count BETWEEN 0 AND 3
+  )
+);
+
+CREATE TABLE IF NOT EXISTS stock_liquidity_mandate (
+  id BIGINT NOT NULL AUTO_INCREMENT,
+  participant_id BIGINT NOT NULL,
+  account_id BIGINT NOT NULL,
+  symbol VARCHAR(20) NOT NULL,
+  mandate_code VARCHAR(80) NOT NULL,
+  execution_mode VARCHAR(20) NOT NULL DEFAULT 'SHADOW',
+  status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE',
+  contract_start_date DATE NOT NULL,
+  contract_end_date DATE NULL,
+  target_spread_ticks INT NOT NULL DEFAULT 4,
+  max_spread_ticks INT NOT NULL DEFAULT 12,
+  max_order_quantity BIGINT NOT NULL,
+  reference_daily_volume BIGINT NOT NULL,
+  target_open_participation_rate DECIMAL(8,6) NOT NULL DEFAULT 0.050000,
+  max_open_participation_rate DECIMAL(8,6) NOT NULL DEFAULT 0.080000,
+  max_single_order_participation_rate DECIMAL(8,6) NOT NULL DEFAULT 0.010000,
+  external_depth_levels INT NOT NULL DEFAULT 5,
+  max_external_depth_participation_rate DECIMAL(8,6) NOT NULL DEFAULT 0.100000,
+  daily_execution_participation_rate DECIMAL(8,6) NOT NULL DEFAULT 0.100000,
+  daily_submission_multiplier DECIMAL(8,4) NOT NULL DEFAULT 2.0000,
+  target_inventory_quantity BIGINT NOT NULL,
+  inventory_band_quantity BIGINT NOT NULL,
+  inventory_skew_ticks INT NOT NULL DEFAULT 3,
+  primary_regime_weight DECIMAL(8,6) NOT NULL DEFAULT 0.700000,
+  liquidity_size_sensitivity DECIMAL(8,6) NOT NULL DEFAULT 0.250000,
+  volatility_spread_max_ticks INT NOT NULL DEFAULT 4,
+  price_regime_max_skew_ticks INT NOT NULL DEFAULT 1,
+  passive_only BOOLEAN NOT NULL DEFAULT TRUE,
+  minimum_quote_lifetime_seconds INT NOT NULL DEFAULT 30,
+  reprice_threshold_ticks INT NOT NULL DEFAULT 2,
+  order_ttl_seconds INT NOT NULL DEFAULT 300,
+  quote_interval_seconds INT NOT NULL DEFAULT 30,
+  daily_loss_limit_amount DECIMAL(19,2) NOT NULL,
+  next_quote_at DATETIME NULL,
+  policy_version BIGINT NOT NULL DEFAULT 1,
+  created_at DATETIME NOT NULL,
+  updated_at DATETIME NOT NULL,
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_stock_liquidity_mandate_code (mandate_code),
+  UNIQUE KEY uk_stock_liquidity_mandate_account (account_id),
+  UNIQUE KEY uk_stock_liquidity_mandate_symbol (symbol),
+  KEY idx_stock_liquidity_mandate_due (
+    status, execution_mode, next_quote_at, id
+  ),
+  KEY idx_stock_liquidity_mandate_participant (
+    participant_id, status, id
+  ),
+  CONSTRAINT chk_stock_liquidity_mandate_mode CHECK (
+    CASE `execution_mode`
+      WHEN 'SHADOW' THEN 1
+      WHEN 'PILOT' THEN 1
+      WHEN 'LIVE' THEN 1
+      ELSE 0
+    END = 1
+  ),
+  CONSTRAINT chk_stock_liquidity_mandate_status CHECK (
+    CASE `status`
+      WHEN 'ACTIVE' THEN 1
+      WHEN 'SUSPENDED' THEN 1
+      WHEN 'EXPIRED' THEN 1
+      ELSE 0
+    END = 1
+  ),
+  CONSTRAINT chk_stock_liquidity_mandate_contract CHECK (
+    contract_end_date IS NULL OR contract_end_date >= contract_start_date
+  ),
+  CONSTRAINT chk_stock_liquidity_mandate_spread CHECK (
+    target_spread_ticks BETWEEN 1 AND 50
+    AND max_spread_ticks BETWEEN target_spread_ticks AND 100
+  ),
+  CONSTRAINT chk_stock_liquidity_mandate_volume CHECK (
+    max_order_quantity > 0
+    AND reference_daily_volume > 0
+    AND target_open_participation_rate > 0
+    AND target_open_participation_rate <= 0.100000
+    AND max_open_participation_rate >= target_open_participation_rate
+    AND max_open_participation_rate <= 0.200000
+    AND max_single_order_participation_rate > 0
+    AND max_single_order_participation_rate <= target_open_participation_rate
+    AND external_depth_levels BETWEEN 1 AND 10
+    AND max_external_depth_participation_rate > 0
+    AND max_external_depth_participation_rate <= 0.250000
+    AND daily_execution_participation_rate > 0
+    AND daily_execution_participation_rate <= 0.300000
+    AND daily_submission_multiplier BETWEEN 1 AND 10
+  ),
+  CONSTRAINT chk_stock_liquidity_mandate_inventory CHECK (
+    target_inventory_quantity >= 0
+    AND inventory_band_quantity > 0
+    AND inventory_skew_ticks BETWEEN 0 AND 50
+  ),
+  CONSTRAINT chk_stock_liquidity_mandate_regime CHECK (
+    primary_regime_weight BETWEEN 0 AND 1
+    AND liquidity_size_sensitivity BETWEEN 0 AND 1
+    AND volatility_spread_max_ticks BETWEEN 0 AND 50
+    AND price_regime_max_skew_ticks BETWEEN 0 AND 5
+  ),
+  CONSTRAINT chk_stock_liquidity_mandate_timing CHECK (
+    minimum_quote_lifetime_seconds BETWEEN 10 AND 1800
+    AND reprice_threshold_ticks BETWEEN 1 AND 20
+    AND order_ttl_seconds >= minimum_quote_lifetime_seconds
+    AND order_ttl_seconds <= 7200
+    AND quote_interval_seconds BETWEEN 10 AND 600
+  ),
+  CONSTRAINT chk_stock_liquidity_mandate_loss CHECK (
+    daily_loss_limit_amount > 0
+  ),
+  CONSTRAINT chk_stock_liquidity_mandate_version CHECK (
+    policy_version > 0
+  )
+);
+
+CREATE TABLE IF NOT EXISTS stock_liquidity_daily_state (
+  simulation_trade_date DATE NOT NULL,
+  mandate_id BIGINT NOT NULL,
+  reference_daily_volume BIGINT NOT NULL,
+  execution_quantity_limit BIGINT NOT NULL,
+  submission_quantity_limit BIGINT NOT NULL,
+  submitted_buy_quantity BIGINT NOT NULL DEFAULT 0,
+  submitted_sell_quantity BIGINT NOT NULL DEFAULT 0,
+  submitted_buy_amount DECIMAL(19,2) NOT NULL DEFAULT 0.00,
+  submitted_sell_amount DECIMAL(19,2) NOT NULL DEFAULT 0.00,
+  cancelled_buy_quantity BIGINT NOT NULL DEFAULT 0,
+  cancelled_sell_quantity BIGINT NOT NULL DEFAULT 0,
+  executed_buy_quantity BIGINT NOT NULL DEFAULT 0,
+  executed_sell_quantity BIGINT NOT NULL DEFAULT 0,
+  executed_buy_amount DECIMAL(19,2) NOT NULL DEFAULT 0.00,
+  executed_sell_amount DECIMAL(19,2) NOT NULL DEFAULT 0.00,
+  realized_profit DECIMAL(19,2) NOT NULL DEFAULT 0.00,
+  unrealized_profit DECIMAL(19,2) NOT NULL DEFAULT 0.00,
+  opening_net_asset_value DECIMAL(19,2) NOT NULL DEFAULT 0.00,
+  current_net_asset_value DECIMAL(19,2) NOT NULL DEFAULT 0.00,
+  risk_profit DECIMAL(19,2) NOT NULL DEFAULT 0.00,
+  target_buy_open_quantity BIGINT NOT NULL DEFAULT 0,
+  target_sell_open_quantity BIGINT NOT NULL DEFAULT 0,
+  last_open_buy_quantity BIGINT NOT NULL DEFAULT 0,
+  last_open_sell_quantity BIGINT NOT NULL DEFAULT 0,
+  external_buy_depth_quantity BIGINT NOT NULL DEFAULT 0,
+  external_sell_depth_quantity BIGINT NOT NULL DEFAULT 0,
+  last_bid_price DECIMAL(19,2) NULL,
+  last_ask_price DECIMAL(19,2) NULL,
+  last_inventory_quantity BIGINT NOT NULL DEFAULT 0,
+  last_projected_inventory_quantity BIGINT NOT NULL DEFAULT 0,
+  blended_price_pressure DECIMAL(8,6) NOT NULL DEFAULT 0.000000,
+  blended_volatility_pressure DECIMAL(8,6) NOT NULL DEFAULT 0.000000,
+  blended_liquidity_pressure DECIMAL(8,6) NOT NULL DEFAULT 0.000000,
+  state_status VARCHAR(20) NOT NULL DEFAULT 'SHADOW',
+  gate_reason VARCHAR(120) NOT NULL DEFAULT 'NOT_RUN',
+  quote_run_count BIGINT NOT NULL DEFAULT 0,
+  limit_breached BOOLEAN NOT NULL DEFAULT FALSE,
+  policy_version BIGINT NOT NULL,
+  version BIGINT NOT NULL DEFAULT 0,
+  created_at DATETIME NOT NULL,
+  updated_at DATETIME NOT NULL,
+  PRIMARY KEY (simulation_trade_date, mandate_id),
+  KEY idx_stock_liquidity_daily_state_mandate (
+    mandate_id, simulation_trade_date
+  ),
+  KEY idx_stock_liquidity_daily_state_status (
+    simulation_trade_date, state_status, mandate_id
+  ),
+  CONSTRAINT chk_stock_liquidity_daily_state_limit CHECK (
+    reference_daily_volume > 0
+    AND execution_quantity_limit > 0
+    AND submission_quantity_limit >= execution_quantity_limit
+  ),
+  CONSTRAINT chk_stock_liquidity_daily_state_quantity CHECK (
+    submitted_buy_quantity >= 0
+    AND submitted_sell_quantity >= 0
+    AND submitted_buy_amount >= 0
+    AND submitted_sell_amount >= 0
+    AND cancelled_buy_quantity >= 0
+    AND cancelled_sell_quantity >= 0
+    AND executed_buy_quantity >= 0
+    AND executed_sell_quantity >= 0
+    AND executed_buy_amount >= 0
+    AND executed_sell_amount >= 0
+    AND opening_net_asset_value >= 0
+    AND current_net_asset_value >= 0
+    AND target_buy_open_quantity >= 0
+    AND target_sell_open_quantity >= 0
+    AND last_open_buy_quantity >= 0
+    AND last_open_sell_quantity >= 0
+    AND external_buy_depth_quantity >= 0
+    AND external_sell_depth_quantity >= 0
+    AND last_inventory_quantity >= 0
+    AND last_projected_inventory_quantity >= 0
+  ),
+  CONSTRAINT chk_stock_liquidity_daily_state_price CHECK (
+    (last_bid_price IS NULL OR last_bid_price > 0)
+    AND (last_ask_price IS NULL OR last_ask_price > 0)
+    AND (
+      last_bid_price IS NULL
+      OR last_ask_price IS NULL
+      OR last_bid_price < last_ask_price
+    )
+  ),
+  CONSTRAINT chk_stock_liquidity_daily_state_pressure CHECK (
+    blended_price_pressure BETWEEN -1 AND 1
+    AND blended_volatility_pressure BETWEEN -1 AND 1
+    AND blended_liquidity_pressure BETWEEN -1 AND 1
+  ),
+  CONSTRAINT chk_stock_liquidity_daily_state_status CHECK (
+    CASE `state_status`
+      WHEN 'SHADOW' THEN 1
+      WHEN 'QUOTING' THEN 1
+      WHEN 'EXEMPT' THEN 1
+      WHEN 'HALTED' THEN 1
+      WHEN 'ERROR' THEN 1
+      ELSE 0
+    END = 1
+  ),
+  CONSTRAINT chk_stock_liquidity_daily_state_version CHECK (
+    quote_run_count >= 0 AND policy_version > 0 AND version >= 0
+  )
+);
+
+CREATE TABLE IF NOT EXISTS stock_liquidity_transition (
+  id BIGINT NOT NULL AUTO_INCREMENT,
+  transition_key VARCHAR(120) NOT NULL,
+  symbol VARCHAR(20) NOT NULL,
+  mandate_id BIGINT NOT NULL,
+  participant_id BIGINT NOT NULL,
+  liquidity_account_id BIGINT NOT NULL,
+  source_account_id BIGINT NOT NULL,
+  legacy_account_id BIGINT NULL,
+  stage VARCHAR(30) NOT NULL DEFAULT 'SHADOW_READY',
+  reference_daily_volume BIGINT NOT NULL,
+  seed_inventory_quantity BIGINT NOT NULL,
+  seed_cash_amount DECIMAL(19,2) NOT NULL,
+  effective_business_date DATE NOT NULL,
+  legacy_disabled_at DATETIME NULL,
+  activated_at DATETIME NULL,
+  requested_by VARCHAR(64) NOT NULL,
+  change_reason VARCHAR(500) NOT NULL,
+  policy_version BIGINT NOT NULL DEFAULT 1,
+  created_at DATETIME NOT NULL,
+  updated_at DATETIME NOT NULL,
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_stock_liquidity_transition_key (transition_key),
+  UNIQUE KEY uk_stock_liquidity_transition_symbol (symbol),
+  UNIQUE KEY uk_stock_liquidity_transition_mandate (mandate_id),
+  UNIQUE KEY uk_stock_liquidity_transition_account (liquidity_account_id),
+  KEY idx_stock_liquidity_transition_stage (
+    stage, effective_business_date, symbol
+  ),
+  KEY idx_stock_liquidity_transition_source (
+    source_account_id, symbol, id
+  ),
+  CONSTRAINT chk_stock_liquidity_transition_stage CHECK (
+    CASE stage
+      WHEN 'SHADOW_READY' THEN 1
+      WHEN 'LIVE_ACTIVE' THEN 1
+      WHEN 'SUSPENDED' THEN 1
+      ELSE 0
+    END = 1
+  ),
+  CONSTRAINT chk_stock_liquidity_transition_seed CHECK (
+    reference_daily_volume > 0
+    AND seed_inventory_quantity > 0
+    AND seed_cash_amount > 0
+  ),
+  CONSTRAINT chk_stock_liquidity_transition_activation CHECK (
+    (
+      stage = 'SHADOW_READY'
+      AND legacy_disabled_at IS NULL
+      AND activated_at IS NULL
+    )
+    OR (
+      stage IN ('LIVE_ACTIVE', 'SUSPENDED')
+      AND activated_at IS NOT NULL
+    )
+  ),
+  CONSTRAINT chk_stock_liquidity_transition_audit CHECK (
+    transition_key <> ''
+    AND requested_by <> ''
+    AND change_reason <> ''
+    AND policy_version > 0
+  )
+);
+
 CREATE TABLE IF NOT EXISTS stock_order_book_daily_regime (
   symbol VARCHAR(20) NOT NULL,
   simulation_trade_date DATE NOT NULL,
@@ -1725,5 +2648,218 @@ CREATE TABLE IF NOT EXISTS portfolio_snapshot (
   CONSTRAINT chk_portfolio_snapshot_data_quality CHECK (
     data_quality_status IS NULL
     OR CASE `data_quality_status` WHEN 'VERIFIED' THEN 1 WHEN 'WARNING' THEN 1 WHEN 'INVALID' THEN 1 ELSE 0 END = 1
+  )
+);
+
+INSERT INTO stock_market_participant(
+    participant_code, display_name, participant_type, status,
+    self_trade_group_id, created_at, updated_at
+)
+SELECT
+    'DEFAULT_ISSUE_UNDERWRITER', '기본 인수기관', 'ISSUE_UNDERWRITER', 'ACTIVE',
+    'ISSUE_UNDERWRITER:DEFAULT', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+WHERE NOT EXISTS (
+    SELECT 1
+      FROM stock_market_participant
+     WHERE participant_code = 'DEFAULT_ISSUE_UNDERWRITER'
+);
+
+INSERT INTO stock_market_participant(
+    participant_code, display_name, participant_type, status,
+    self_trade_group_id, created_at, updated_at
+)
+SELECT
+    'DEFAULT_LIQUIDITY_PROVIDER', '기본 유동성공급기관',
+    'LIQUIDITY_PROVIDER', 'ACTIVE',
+    'LIQUIDITY_PROVIDER:DEFAULT', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+WHERE NOT EXISTS (
+    SELECT 1
+      FROM stock_market_participant
+     WHERE participant_code = 'DEFAULT_LIQUIDITY_PROVIDER'
+);
+
+CREATE TABLE IF NOT EXISTS stock_underwriting_contract (
+  id BIGINT NOT NULL AUTO_INCREMENT,
+  contract_code VARCHAR(80) NOT NULL,
+  corporate_action_id BIGINT NULL,
+  symbol VARCHAR(20) NOT NULL,
+  participant_id BIGINT NOT NULL,
+  account_id BIGINT NOT NULL,
+  total_issue_quantity BIGINT NOT NULL,
+  tradable_allocation_quantity BIGINT NOT NULL,
+  locked_allocation_quantity BIGINT NOT NULL,
+  external_allocation_quantity BIGINT NOT NULL DEFAULT 0,
+  underwritten_quantity BIGINT NOT NULL,
+  issue_price DECIMAL(19,2) NOT NULL,
+  underwriting_type VARCHAR(30) NOT NULL DEFAULT 'FIRM_COMMITMENT',
+  stabilization_start_date DATE NULL,
+  stabilization_end_date DATE NULL,
+  stabilization_quantity_limit BIGINT NOT NULL DEFAULT 0,
+  stabilization_amount_limit DECIMAL(19,2) NOT NULL DEFAULT 0.00,
+  status VARCHAR(20) NOT NULL DEFAULT 'ALLOCATED',
+  policy_version BIGINT NOT NULL DEFAULT 1,
+  created_at DATETIME NOT NULL,
+  updated_at DATETIME NOT NULL,
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_stock_underwriting_contract_code (contract_code),
+  UNIQUE KEY uk_stock_underwriting_contract_action (corporate_action_id),
+  KEY idx_stock_underwriting_contract_symbol (symbol, status, id),
+  KEY idx_stock_underwriting_contract_participant (
+    participant_id, status, symbol, id
+  ),
+  KEY idx_stock_underwriting_contract_account (account_id, status, symbol, id),
+  CONSTRAINT chk_stock_underwriting_contract_quantity CHECK (
+    total_issue_quantity > 0
+    AND tradable_allocation_quantity > 0
+    AND locked_allocation_quantity >= 0
+    AND external_allocation_quantity >= 0
+    AND underwritten_quantity >= 0
+    AND tradable_allocation_quantity + locked_allocation_quantity = total_issue_quantity
+    AND external_allocation_quantity + underwritten_quantity = tradable_allocation_quantity
+  ),
+  CONSTRAINT chk_stock_underwriting_contract_price CHECK (issue_price > 0),
+  CONSTRAINT chk_stock_underwriting_contract_type CHECK (
+    CASE underwriting_type
+      WHEN 'FIRM_COMMITMENT' THEN 1
+      WHEN 'BEST_EFFORTS' THEN 1
+      ELSE 0
+    END = 1
+  ),
+  CONSTRAINT chk_stock_underwriting_contract_stabilization CHECK (
+    stabilization_quantity_limit >= 0
+    AND stabilization_amount_limit >= 0
+    AND (
+      stabilization_start_date IS NULL
+      OR stabilization_end_date IS NULL
+      OR stabilization_end_date >= stabilization_start_date
+    )
+  ),
+  CONSTRAINT chk_stock_underwriting_contract_status CHECK (
+    CASE status
+      WHEN 'ALLOCATED' THEN 1
+      WHEN 'STABILIZING' THEN 1
+      WHEN 'COMPLETED' THEN 1
+      WHEN 'CANCELLED' THEN 1
+      ELSE 0
+    END = 1
+  ),
+  CONSTRAINT chk_stock_underwriting_contract_version CHECK (policy_version > 0)
+);
+
+CREATE TABLE IF NOT EXISTS stock_underwriting_daily_supply_state (
+  simulation_trade_date DATE NOT NULL,
+  underwriting_contract_id BIGINT NOT NULL,
+  reference_daily_volume BIGINT NOT NULL,
+  submission_quantity_limit BIGINT NOT NULL,
+  submission_amount_limit DECIMAL(19,2) NOT NULL,
+  submitted_quantity BIGINT NOT NULL DEFAULT 0,
+  submitted_amount DECIMAL(19,2) NOT NULL DEFAULT 0.00,
+  generated_order_count BIGINT NOT NULL DEFAULT 0,
+  cancelled_order_count BIGINT NOT NULL DEFAULT 0,
+  last_order_price DECIMAL(19,2) NULL,
+  state_status VARCHAR(20) NOT NULL DEFAULT 'GATED',
+  gate_reason VARCHAR(80) NOT NULL DEFAULT 'NOT_RUN',
+  policy_version BIGINT NOT NULL,
+  version BIGINT NOT NULL DEFAULT 0,
+  created_at DATETIME NOT NULL,
+  updated_at DATETIME NOT NULL,
+  PRIMARY KEY (simulation_trade_date, underwriting_contract_id),
+  KEY idx_stock_underwriting_supply_contract (
+    underwriting_contract_id, simulation_trade_date
+  ),
+  KEY idx_stock_underwriting_supply_status (
+    simulation_trade_date, state_status, underwriting_contract_id
+  ),
+  CONSTRAINT chk_stock_underwriting_supply_limits CHECK (
+    reference_daily_volume >= 0
+    AND submission_quantity_limit >= 0
+    AND submission_amount_limit >= 0
+  ),
+  CONSTRAINT chk_stock_underwriting_supply_usage CHECK (
+    submitted_quantity >= 0
+    AND submitted_amount >= 0
+    AND submitted_quantity <= submission_quantity_limit
+    AND submitted_amount <= submission_amount_limit
+    AND generated_order_count >= 0
+    AND cancelled_order_count >= 0
+  ),
+  CONSTRAINT chk_stock_underwriting_supply_price CHECK (
+    last_order_price IS NULL OR last_order_price > 0
+  ),
+  CONSTRAINT chk_stock_underwriting_supply_status CHECK (
+    CASE state_status
+      WHEN 'ACTIVE' THEN 1
+      WHEN 'GATED' THEN 1
+      WHEN 'COMPLETED' THEN 1
+      WHEN 'SUSPENDED' THEN 1
+      ELSE 0
+    END = 1
+  ),
+  CONSTRAINT chk_stock_underwriting_supply_version CHECK (
+    policy_version > 0 AND version >= 0
+  )
+);
+
+CREATE TABLE IF NOT EXISTS stock_security_allocation_ledger (
+  id BIGINT NOT NULL AUTO_INCREMENT,
+  idempotency_key VARCHAR(120) NOT NULL,
+  event_type VARCHAR(40) NOT NULL,
+  corporate_action_id BIGINT NULL,
+  underwriting_contract_id BIGINT NULL,
+  source_account_id BIGINT NULL,
+  destination_account_id BIGINT NOT NULL,
+  symbol VARCHAR(20) NOT NULL,
+  quantity BIGINT NOT NULL,
+  unit_price DECIMAL(19,2) NOT NULL,
+  allocation_reason VARCHAR(50) NOT NULL,
+  tradability_status VARCHAR(20) NOT NULL,
+  effective_business_date DATE NOT NULL,
+  unlock_business_date DATE NULL,
+  created_at DATETIME NOT NULL,
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_stock_security_allocation_idempotency (idempotency_key),
+  KEY idx_stock_security_allocation_symbol (
+    symbol, effective_business_date, id
+  ),
+  KEY idx_stock_security_allocation_destination (
+    destination_account_id, symbol, effective_business_date, id
+  ),
+  KEY idx_stock_security_allocation_contract (
+    underwriting_contract_id, id
+  ),
+  CONSTRAINT chk_stock_security_allocation_event CHECK (
+    CASE event_type
+      WHEN 'INITIAL_ISSUE' THEN 1
+      WHEN 'CAPITAL_INCREASE' THEN 1
+      WHEN 'LOCK_RELEASE' THEN 1
+      WHEN 'MANUAL_REALLOCATION' THEN 1
+      ELSE 0
+    END = 1
+  ),
+  CONSTRAINT chk_stock_security_allocation_amount CHECK (
+    quantity > 0 AND unit_price >= 0
+  ),
+  CONSTRAINT chk_stock_security_allocation_reason CHECK (
+    CASE allocation_reason
+      WHEN 'INITIAL_FLOAT_UNDERWRITER' THEN 1
+      WHEN 'INITIAL_LOCKED_CUSTODY' THEN 1
+      WHEN 'PUBLIC_ALLOCATION' THEN 1
+      WHEN 'UNSOLD_UNDERWRITING' THEN 1
+      WHEN 'CORPORATE_ACTION_ALLOCATION' THEN 1
+      WHEN 'LOCK_RELEASE' THEN 1
+      WHEN 'LIQUIDITY_SEED_TRANSFER' THEN 1
+      ELSE 0
+    END = 1
+  ),
+  CONSTRAINT chk_stock_security_allocation_tradability CHECK (
+    CASE tradability_status
+      WHEN 'TRADABLE' THEN 1
+      WHEN 'LOCKED' THEN 1
+      ELSE 0
+    END = 1
+  ),
+  CONSTRAINT chk_stock_security_allocation_unlock CHECK (
+    unlock_business_date IS NULL
+    OR unlock_business_date >= effective_business_date
   )
 );

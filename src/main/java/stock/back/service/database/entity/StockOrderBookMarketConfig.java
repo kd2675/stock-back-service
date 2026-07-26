@@ -45,6 +45,18 @@ public class StockOrderBookMarketConfig {
         return config;
     }
 
+    public static StockOrderBookMarketConfig pendingActivation(
+            String symbol,
+            LocalDateTime updatedAt
+    ) {
+        StockOrderBookMarketConfig config = new StockOrderBookMarketConfig();
+        config.symbol = symbol;
+        config.enabled = false;
+        config.marketStatus = MarketSessionStatus.CLOSED;
+        config.updatedAt = updatedAt == null ? LocalDateTime.now() : updatedAt;
+        return config;
+    }
+
     public void updateStatus(Boolean enabled, MarketSessionStatus marketStatus) {
         updateStatus(enabled, marketStatus, LocalDateTime.now());
     }

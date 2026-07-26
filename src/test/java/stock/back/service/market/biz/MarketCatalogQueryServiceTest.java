@@ -94,7 +94,8 @@ class MarketCatalogQueryServiceTest {
         StockAccount firstAccount = account(101L, "user-a");
         StockAccount secondAccount = account(102L, "user-b");
         when(marker.getSnapshotDate()).thenReturn(latestSnapshotDate);
-        when(portfolioSnapshotRepository.findTopByOrderBySnapshotDateDesc()).thenReturn(Optional.of(marker));
+        when(portfolioSnapshotRepository.findTopRankingEligibleByOrderBySnapshotDateDesc())
+                .thenReturn(Optional.of(marker));
         when(portfolioSnapshotRepository.findTop20BySnapshotDateOrderByReturnRateDesc(latestSnapshotDate))
                 .thenReturn(List.of(first, second));
         when(stockAccountRepository.findAllById(List.of(101L, 102L))).thenReturn(List.of(firstAccount, secondAccount));

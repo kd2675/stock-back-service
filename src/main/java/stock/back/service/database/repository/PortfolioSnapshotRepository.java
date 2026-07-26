@@ -15,11 +15,22 @@ public interface PortfolioSnapshotRepository extends JpaRepository<PortfolioSnap
               from portfolio_snapshot ps
               left join stock_post_close_cycle cycle
                 on cycle.id = ps.close_cycle_id
+              left join stock_close_account_snapshot account_snapshot
+                on account_snapshot.close_cycle_id = ps.close_cycle_id
+               and account_snapshot.account_id = ps.account_id
+              left join stock_account current_account
+                on current_account.id = ps.account_id
              where ps.snapshot_date = :snapshotDate
                and ps.return_rate_status = 'DEFINED'
                and ps.return_rate is not null
                and (
-                   (ps.close_cycle_id is null and ps.close_run_id is null)
+                   (
+                       ps.close_cycle_id is null
+                       and ps.close_run_id is null
+                       and current_account.participant_category in (
+                           'MANUAL_PARTICIPANT', 'AUTO_PARTICIPANT'
+                       )
+                   )
                    or (
                        cycle.scope_type = 'FULL_MARKET'
                        and cycle.scope_key = 'ALL'
@@ -27,6 +38,9 @@ public interface PortfolioSnapshotRepository extends JpaRepository<PortfolioSnap
                            'PORTFOLIO_SETTLED', 'OVERNIGHT_CASH_APPLIED', 'CORPORATE_CASH_APPLIED',
                            'REPORTS_AGGREGATED', 'PREOPEN_SECURITY_TRANSFORMS_APPLIED',
                            'MARKET_DATA_PREPARED', 'AUTO_MARKET_PREPARED', 'READY_TO_OPEN', 'COMPLETED'
+                       )
+                       and account_snapshot.participant_category in (
+                           'MANUAL_PARTICIPANT', 'AUTO_PARTICIPANT'
                        )
                    )
                )
@@ -65,8 +79,19 @@ public interface PortfolioSnapshotRepository extends JpaRepository<PortfolioSnap
               from portfolio_snapshot ps
               left join stock_post_close_cycle cycle
                 on cycle.id = ps.close_cycle_id
+              left join stock_close_account_snapshot account_snapshot
+                on account_snapshot.close_cycle_id = ps.close_cycle_id
+               and account_snapshot.account_id = ps.account_id
+              left join stock_account current_account
+                on current_account.id = ps.account_id
              where (
-                   (ps.close_cycle_id is null and ps.close_run_id is null)
+                   (
+                       ps.close_cycle_id is null
+                       and ps.close_run_id is null
+                       and current_account.participant_category in (
+                           'MANUAL_PARTICIPANT', 'AUTO_PARTICIPANT'
+                       )
+                   )
                    or (
                        cycle.scope_type = 'FULL_MARKET'
                        and cycle.scope_key = 'ALL'
@@ -75,10 +100,15 @@ public interface PortfolioSnapshotRepository extends JpaRepository<PortfolioSnap
                            'REPORTS_AGGREGATED', 'PREOPEN_SECURITY_TRANSFORMS_APPLIED',
                            'MARKET_DATA_PREPARED', 'AUTO_MARKET_PREPARED', 'READY_TO_OPEN', 'COMPLETED'
                        )
+                       and account_snapshot.participant_category in (
+                           'MANUAL_PARTICIPANT', 'AUTO_PARTICIPANT'
+                       )
                    )
                )
+               and ps.return_rate_status = 'DEFINED'
+               and ps.return_rate is not null
              order by ps.snapshot_date desc, ps.id desc
              limit 1
             """, nativeQuery = true)
-    Optional<PortfolioSnapshot> findTopByOrderBySnapshotDateDesc();
+    Optional<PortfolioSnapshot> findTopRankingEligibleByOrderBySnapshotDateDesc();
 }

@@ -12,6 +12,7 @@ import stock.back.service.database.entity.OrderType;
 import stock.back.service.database.entity.StockAccount;
 import stock.back.service.database.entity.StockHolding;
 import stock.back.service.database.entity.StockOrder;
+import stock.back.service.database.entity.StockOrderOriginType;
 import stock.back.service.database.repository.StockOrderRepository;
 import stock.back.service.trading.vo.ExecutionResponse;
 import stock.back.service.trading.vo.FundFlowResponse;
@@ -60,6 +61,15 @@ public class TradingService {
         TradingSessionFenceService.TradingSessionApproval sessionApproval =
                 tradingSessionFenceService.acquireOpenSession(symbol, marketType);
         StockAccount account = accountService.requireAccountForUpdate(userKey);
+        if (account.getParticipantCategory() == null
+                || !account.getParticipantCategory().canSubmitUserOrders()) {
+            throw StockException.conflict(
+                    "Account role cannot submit user orders: "
+                            + (account.getParticipantCategory() == null
+                                    ? "UNKNOWN"
+                                    : account.getParticipantCategory().name())
+            );
+        }
         LocalDateTime orderedAt = sessionApproval.businessEffectiveAt();
 
         if (request.side() == OrderSide.BUY) {
@@ -87,6 +97,8 @@ public class TradingService {
                 request.orderType() == OrderType.LIMIT ? request.limitPrice() : null,
                 request.quantity(),
                 reservedCash,
+                StockOrderOriginType.MANUAL_PARTICIPANT,
+                account.resolveSelfTradeGroupId(),
                 orderedAt
         );
 

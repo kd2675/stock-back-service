@@ -37,7 +37,11 @@ public class InstrumentMarketReportAnalyticsQueryService {
     private static final List<String> FLOW_CATEGORIES = List.of(
             "MANUAL_PARTICIPANT",
             "AUTO_PARTICIPANT",
-            "LISTING_UNDERWRITER"
+            "INSTITUTIONAL_INVESTOR",
+            "LIQUIDITY_PROVIDER",
+            "ISSUE_UNDERWRITER",
+            "LISTING_UNDERWRITER",
+            "SYSTEM_CUSTODY"
     );
     private final JdbcClient jdbcClient;
     private final MeterRegistry meterRegistry;

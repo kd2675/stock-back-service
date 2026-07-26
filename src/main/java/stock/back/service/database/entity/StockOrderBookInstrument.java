@@ -99,6 +99,38 @@ public class StockOrderBookInstrument {
         return instrument;
     }
 
+    public static StockOrderBookInstrument listedWithTradableShares(
+            String symbol,
+            String name,
+            String market,
+            BigDecimal initialPrice,
+            long issuedShares,
+            long tradableShares,
+            BigDecimal tickSize,
+            BigDecimal priceLimitRate,
+            LocalDateTime listedAt
+    ) {
+        if (issuedShares <= 0L
+                || tradableShares <= 0L
+                || tradableShares > issuedShares) {
+            throw new IllegalArgumentException(
+                    "Tradable shares must be positive and cannot exceed issued shares"
+            );
+        }
+        StockOrderBookInstrument instrument = listed(
+                symbol,
+                name,
+                market,
+                initialPrice,
+                issuedShares,
+                tickSize,
+                priceLimitRate,
+                listedAt
+        );
+        instrument.tradableShares = tradableShares;
+        return instrument;
+    }
+
     public void issueShares(long shares) {
         if (shares <= 0) {
             throw new IllegalArgumentException("Issued shares must be positive");

@@ -86,7 +86,7 @@ public class MarketCatalogQueryService {
 
     @Transactional(readOnly = true)
     public List<RankingResponse> getRankings() {
-        LocalDate rankingDate = portfolioSnapshotRepository.findTopByOrderBySnapshotDateDesc()
+        LocalDate rankingDate = portfolioSnapshotRepository.findTopRankingEligibleByOrderBySnapshotDateDesc()
                 .map(PortfolioSnapshot::getSnapshotDate)
                 .orElse(null);
         if (rankingDate == null) {

@@ -9,6 +9,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import stock.back.service.common.exception.StockException;
+import stock.back.service.database.entity.MarketSessionStatus;
 import stock.back.service.database.entity.StockAutoMarketConfig;
 import stock.back.service.database.entity.StockCorporateAction;
 import stock.back.service.database.entity.StockCorporateActionStatus;
@@ -24,9 +25,13 @@ import stock.back.service.database.repository.StockListingAutoAccountConfigRepos
 import stock.back.service.database.repository.StockOrderBookInstrumentRepository;
 import stock.back.service.database.repository.StockOrderBookMarketConfigRepository;
 import stock.back.service.database.repository.StockPriceRepository;
+import stock.back.service.market.vo.InitialIssueAllocationRequest;
 import stock.back.service.market.vo.OrderBookInstrumentRequest;
+import web.common.core.simulation.SimulationClockSnapshot;
+import web.common.core.simulation.SimulationMarketSession;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.Optional;
 
@@ -68,7 +73,10 @@ class OrderBookInstrumentCommandServiceTest {
     @Mock
     private MarketLedgerFreezeGuard marketLedgerFreezeGuard;
 
-    private final LocalDateTime simulationNow = LocalDateTime.of(2026, 7, 1, 10, 0);
+    @Mock
+    private SimulationMarketSessionService marketSessionService;
+
+    private final LocalDateTime simulationNow = LocalDateTime.of(2026, 7, 1, 5, 0);
     private JdbcTemplate jdbcTemplate;
 
     private OrderBookInstrumentCommandService service;
@@ -77,6 +85,12 @@ class OrderBookInstrumentCommandServiceTest {
     void setUp() {
         jdbcTemplate = createJdbcTemplate();
         lenient().when(simulationClockService.currentMarketDateTime()).thenReturn(simulationNow);
+        lenient().when(simulationClockService.currentSnapshot())
+                .thenReturn(pausedClock(simulationNow));
+        lenient().when(marketSessionService.currentSession())
+                .thenReturn(SimulationMarketSession.PRE_OPEN);
+        lenient().when(marketLedgerFreezeGuard.acquireMutationPermit(any()))
+                .thenReturn(simulationNow.toLocalDate());
         service = new OrderBookInstrumentCommandService(
                 stockInstrumentRepository,
                 stockPriceRepository,
@@ -87,6 +101,7 @@ class OrderBookInstrumentCommandServiceTest {
                 stockListingAutoAccountConfigRepository,
                 jdbcTemplate,
                 simulationClockService,
+                marketSessionService,
                 marketLedgerFreezeGuard
         );
     }
@@ -107,7 +122,8 @@ class OrderBookInstrumentCommandServiceTest {
                         new BigDecimal("70000.00"),
                         100000L,
                         new BigDecimal("30.00"),
-                        null
+                        null,
+                        new InitialIssueAllocationRequest("LEGACY_FULL_FLOAT", null)
                 )
         );
 
@@ -133,6 +149,9 @@ class OrderBookInstrumentCommandServiceTest {
         assertThat(actionCaptor.getValue().getCreatedAt()).isEqualTo(simulationNow);
         assertThat(actionCaptor.getValue().getListedAt()).isEqualTo(simulationNow);
         assertThat(marketConfigCaptor.getValue().getUpdatedAt()).isEqualTo(simulationNow);
+        assertThat(marketConfigCaptor.getValue().getEnabled()).isTrue();
+        assertThat(marketConfigCaptor.getValue().getMarketStatus())
+                .isEqualTo(MarketSessionStatus.OPEN);
         assertThat(autoMarketConfigCaptor.getValue().getUpdatedAt()).isEqualTo(simulationNow);
         assertThat(priceCaptor.getValue().getPriceTime()).isEqualTo(simulationNow);
         assertThat(listingConfigCaptor.getValue().getUserKey()).isEqualTo("stock-listing-zq001");
@@ -157,6 +176,30 @@ class OrderBookInstrumentCommandServiceTest {
                 accountId,
                 "ZQ001"
         )).isEqualByComparingTo(new BigDecimal("70000.00"));
+    }
+
+    @Test
+    void createOrderBookInstrument_runningClock_rejectsBeforeLedgerMutation() {
+        when(simulationClockService.currentSnapshot())
+                .thenReturn(runningClock(simulationNow));
+
+        assertThatThrownBy(() -> service.createOrderBookInstrument(
+                new OrderBookInstrumentRequest(
+                        "zq001",
+                        "제로큐 주문장",
+                        "ORDERBOOK",
+                        new BigDecimal("70000.00"),
+                        100000L,
+                        null,
+                        null
+                )
+        ))
+                .isInstanceOf(StockException.class)
+                .hasMessageContaining("Pause the simulation clock");
+
+        verify(marketLedgerFreezeGuard, never()).acquireMutationPermit(any());
+        verify(stockOrderBookInstrumentRepository, never()).save(any());
+        verify(stockCorporateActionRepository, never()).save(any());
     }
 
     @Test
@@ -210,5 +253,33 @@ class OrderBookInstrumentCommandServiceTest {
                 )
                 """);
         return template;
+    }
+
+    private SimulationClockSnapshot pausedClock(LocalDateTime simulationDateTime) {
+        return clock(simulationDateTime, false);
+    }
+
+    private SimulationClockSnapshot runningClock(LocalDateTime simulationDateTime) {
+        return clock(simulationDateTime, true);
+    }
+
+    private SimulationClockSnapshot clock(
+            LocalDateTime simulationDateTime,
+            boolean running
+    ) {
+        LocalDate date = simulationDateTime.toLocalDate();
+        return new SimulationClockSnapshot(
+                date,
+                simulationDateTime,
+                date.atStartOfDay(),
+                simulationDateTime,
+                date.atStartOfDay(),
+                7_200,
+                running,
+                false,
+                0L,
+                running ? simulationDateTime : null,
+                running ? simulationDateTime : null
+        );
     }
 }
