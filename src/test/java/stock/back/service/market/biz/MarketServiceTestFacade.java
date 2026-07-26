@@ -27,8 +27,6 @@ import stock.back.service.market.vo.CorporateActionResponse;
 import stock.back.service.market.vo.InstrumentResponse;
 import stock.back.service.market.vo.InstrumentReportRequest;
 import stock.back.service.market.vo.InstrumentReportResponse;
-import stock.back.service.market.vo.ListingAutoAccountRequest;
-import stock.back.service.market.vo.ListingAutoAccountResponse;
 import stock.back.service.market.vo.MarketStatusUpdateRequest;
 import stock.back.service.market.vo.OrderBookInstrumentRequest;
 import stock.back.service.market.vo.OrderBookInstrumentResponse;
@@ -280,7 +278,6 @@ public class MarketServiceTestFacade {
             boolean includeParticipants,
             boolean includeParticipantSymbolConfigs,
             boolean includeParticipantProfileConfigs,
-            boolean includeListingAutoAccounts,
             boolean includeRuntimeMetrics
     ) {
         return autoMarketStatusQueryService.getAutoMarketStatus(
@@ -288,7 +285,6 @@ public class MarketServiceTestFacade {
                 includeParticipants,
                 includeParticipantSymbolConfigs,
                 includeParticipantProfileConfigs,
-                includeListingAutoAccounts,
                 includeRuntimeMetrics,
                 true,
                 null
@@ -301,7 +297,6 @@ public class MarketServiceTestFacade {
             boolean includeParticipants,
             boolean includeParticipantSymbolConfigs,
             boolean includeParticipantProfileConfigs,
-            boolean includeListingAutoAccounts,
             boolean includeRuntimeMetrics,
             boolean includeSalaryEligibility,
             String participantSymbolConfigUserKey
@@ -311,7 +306,6 @@ public class MarketServiceTestFacade {
                 includeParticipants,
                 includeParticipantSymbolConfigs,
                 includeParticipantProfileConfigs,
-                includeListingAutoAccounts,
                 includeRuntimeMetrics,
                 includeSalaryEligibility,
                 participantSymbolConfigUserKey
@@ -329,11 +323,6 @@ public class MarketServiceTestFacade {
             AutoParticipantProfileConfigRequest request
     ) {
         return autoParticipantProfileConfigService.updateAutoParticipantProfileConfig(profileTypeValue, request);
-    }
-
-    @Transactional
-    public ListingAutoAccountResponse updateListingAutoAccountConfig(String symbol, ListingAutoAccountRequest request) {
-        return autoMarketConfigService.updateListingAutoAccountConfig(symbol, request);
     }
 
     @Transactional(readOnly = true)

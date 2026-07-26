@@ -50,15 +50,13 @@ public class LiquidityProviderTransitionService {
     private final SimulationClockService simulationClockService;
     private final SimulationMarketSessionService marketSessionService;
     private final MarketLedgerFreezeGuard marketLedgerFreezeGuard;
-    private final MarketRoleOrderCleanupService marketRoleOrderCleanupService;
 
     public LiquidityProviderTransitionService(
             JdbcTemplate jdbcTemplate,
             ObjectMapper objectMapper,
             SimulationClockService simulationClockService,
             SimulationMarketSessionService marketSessionService,
-            MarketLedgerFreezeGuard marketLedgerFreezeGuard,
-            MarketRoleOrderCleanupService marketRoleOrderCleanupService
+            MarketLedgerFreezeGuard marketLedgerFreezeGuard
     ) {
         this.jdbcTemplate = jdbcTemplate;
         this.jdbcClient = JdbcClient.create(jdbcTemplate);
@@ -66,7 +64,6 @@ public class LiquidityProviderTransitionService {
         this.simulationClockService = simulationClockService;
         this.marketSessionService = marketSessionService;
         this.marketLedgerFreezeGuard = marketLedgerFreezeGuard;
-        this.marketRoleOrderCleanupService = marketRoleOrderCleanupService;
     }
 
     @Transactional(transactionManager = "pubJdbcTransactionManager")
@@ -108,29 +105,10 @@ public class LiquidityProviderTransitionService {
                     "A liquidity-provider mandate already exists for " + normalizedSymbol
             );
         }
-        LegacyLiquidity legacyLiquidity = lockLegacyLiquidity(normalizedSymbol);
-        Long legacyAccountId = legacyLiquidity == null
-                ? null
-                : legacyLiquidity.accountId();
         long sourceAccountId = resolveSourceAccountId(
                 normalizedSymbol,
-                request == null ? null : request.sourceAccountId(),
-                legacyAccountId
+                request == null ? null : request.sourceAccountId()
         );
-        if (legacyAccountId != null) {
-            marketRoleOrderCleanupService.cancelOpenOrderBookOrders(
-                    legacyAccountId,
-                    "LISTING_UNDERWRITER",
-                    normalizedSymbol,
-                    clock.simulationDateTime()
-            );
-            if (openLegacyOrderCount(legacyAccountId, normalizedSymbol) > 0L) {
-                throw new IllegalStateException(
-                        "Legacy liquidity orders remain after exact account cleanup: "
-                                + normalizedSymbol
-                );
-            }
-        }
         SourceHolding source = lockSourceHolding(sourceAccountId, normalizedSymbol);
         verifyIssuedShareReconciliation(normalizedSymbol, marketSymbol.issuedShares());
 
@@ -223,7 +201,7 @@ public class LiquidityProviderTransitionService {
         );
         String changeReason = normalizeReason(
                 request == null ? null : request.changeReason(),
-                "Create live liquidity provider and retire legacy listing liquidity"
+                "Create a dedicated live liquidity provider"
         );
         insertTransition(
                 normalizedSymbol,
@@ -231,12 +209,10 @@ public class LiquidityProviderTransitionService {
                 participant.id(),
                 liquidityAccountId,
                 source.accountId(),
-                legacyAccountId,
                 referenceDailyVolume,
                 seedInventoryQuantity,
                 seedCashAmount,
                 businessDate,
-                legacyLiquidity != null && legacyLiquidity.enabled() ? now : null,
                 normalizeRequestedBy(requestedBy),
                 changeReason,
                 now
@@ -248,24 +224,6 @@ public class LiquidityProviderTransitionService {
             );
         }
         requireLiquidityAccountEligible(provisioned, businessDate);
-        if (legacyLiquidity != null && legacyLiquidity.enabled()) {
-            int disabled = jdbcTemplate.update(
-                    """
-                    update stock_listing_auto_account_config
-                       set enabled = false,
-                           updated_at = ?
-                     where symbol = ?
-                       and enabled = true
-                    """,
-                    now,
-                    normalizedSymbol
-            );
-            if (disabled != 1) {
-                throw new IllegalStateException(
-                        "Legacy liquidity configuration disable count mismatch: " + disabled
-                );
-            }
-        }
         activatePendingRoleSeparatedMarket(normalizedSymbol, now);
         insertAllocationAudit(
                 normalizedSymbol,
@@ -327,7 +285,7 @@ public class LiquidityProviderTransitionService {
                         """
                         select id, symbol, mandate_id, participant_id,
                                liquidity_account_id, source_account_id,
-                               legacy_account_id, stage, reference_daily_volume,
+                               stage, reference_daily_volume,
                                seed_inventory_quantity, seed_cash_amount,
                                effective_business_date, policy_version
                           from stock_liquidity_transition
@@ -343,7 +301,6 @@ public class LiquidityProviderTransitionService {
                         rs.getLong("participant_id"),
                         rs.getLong("liquidity_account_id"),
                         rs.getLong("source_account_id"),
-                        nullableLong(rs.getObject("legacy_account_id")),
                         rs.getString("stage"),
                         rs.getLong("reference_daily_volume"),
                         rs.getLong("seed_inventory_quantity"),
@@ -392,7 +349,7 @@ public class LiquidityProviderTransitionService {
             return marketSymbol;
         }
         if (marketSymbol.pendingRoleSeparatedMarket()
-                && hasEligibleUnderwritingContract(symbol)) {
+                && hasEligibleLiquiditySource(symbol)) {
             return marketSymbol;
         }
         throw StockException.conflict(
@@ -401,14 +358,20 @@ public class LiquidityProviderTransitionService {
         );
     }
 
-    private boolean hasEligibleUnderwritingContract(String symbol) {
+    private boolean hasEligibleLiquiditySource(String symbol) {
         Boolean exists = jdbcClient.sql(
                         """
                         select exists(
                             select 1
-                              from stock_underwriting_contract
-                             where symbol = ?
-                               and status in ('ALLOCATED', 'STABILIZING', 'COMPLETED')
+                              from stock_holding holding
+                              join stock_account account
+                                on account.id = holding.account_id
+                               and account.status = 'ACTIVE'
+                             where holding.symbol = ?
+                               and holding.quantity > holding.reserved_quantity
+                               and account.participant_category in (
+                                   'ISSUE_UNDERWRITER', 'SYSTEM_CUSTODY'
+                               )
                         )
                         """
                 )
@@ -442,7 +405,7 @@ public class LiquidityProviderTransitionService {
         if (state.configuredMarket()) {
             return;
         }
-        if (!state.pendingMarket() || !hasEligibleUnderwritingContract(symbol)) {
+        if (!state.pendingMarket() || !hasEligibleLiquiditySource(symbol)) {
             throw StockException.conflict(
                     "Only a pending role-separated listing can be enabled by LP activation: "
                             + symbol
@@ -478,8 +441,7 @@ public class LiquidityProviderTransitionService {
 
     private long resolveSourceAccountId(
             String symbol,
-            Long requestedSourceAccountId,
-            Long legacyAccountId
+            Long requestedSourceAccountId
     ) {
         if (requestedSourceAccountId != null) {
             if (requestedSourceAccountId <= 0L) {
@@ -487,50 +449,45 @@ public class LiquidityProviderTransitionService {
             }
             return requestedSourceAccountId;
         }
-        if (legacyAccountId != null) {
-            return legacyAccountId;
-        }
-        List<Long> underwriterAccounts = jdbcClient.sql(
+        List<Long> sourceAccounts = jdbcClient.sql(
                         """
-                        select contract.account_id
-                          from stock_underwriting_contract contract
-                          join stock_account account on account.id = contract.account_id
-                         where contract.symbol = ?
-                           and contract.status in ('ALLOCATED', 'STABILIZING', 'COMPLETED')
+                        select distinct candidate.account_id
+                          from (
+                              select contract.account_id
+                                from stock_underwriting_contract contract
+                               where contract.symbol = ?
+                                 and contract.status in (
+                                     'ALLOCATED', 'STABILIZING', 'COMPLETED'
+                                 )
+                              union all
+                              select allocation.destination_account_id
+                                from stock_security_allocation_ledger allocation
+                               where allocation.symbol = ?
+                                 and allocation.allocation_reason = 'INITIAL_FLOAT_CUSTODY'
+                                 and allocation.tradability_status = 'TRADABLE'
+                          ) candidate
+                          join stock_account account
+                            on account.id = candidate.account_id
                            and account.status = 'ACTIVE'
-                         group by contract.account_id
-                         order by contract.account_id
+                          join stock_holding holding
+                            on holding.account_id = candidate.account_id
+                           and holding.symbol = ?
+                           and holding.quantity > holding.reserved_quantity
+                         order by candidate.account_id
                         """
                 )
+                .param(symbol)
+                .param(symbol)
                 .param(symbol)
                 .query(Long.class)
                 .list();
-        if (underwriterAccounts.size() != 1) {
+        if (sourceAccounts.size() != 1) {
             throw StockException.conflict(
-                    "Specify a source account because exactly one eligible listing or underwriting account "
+                    "Specify a source account because exactly one eligible issue or float-custody account "
                             + "could not be resolved for " + symbol
             );
         }
-        return underwriterAccounts.getFirst();
-    }
-
-    private LegacyLiquidity lockLegacyLiquidity(String symbol) {
-        return jdbcClient.sql(
-                        """
-                        select account.id as account_id, config.enabled
-                          from stock_listing_auto_account_config config
-                          join stock_account account on account.user_key = config.user_key
-                         where config.symbol = ?
-                         for update
-                        """
-                )
-                .param(symbol)
-                .query((rs, rowNum) -> new LegacyLiquidity(
-                        rs.getLong("account_id"),
-                        rs.getBoolean("enabled")
-                ))
-                .optional()
-                .orElse(null);
+        return sourceAccounts.getFirst();
     }
 
     private SourceHolding lockSourceHolding(long accountId, String symbol) {
@@ -562,10 +519,10 @@ public class LiquidityProviderTransitionService {
                 ))
                 .optional()
                 .filter(source -> "ACTIVE".equals(source.accountStatus()))
-                .filter(source -> "LISTING_UNDERWRITER".equals(source.participantCategory())
-                        || "ISSUE_UNDERWRITER".equals(source.participantCategory()))
+                .filter(source -> "ISSUE_UNDERWRITER".equals(source.participantCategory())
+                        || "SYSTEM_CUSTODY".equals(source.participantCategory()))
                 .orElseThrow(() -> StockException.conflict(
-                        "LP seed source must be an active listing or issue-underwriter account "
+                        "LP seed source must be an active issue-underwriter or float-custody account "
                                 + "holding " + symbol
                 ));
     }
@@ -796,12 +753,10 @@ public class LiquidityProviderTransitionService {
             long participantId,
             long liquidityAccountId,
             long sourceAccountId,
-            Long legacyAccountId,
             long referenceDailyVolume,
             long seedInventoryQuantity,
             BigDecimal seedCashAmount,
             LocalDate businessDate,
-            LocalDateTime legacyDisabledAt,
             String requestedBy,
             String changeReason,
             LocalDateTime now
@@ -818,9 +773,9 @@ public class LiquidityProviderTransitionService {
                             requested_by, change_reason, policy_version,
                             created_at, updated_at
                         ) values (
-                            ?, ?, ?, ?, ?, ?, ?,
+                            ?, ?, ?, ?, ?, ?, null,
                             'LIVE_ACTIVE', ?, ?, ?, ?,
-                            ?, ?, ?, ?, 1, ?, ?
+                            null, ?, ?, ?, 1, ?, ?
                         )
                         """,
                         "LP-TRANSITION:" + symbol,
@@ -829,12 +784,10 @@ public class LiquidityProviderTransitionService {
                         participantId,
                         liquidityAccountId,
                         sourceAccountId,
-                        legacyAccountId,
                         referenceDailyVolume,
                         seedInventoryQuantity,
                         seedCashAmount,
                         businessDate,
-                        legacyDisabledAt,
                         now,
                         requestedBy,
                         changeReason,
@@ -1016,25 +969,6 @@ public class LiquidityProviderTransitionService {
         }
     }
 
-    private long openLegacyOrderCount(long accountId, String symbol) {
-        Long count = jdbcClient.sql(
-                        """
-                        select count(*)
-                          from stock_order
-                         where account_id = ?
-                           and symbol = ?
-                           and market_type = 'ORDER_BOOK'
-                           and status in ('PENDING', 'PARTIALLY_FILLED')
-                           and quantity > filled_quantity
-                        """
-                )
-                .param(accountId)
-                .param(symbol)
-                .query(Long.class)
-                .single();
-        return count == null ? 0L : count;
-    }
-
     private void verifyIssuedShareReconciliation(String symbol, long issuedShares) {
         Long holdingQuantity = jdbcClient.sql(
                         """
@@ -1135,10 +1069,6 @@ public class LiquidityProviderTransitionService {
         }
     }
 
-    private Long nullableLong(Object value) {
-        return value == null ? null : ((Number) value).longValue();
-    }
-
     @FunctionalInterface
     private interface PreparedStatementBinder {
         void bind(PreparedStatement statement) throws java.sql.SQLException;
@@ -1176,12 +1106,6 @@ public class LiquidityProviderTransitionService {
         }
     }
 
-    private record LegacyLiquidity(
-            long accountId,
-            boolean enabled
-    ) {
-    }
-
     private record SourceHolding(
             long accountId,
             String accountStatus,
@@ -1210,7 +1134,6 @@ public class LiquidityProviderTransitionService {
             long participantId,
             long liquidityAccountId,
             long sourceAccountId,
-            Long legacyAccountId,
             String stage,
             long referenceDailyVolume,
             long seedInventoryQuantity,

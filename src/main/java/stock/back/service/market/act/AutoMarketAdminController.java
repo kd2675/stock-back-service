@@ -32,6 +32,7 @@ import stock.back.service.market.biz.InstitutionEmergencyStopService;
 import stock.back.service.market.biz.InstitutionPortfolioQueryService;
 import stock.back.service.market.biz.InstitutionPortfolioProvisionService;
 import stock.back.service.market.biz.InstitutionPortfolioRecommendationService;
+import stock.back.service.market.biz.LiquidityProviderControlService;
 import stock.back.service.market.biz.LiquidityProviderMandateQueryService;
 import stock.back.service.market.biz.LiquidityProviderRecommendationService;
 import stock.back.service.market.biz.LiquidityProviderTransitionService;
@@ -60,15 +61,15 @@ import stock.back.service.market.vo.AutoParticipantResponse;
 import stock.back.service.market.vo.AutoParticipantSymbolConfigRequest;
 import stock.back.service.market.vo.AutoParticipantSymbolConfigResponse;
 import stock.back.service.market.vo.AutoParticipantWithdrawalAuditResponse;
-import stock.back.service.market.vo.ListingAutoAccountRequest;
-import stock.back.service.market.vo.ListingAutoAccountResponse;
 import stock.back.service.market.vo.InstitutionPortfolioResponse;
 import stock.back.service.market.vo.InstitutionPortfolioCreateRequest;
 import stock.back.service.market.vo.InstitutionPortfolioRecommendationResponse;
 import stock.back.service.market.vo.InstitutionSuspensionRequest;
 import stock.back.service.market.vo.LiquidityProviderMandateResponse;
+import stock.back.service.market.vo.LiquidityProviderPolicyUpdateRequest;
 import stock.back.service.market.vo.LiquidityProviderRecommendationResponse;
 import stock.back.service.market.vo.LiquidityProviderProvisionRequest;
+import stock.back.service.market.vo.LiquidityProviderStatusChangeRequest;
 import stock.back.service.market.vo.SystemCustodyOverviewResponse;
 import stock.back.service.market.vo.UnderwritingContractResponse;
 import stock.back.service.market.vo.UnderwritingContractCreateRequest;
@@ -99,6 +100,7 @@ public class AutoMarketAdminController {
     private final InstitutionPortfolioRecommendationService
             institutionPortfolioRecommendationService;
     private final InstitutionEmergencyStopService institutionEmergencyStopService;
+    private final LiquidityProviderControlService liquidityProviderControlService;
     private final LiquidityProviderMandateQueryService liquidityProviderMandateQueryService;
     private final LiquidityProviderRecommendationService liquidityProviderRecommendationService;
     private final LiquidityProviderTransitionService liquidityProviderTransitionService;
@@ -191,6 +193,48 @@ public class AutoMarketAdminController {
             UserContext userContext
     ) {
         liquidityProviderTransitionService.provisionLive(
+                symbol,
+                request,
+                userContext.getUserKey()
+        );
+        return ResponseDataDTO.of(liquidityProviderMandateQueryService.getMandate(symbol));
+    }
+
+    @PatchMapping("/liquidity-mandates/{symbol}/policy")
+    public ResponseDataDTO<LiquidityProviderMandateResponse> updateLiquidityProviderPolicy(
+            @PathVariable String symbol,
+            @RequestBody LiquidityProviderPolicyUpdateRequest request,
+            UserContext userContext
+    ) {
+        liquidityProviderControlService.updatePolicy(
+                symbol,
+                request,
+                userContext.getUserKey()
+        );
+        return ResponseDataDTO.of(liquidityProviderMandateQueryService.getMandate(symbol));
+    }
+
+    @PostMapping("/liquidity-mandates/{symbol}/suspend")
+    public ResponseDataDTO<LiquidityProviderMandateResponse> suspendLiquidityProvider(
+            @PathVariable String symbol,
+            @RequestBody(required = false) LiquidityProviderStatusChangeRequest request,
+            UserContext userContext
+    ) {
+        liquidityProviderControlService.suspend(
+                symbol,
+                request,
+                userContext.getUserKey()
+        );
+        return ResponseDataDTO.of(liquidityProviderMandateQueryService.getMandate(symbol));
+    }
+
+    @PostMapping("/liquidity-mandates/{symbol}/resume")
+    public ResponseDataDTO<LiquidityProviderMandateResponse> resumeLiquidityProvider(
+            @PathVariable String symbol,
+            @RequestBody(required = false) LiquidityProviderStatusChangeRequest request,
+            UserContext userContext
+    ) {
+        liquidityProviderControlService.resume(
                 symbol,
                 request,
                 userContext.getUserKey()
@@ -309,14 +353,6 @@ public class AutoMarketAdminController {
             @RequestBody AutoParticipantProfileConfigRequest request
     ) {
         return ResponseDataDTO.of(autoParticipantProfileConfigService.updateAutoParticipantProfileConfig(profileType, request));
-    }
-
-    @PatchMapping("/auto-market/listing-accounts/{symbol}")
-    public ResponseDataDTO<ListingAutoAccountResponse> updateListingAutoAccountConfig(
-            @PathVariable String symbol,
-            @RequestBody ListingAutoAccountRequest request
-    ) {
-        return ResponseDataDTO.of(autoMarketConfigService.updateListingAutoAccountConfig(symbol, request));
     }
 
     @PatchMapping("/auto-market/configs/{symbol}")

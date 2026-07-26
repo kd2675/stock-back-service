@@ -81,7 +81,6 @@ class AutoMarketSummaryStatusQuery {
                           from stock_auto_participant p
                          where p.enabled = true
                            and p.withdrawn_at is null) as enabled_participant_count,
-                       (select count(*) from stock_listing_auto_account_config) as listing_auto_account_count,
                        %s,
                        %s
                 """.formatted(salaryEligibilitySql, runtimeMetricSql);

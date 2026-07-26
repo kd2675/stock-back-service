@@ -5,14 +5,12 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
 import stock.back.service.database.entity.StockAutoMarketConfig;
 import stock.back.service.database.entity.StockAutoParticipantSymbolConfig;
-import stock.back.service.database.entity.StockListingAutoAccountConfig;
 import stock.back.service.database.repository.StockAutoParticipantSymbolConfigRepository;
 import stock.back.service.market.vo.AutoMarketDailyRegimeResponse;
 import stock.back.service.market.vo.AutoMarketRegimeModifierResponse;
 import stock.back.service.market.vo.AutoParticipantLifecycleScope;
 import stock.back.service.market.vo.AutoParticipantResponse;
 import stock.back.service.market.vo.AutoParticipantSymbolConfigResponse;
-import stock.back.service.market.vo.ListingAutoAccountResponse;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -29,17 +27,14 @@ public class AutoMarketStatusDataLoader {
     private final JdbcTemplate jdbcTemplate;
     private final JdbcClient jdbcClient;
     private final StockAutoParticipantSymbolConfigRepository stockAutoParticipantSymbolConfigRepository;
-    private final ListingAutoAccountLedgerQueryService listingAutoAccountLedgerQueryService;
 
     public AutoMarketStatusDataLoader(
             JdbcTemplate jdbcTemplate,
-            StockAutoParticipantSymbolConfigRepository stockAutoParticipantSymbolConfigRepository,
-            ListingAutoAccountLedgerQueryService listingAutoAccountLedgerQueryService
+            StockAutoParticipantSymbolConfigRepository stockAutoParticipantSymbolConfigRepository
     ) {
         this.jdbcTemplate = jdbcTemplate;
         this.jdbcClient = JdbcClient.create(jdbcTemplate);
         this.stockAutoParticipantSymbolConfigRepository = stockAutoParticipantSymbolConfigRepository;
-        this.listingAutoAccountLedgerQueryService = listingAutoAccountLedgerQueryService;
     }
 
     List<AutoParticipantResponse> loadAutoParticipantStatusResponses() {
@@ -355,49 +350,6 @@ public class AutoMarketStatusDataLoader {
     }
 
     private record ModifierRow(String symbol, AutoMarketRegimeModifierResponse response) {
-    }
-
-    List<ListingAutoAccountResponse> toListingAutoAccountResponses(List<StockListingAutoAccountConfig> configs) {
-        if (configs.isEmpty()) {
-            return List.of();
-        }
-        Map<String, ListingAutoAccountLedger> ledgersBySymbol = listingAutoAccountLedgerQueryService.findLedgersBySymbol();
-        Map<String, Long> issuedSharesBySymbol = loadIssuedSharesBySymbol(configs);
-        return configs.stream()
-                .map(config -> AutoMarketStatusResponseMapper.toListingAutoAccount(
-                        config,
-                        ledgersBySymbol.getOrDefault(config.getSymbol(), ListingAutoAccountLedger.empty()),
-                        issuedSharesBySymbol.getOrDefault(config.getSymbol(), 0L)
-                ))
-                .toList();
-    }
-
-    private Map<String, Long> loadIssuedSharesBySymbol(List<StockListingAutoAccountConfig> configs) {
-        List<String> symbols = configs.stream()
-                .map(StockListingAutoAccountConfig::getSymbol)
-                .distinct()
-                .toList();
-        if (symbols.isEmpty()) {
-            return Map.of();
-        }
-        String sql = """
-                select symbol, issued_shares
-                  from stock_order_book_instrument
-                 where symbol in (:symbols)
-                """;
-        return jdbcClient.sql(sql)
-                .param("symbols", symbols)
-                .query((rs, rowNum) -> Map.entry(
-                        rs.getString("symbol"),
-                        rs.getLong("issued_shares")
-                ))
-                .list()
-                .stream()
-                .collect(Collectors.toMap(
-                        Map.Entry::getKey,
-                        Map.Entry::getValue,
-                        (left, right) -> left
-                ));
     }
 
     private String autoParticipantSymbolConfigKey(String userKey, String symbol) {

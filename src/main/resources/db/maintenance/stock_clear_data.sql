@@ -60,7 +60,6 @@ TRUNCATE TABLE stock_auto_participant_order_schedule;
 TRUNCATE TABLE stock_instrument_report_event;
 TRUNCATE TABLE stock_auto_participant_symbol_config;
 TRUNCATE TABLE stock_auto_market_config;
-TRUNCATE TABLE stock_listing_auto_account_config;
 TRUNCATE TABLE stock_auto_participant_event_profile_config;
 TRUNCATE TABLE stock_auto_participant_profile_config;
 TRUNCATE TABLE stock_auto_participant;

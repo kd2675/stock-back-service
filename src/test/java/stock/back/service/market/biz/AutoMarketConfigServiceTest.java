@@ -8,20 +8,12 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
 import stock.back.service.common.exception.StockException;
-import stock.back.service.database.entity.ListingAutoOperationMode;
-import stock.back.service.database.entity.ListingAutoPosition;
-import stock.back.service.database.entity.ListingAutoStrategyProfile;
 import stock.back.service.database.entity.StockAutoMarketConfig;
-import stock.back.service.database.entity.StockListingAutoAccountConfig;
-import stock.back.service.database.entity.StockOrderBookInstrument;
 import stock.back.service.database.repository.StockAutoMarketConfigRepository;
-import stock.back.service.database.repository.StockListingAutoAccountConfigRepository;
 import stock.back.service.database.repository.StockOrderBookInstrumentRepository;
 import stock.back.service.market.vo.AutoMarketConfigUpdateRequest;
 import stock.back.service.market.vo.AutoMarketDailyRegimeResponse;
-import stock.back.service.market.vo.ListingAutoAccountRequest;
 
-import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.Optional;
@@ -41,13 +33,7 @@ class AutoMarketConfigServiceTest {
     private StockAutoMarketConfigRepository stockAutoMarketConfigRepository;
 
     @Mock
-    private StockListingAutoAccountConfigRepository stockListingAutoAccountConfigRepository;
-
-    @Mock
     private StockOrderBookInstrumentRepository stockOrderBookInstrumentRepository;
-
-    @Mock
-    private ListingAutoAccountLedgerQueryService listingAutoAccountLedgerQueryService;
 
     @Mock
     private SimulationClockService simulationClockService;
@@ -61,9 +47,7 @@ class AutoMarketConfigServiceTest {
     void setUp() {
         service = new AutoMarketConfigService(
                 stockAutoMarketConfigRepository,
-                stockListingAutoAccountConfigRepository,
                 stockOrderBookInstrumentRepository,
-                listingAutoAccountLedgerQueryService,
                 simulationClockService,
                 jdbcTemplate
         );
@@ -245,213 +229,4 @@ class AutoMarketConfigServiceTest {
                 .isEqualTo(LocalDateTime.of(2026, 7, 7, 12, 30));
     }
 
-    @Test
-    void updateListingAutoAccountConfig_validRequest_returnsLedgerAwareResponse() {
-        StockListingAutoAccountConfig config = defaultListingConfig();
-        when(stockListingAutoAccountConfigRepository.findById("ZQ001")).thenReturn(Optional.of(config));
-        when(listingAutoAccountLedgerQueryService.findLedger(config)).thenReturn(ListingAutoAccountLedger.of(
-                77L,
-                new BigDecimal("1000000.00"),
-                100L,
-                20L,
-                new BigDecimal("70000.00"),
-                new BigDecimal("72000.00")
-        ));
-
-        var response = service.updateListingAutoAccountConfig(
-                "zq001",
-                new ListingAutoAccountRequest(
-                        " 신규 상장주관사 ",
-                        true,
-                        ListingAutoPosition.TWO_SIDED,
-                        ListingAutoOperationMode.HYBRID,
-                        ListingAutoStrategyProfile.BALANCED,
-                        50,
-                        20,
-                        2,
-                        4,
-                        4,
-                        new BigDecimal("0.5"),
-                        new BigDecimal("0.9"),
-                        new BigDecimal("0.1"),
-                        120L,
-                        80L,
-                        50000L,
-                        120L
-                )
-        );
-
-        assertThat(response.symbol()).isEqualTo("ZQ001");
-        assertThat(response.displayName()).isEqualTo("신규 상장주관사");
-        assertThat(response.accountId()).isEqualTo(77L);
-        assertThat(response.availableQuantity()).isEqualTo(80L);
-        assertThat(response.marketValue()).isEqualByComparingTo(new BigDecimal("7200000.00"));
-        assertThat(response.maxOrderQuantity()).isEqualTo(50);
-        assertThat(response.positionSide()).isEqualTo(ListingAutoPosition.TWO_SIDED);
-        assertThat(response.targetBuyQuantity()).isEqualTo(120L);
-        assertThat(response.targetSellQuantity()).isEqualTo(80L);
-        assertThat(response.targetHoldingQuantity()).isEqualTo(50000L);
-        assertThat(response.inventoryBandQuantity()).isEqualTo(120L);
-        assertThat(response.operationMode()).isEqualTo(ListingAutoOperationMode.HYBRID);
-        assertThat(response.strategyProfile()).isEqualTo(ListingAutoStrategyProfile.BALANCED);
-        assertThat(response.targetSpreadTicks()).isEqualTo(4);
-    }
-
-    @Test
-    void updateListingAutoAccountConfig_migratedSymbol_rejectsLegacyMutation() {
-        when(jdbcTemplate.queryForObject(
-                org.mockito.ArgumentMatchers.contains("from stock_liquidity_mandate"),
-                org.mockito.ArgumentMatchers.eq(Boolean.class),
-                org.mockito.ArgumentMatchers.eq("ZQ001")
-        )).thenReturn(true);
-
-        assertThatThrownBy(() -> service.updateListingAutoAccountConfig(
-                "zq001",
-                listingRequest(ListingAutoPosition.SELL_ONLY, 20, 0L, 80L, 0L, 0L)
-        )).isInstanceOf(StockException.class)
-                .hasMessageContaining("read-only after LP migration");
-
-        verify(stockListingAutoAccountConfigRepository, never()).findById(any());
-    }
-
-    @Test
-    void updateListingAutoAccountConfig_invalidOrderTtl_throwsBadRequest() {
-        StockListingAutoAccountConfig config = defaultListingConfig();
-        when(stockListingAutoAccountConfigRepository.findById("ZQ001")).thenReturn(Optional.of(config));
-
-        assertThatThrownBy(() -> service.updateListingAutoAccountConfig(
-                "zq001",
-                listingRequest(ListingAutoPosition.SELL_ONLY, 0, 0L, 80L, 0L, 0L)
-        ))
-                .isInstanceOf(StockException.class)
-                .hasMessageContaining("Listing auto account order TTL seconds must be positive");
-
-        verify(listingAutoAccountLedgerQueryService, never()).findLedger(any());
-    }
-
-    @Test
-    void updateListingAutoAccountConfig_twoSidedWithoutBuyTarget_throwsBadRequest() {
-        StockListingAutoAccountConfig config = defaultListingConfig();
-        when(stockListingAutoAccountConfigRepository.findById("ZQ001")).thenReturn(Optional.of(config));
-
-        assertThatThrownBy(() -> service.updateListingAutoAccountConfig(
-                "zq001",
-                listingRequest(ListingAutoPosition.TWO_SIDED, 20, 0L, 80L, 50000L, 100L)
-        ))
-                .isInstanceOf(StockException.class)
-                .hasMessageContaining("active buy side requires a positive target quantity");
-    }
-
-    @Test
-    void updateListingAutoAccountConfig_twoSidedWithoutInventoryBand_throwsBadRequest() {
-        StockListingAutoAccountConfig config = defaultListingConfig();
-        when(stockListingAutoAccountConfigRepository.findById("ZQ001")).thenReturn(Optional.of(config));
-
-        assertThatThrownBy(() -> service.updateListingAutoAccountConfig(
-                "zq001",
-                listingRequest(ListingAutoPosition.TWO_SIDED, 20, 80L, 80L, 50000L, 0L)
-        ))
-                .isInstanceOf(StockException.class)
-                .hasMessageContaining("requires a positive inventory band quantity");
-    }
-
-    @Test
-    void updateListingAutoAccountConfig_quoteTargetAboveInventoryBand_throwsBadRequest() {
-        StockListingAutoAccountConfig config = defaultListingConfig();
-        when(stockListingAutoAccountConfigRepository.findById("ZQ001")).thenReturn(Optional.of(config));
-
-        assertThatThrownBy(() -> service.updateListingAutoAccountConfig(
-                "zq001",
-                listingRequest(ListingAutoPosition.TWO_SIDED, 20, 120L, 80L, 50000L, 100L)
-        ))
-                .isInstanceOf(StockException.class)
-                .hasMessageContaining("buy quote target cannot exceed inventory band quantity");
-    }
-
-    @Test
-    void updateListingAutoAccountConfig_quoteTargetNeedsMoreThanTenOrders_throwsBadRequest() {
-        StockListingAutoAccountConfig config = defaultListingConfig();
-        when(stockListingAutoAccountConfigRepository.findById("ZQ001")).thenReturn(Optional.of(config));
-
-        assertThatThrownBy(() -> service.updateListingAutoAccountConfig(
-                "zq001",
-                listingRequest(ListingAutoPosition.TWO_SIDED, 20, 501L, 500L, 50000L, 1000L)
-        ))
-                .isInstanceOf(StockException.class)
-                .hasMessageContaining("cannot exceed 10 times max order quantity");
-    }
-
-    @Test
-    void updateListingAutoAccountConfig_targetHoldingAboveIssuedShares_throwsBadRequest() {
-        StockListingAutoAccountConfig config = defaultListingConfig();
-        StockOrderBookInstrument instrument = StockOrderBookInstrument.listed(
-                "ZQ001",
-                "주식1",
-                "ORDERBOOK",
-                new BigDecimal("1000.00"),
-                100000L
-        );
-        when(stockListingAutoAccountConfigRepository.findById("ZQ001")).thenReturn(Optional.of(config));
-        when(stockOrderBookInstrumentRepository.findById("ZQ001")).thenReturn(Optional.of(instrument));
-
-        assertThatThrownBy(() -> service.updateListingAutoAccountConfig(
-                "zq001",
-                listingRequest(ListingAutoPosition.SELL_ONLY, 20, 0L, 50L, 100001L, 0L)
-        ))
-                .isInstanceOf(StockException.class)
-                .hasMessageContaining("cannot exceed issued shares");
-    }
-
-    @Test
-    void updateListingAutoAccountConfig_buyOnlyWithoutTargetHolding_throwsBadRequest() {
-        StockListingAutoAccountConfig config = defaultListingConfig();
-        when(stockListingAutoAccountConfigRepository.findById("ZQ001")).thenReturn(Optional.of(config));
-
-        assertThatThrownBy(() -> service.updateListingAutoAccountConfig(
-                "zq001",
-                listingRequest(ListingAutoPosition.BUY_ONLY, 20, 50L, 0L, 0L, 0L)
-        ))
-                .isInstanceOf(StockException.class)
-                .hasMessageContaining("requires a positive target holding quantity");
-    }
-
-    private ListingAutoAccountRequest listingRequest(
-            ListingAutoPosition position,
-            int ttlSeconds,
-            long targetBuyQuantity,
-            long targetSellQuantity,
-            long targetHoldingQuantity,
-            long inventoryBandQuantity
-    ) {
-        ListingAutoOperationMode operationMode = position == ListingAutoPosition.TWO_SIDED
-                ? ListingAutoOperationMode.HYBRID
-                : ListingAutoOperationMode.UNDERWRITER_RETURN;
-        return new ListingAutoAccountRequest(
-                "상장주관사",
-                true,
-                position,
-                operationMode,
-                ListingAutoStrategyProfile.BALANCED,
-                50,
-                ttlSeconds,
-                2,
-                4,
-                4,
-                new BigDecimal("0.5"),
-                new BigDecimal("0.9"),
-                new BigDecimal("0.1"),
-                targetBuyQuantity,
-                targetSellQuantity,
-                targetHoldingQuantity,
-                inventoryBandQuantity
-        );
-    }
-
-    private StockListingAutoAccountConfig defaultListingConfig() {
-        StockListingAutoAccountConfig config = StockListingAutoAccountConfig.defaults(
-                "ZQ001", "stock-listing-zq001", "상장주관사", 100000L
-        );
-        config.initializeIssueBasis(100000L, new BigDecimal("1000.00"));
-        return config;
-    }
 }

@@ -9,7 +9,9 @@ final class BatchJobNames {
     static final String CORPORATE_ACTIONS = "corporate-actions";
     static final String AUTO_MARKET = "auto-market";
     static final String AUTO_MARKET_ORDER_EXPIRY = "auto-market-order-expiry";
-    static final String LISTING_AUTO_MARKET = "listing-auto-market";
+    static final String LIQUIDITY_PROVIDER_MARKET = "liquidity-provider-market";
+    static final String ISSUE_UNDERWRITER_MARKET = "issue-underwriter-market";
+    static final String INSTITUTION_MARKET = "institution-market";
     static final String AUTO_PARTICIPANT_CASH_FLOW = "auto-participant-cash-flow";
     static final String MARKET_CLOSE_ROLLOVER = "market-close-rollover";
     static final String PORTFOLIO_SETTLEMENT = "portfolio-settlement";

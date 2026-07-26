@@ -37,8 +37,7 @@ class AutoMarketStatusDataLoaderTest {
         createSchema();
         dataLoader = new AutoMarketStatusDataLoader(
                 jdbcTemplate,
-                mock(StockAutoParticipantSymbolConfigRepository.class),
-                mock(ListingAutoAccountLedgerQueryService.class)
+                mock(StockAutoParticipantSymbolConfigRepository.class)
         );
     }
 

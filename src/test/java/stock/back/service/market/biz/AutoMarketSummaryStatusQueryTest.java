@@ -25,7 +25,6 @@ class AutoMarketSummaryStatusQueryTest {
         assertThat(response.configCount()).isEqualTo(3L);
         assertThat(response.participantCount()).isEqualTo(3L);
         assertThat(response.participantProfileConfigCount()).isEqualTo(AutoParticipantProfileType.values().length);
-        assertThat(response.listingAutoAccountCount()).isEqualTo(2L);
         assertThat(response.enabledParticipantCount()).isEqualTo(2L);
         assertThat(response.salaryEligibleParticipantCount()).isEqualTo(2L);
         assertThat(response.openAutoOrderCount()).isEqualTo(2L);
@@ -43,7 +42,6 @@ class AutoMarketSummaryStatusQueryTest {
                 )
                 values ('auto-001', true, null, 'NOISE_TRADER', null)
                 """);
-        jdbcTemplate.update("insert into stock_listing_auto_account_config(symbol) values ('STOCK001')");
 
         var response = query.getSummaryStatus(false, false);
 
@@ -109,11 +107,6 @@ class AutoMarketSummaryStatusQueryTest {
                 )
                 """);
         jdbcTemplate.execute("""
-                create table stock_listing_auto_account_config (
-                    symbol varchar(20) primary key
-                )
-                """);
-        jdbcTemplate.execute("""
                 create table stock_order (
                     id bigint primary key,
                     account_id bigint not null,
@@ -159,8 +152,6 @@ class AutoMarketSummaryStatusQueryTest {
         jdbcTemplate.update("insert into stock_auto_market_config(symbol, enabled) values ('STOCK001', true)");
         jdbcTemplate.update("insert into stock_auto_market_config(symbol, enabled) values ('STOCK002', false)");
         jdbcTemplate.update("insert into stock_auto_market_config(symbol, enabled) values ('STOCK003', true)");
-        jdbcTemplate.update("insert into stock_listing_auto_account_config(symbol) values ('STOCK001')");
-        jdbcTemplate.update("insert into stock_listing_auto_account_config(symbol) values ('STOCK002')");
         seedSalaryRows(jdbcTemplate);
         jdbcTemplate.update("insert into stock_order(id, account_id, market_type, status) values (1, 1, 'ORDER_BOOK', 'PENDING')");
         jdbcTemplate.update("insert into stock_order(id, account_id, market_type, status) values (2, 2, 'ORDER_BOOK', 'PARTIALLY_FILLED')");

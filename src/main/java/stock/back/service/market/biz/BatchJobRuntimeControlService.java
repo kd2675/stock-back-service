@@ -181,7 +181,9 @@ public class BatchJobRuntimeControlService {
         put(createdDefinitions, BatchJobNames.CORPORATE_ACTIONS);
         put(createdDefinitions, BatchJobNames.AUTO_MARKET);
         put(createdDefinitions, BatchJobNames.AUTO_MARKET_ORDER_EXPIRY);
-        put(createdDefinitions, BatchJobNames.LISTING_AUTO_MARKET);
+        put(createdDefinitions, BatchJobNames.LIQUIDITY_PROVIDER_MARKET);
+        put(createdDefinitions, BatchJobNames.ISSUE_UNDERWRITER_MARKET);
+        put(createdDefinitions, BatchJobNames.INSTITUTION_MARKET);
         put(createdDefinitions, BatchJobNames.AUTO_PARTICIPANT_CASH_FLOW);
         put(createdDefinitions, BatchJobNames.MARKET_CLOSE_ROLLOVER);
         put(createdDefinitions, BatchJobNames.PORTFOLIO_SETTLEMENT);

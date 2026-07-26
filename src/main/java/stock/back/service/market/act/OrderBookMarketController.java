@@ -110,7 +110,6 @@ public class OrderBookMarketController {
             @RequestParam(defaultValue = "true") boolean includeParticipants,
             @RequestParam(defaultValue = "true") boolean includeParticipantSymbolConfigs,
             @RequestParam(defaultValue = "true") boolean includeParticipantProfileConfigs,
-            @RequestParam(defaultValue = "true") boolean includeListingAutoAccounts,
             @RequestParam(defaultValue = "true") boolean includeRuntimeMetrics,
             @RequestParam(defaultValue = "true") boolean includeSalaryEligibility,
             @RequestParam(required = false) String participantSymbolConfigUserKey
@@ -120,7 +119,6 @@ public class OrderBookMarketController {
                 includeParticipants,
                 includeParticipantSymbolConfigs,
                 includeParticipantProfileConfigs,
-                includeListingAutoAccounts,
                 includeRuntimeMetrics,
                 includeSalaryEligibility,
                 participantSymbolConfigUserKey

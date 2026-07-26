@@ -38,18 +38,13 @@ public class LiquidityProviderRecommendationService {
                                case when mandate.id is null then false else true end
                                    as existing_mandate,
                                case
-                                 when legacy_account.id is not null
-                                 then legacy_account.id
-                                 else underwriter.account_id
+                                 when underwriter.account_id is not null
+                                 then underwriter.account_id
+                                 else float_source.account_id
                                end as source_account_id,
                                case
-                                 when legacy_account.id is not null
+                                 when underwriter.account_id is not null
                                  then greatest(
-                                     coalesce(legacy_holding.quantity, 0)
-                                     - coalesce(legacy_holding.reserved_quantity, 0),
-                                     0
-                                 )
-                                 else greatest(
                                      coalesce(underwriter_holding.quantity, 0)
                                      - coalesce(
                                          underwriter_holding.reserved_quantity,
@@ -57,9 +52,18 @@ public class LiquidityProviderRecommendationService {
                                      ),
                                      0
                                  )
+                                 else greatest(
+                                     coalesce(float_holding.quantity, 0)
+                                     - coalesce(float_holding.reserved_quantity, 0),
+                                     0
+                                 )
                                end as source_available_quantity,
-                               case when underwriter.id is null then false else true end
-                                   as has_underwriter
+                               case
+                                 when underwriter.account_id is not null
+                                   or float_source.account_id is not null
+                                 then true
+                                 else false
+                               end as has_source
                           from stock_order_book_instrument instrument
                           join stock_order_book_market_config market
                             on market.symbol = instrument.symbol
@@ -68,14 +72,6 @@ public class LiquidityProviderRecommendationService {
                            and price.current_price > 0
                           left join stock_liquidity_mandate mandate
                             on mandate.symbol = instrument.symbol
-                          left join stock_listing_auto_account_config legacy_config
-                            on legacy_config.symbol = instrument.symbol
-                          left join stock_account legacy_account
-                            on legacy_account.user_key = legacy_config.user_key
-                           and legacy_account.status = 'ACTIVE'
-                          left join stock_holding legacy_holding
-                            on legacy_holding.account_id = legacy_account.id
-                           and legacy_holding.symbol = instrument.symbol
                           left join (
                               select symbol, max(id) as contract_id
                                 from stock_underwriting_contract
@@ -90,6 +86,22 @@ public class LiquidityProviderRecommendationService {
                           left join stock_holding underwriter_holding
                             on underwriter_holding.account_id = underwriter.account_id
                            and underwriter_holding.symbol = instrument.symbol
+                          left join (
+                              select allocation.symbol,
+                                     max(allocation.destination_account_id) as account_id
+                                from stock_security_allocation_ledger allocation
+                                join stock_account source_account
+                                  on source_account.id = allocation.destination_account_id
+                                 and source_account.status = 'ACTIVE'
+                                 and source_account.participant_category = 'SYSTEM_CUSTODY'
+                               where allocation.allocation_reason = 'INITIAL_FLOAT_CUSTODY'
+                                 and allocation.tradability_status = 'TRADABLE'
+                               group by allocation.symbol
+                          ) float_source
+                            on float_source.symbol = instrument.symbol
+                          left join stock_holding float_holding
+                            on float_holding.account_id = float_source.account_id
+                           and float_holding.symbol = instrument.symbol
                          where instrument.enabled = true
                            and instrument.issued_shares > 0
                            and instrument.tradable_shares > 0
@@ -105,7 +117,7 @@ public class LiquidityProviderRecommendationService {
                         rs.getBoolean("existing_mandate"),
                         nullableLong(rs.getObject("source_account_id")),
                         rs.getLong("source_available_quantity"),
-                        rs.getBoolean("has_underwriter")
+                        rs.getBoolean("has_source")
                 ))
                 .list();
         List<LiquidityProviderRecommendationResponse.Symbol> symbols = states.stream()
@@ -115,7 +127,7 @@ public class LiquidityProviderRecommendationService {
                 .filter(state -> isConfiguredOrPendingEligible(
                         state.marketEnabled(),
                         state.marketStatus(),
-                        state.hasUnderwriter()
+                        state.hasSource()
                 ))
                 .count());
         long currentCount = symbols.stream()
@@ -153,13 +165,13 @@ public class LiquidityProviderRecommendationService {
         boolean marketEligible = isConfiguredOrPendingEligible(
                 state.marketEnabled(),
                 state.marketStatus(),
-                state.hasUnderwriter()
+                state.hasSource()
         );
         String reason;
         if (state.existingMandate()) {
             reason = "ALREADY_CREATED";
         } else if (!marketEligible) {
-            reason = "UNDERWRITING_REQUIRED";
+            reason = "LIQUIDITY_SOURCE_REQUIRED";
         } else if (state.sourceAccountId() == null) {
             reason = "SOURCE_ACCOUNT_REQUIRED";
         } else if (state.sourceAvailableQuantity() < seedQuantity) {
@@ -187,12 +199,12 @@ public class LiquidityProviderRecommendationService {
     private boolean isConfiguredOrPendingEligible(
             boolean marketEnabled,
             String marketStatus,
-            boolean hasUnderwriter
+            boolean hasSource
     ) {
         if (marketEnabled && ("OPEN".equals(marketStatus) || "CLOSED".equals(marketStatus))) {
             return true;
         }
-        return !marketEnabled && "CLOSED".equals(marketStatus) && hasUnderwriter;
+        return !marketEnabled && "CLOSED".equals(marketStatus) && hasSource;
     }
 
     private long scaledQuantity(long tradableShares, BigDecimal rate) {
@@ -218,7 +230,7 @@ public class LiquidityProviderRecommendationService {
             boolean existingMandate,
             Long sourceAccountId,
             long sourceAvailableQuantity,
-            boolean hasUnderwriter
+            boolean hasSource
     ) {
     }
 }

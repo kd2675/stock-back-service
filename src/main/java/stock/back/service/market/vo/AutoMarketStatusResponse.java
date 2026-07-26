@@ -7,7 +7,6 @@ public record AutoMarketStatusResponse(
         long configCount,
         long participantCount,
         long participantProfileConfigCount,
-        long listingAutoAccountCount,
         long enabledParticipantCount,
         long salaryEligibleParticipantCount,
         long openAutoOrderCount,
@@ -15,7 +14,6 @@ public record AutoMarketStatusResponse(
         List<AutoMarketConfigResponse> configs,
         List<AutoParticipantResponse> participants,
         List<AutoParticipantSymbolConfigResponse> participantSymbolConfigs,
-        List<AutoParticipantProfileConfigResponse> participantProfileConfigs,
-        List<ListingAutoAccountResponse> listingAutoAccounts
+        List<AutoParticipantProfileConfigResponse> participantProfileConfigs
 ) {
 }

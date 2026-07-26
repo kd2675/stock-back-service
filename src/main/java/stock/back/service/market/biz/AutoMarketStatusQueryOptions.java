@@ -5,7 +5,6 @@ record AutoMarketStatusQueryOptions(
         boolean includeParticipants,
         boolean includeParticipantSymbolConfigs,
         boolean includeParticipantProfileConfigs,
-        boolean includeListingAutoAccounts,
         boolean includeRuntimeMetrics,
         boolean includeSalaryEligibility,
         String participantSymbolConfigUserKey
@@ -16,7 +15,6 @@ record AutoMarketStatusQueryOptions(
             boolean includeParticipants,
             boolean includeParticipantSymbolConfigs,
             boolean includeParticipantProfileConfigs,
-            boolean includeListingAutoAccounts,
             boolean includeRuntimeMetrics,
             boolean includeSalaryEligibility,
             String participantSymbolConfigUserKey
@@ -26,7 +24,6 @@ record AutoMarketStatusQueryOptions(
                 includeParticipants,
                 includeParticipantSymbolConfigs,
                 includeParticipantProfileConfigs,
-                includeListingAutoAccounts,
                 includeRuntimeMetrics,
                 includeSalaryEligibility,
                 MarketTextNormalizer.optionalText(participantSymbolConfigUserKey)
@@ -46,7 +43,6 @@ record AutoMarketStatusQueryOptions(
                 && !shouldLoadParticipants()
                 && !includeParticipantSymbolConfigs
                 && !includeParticipantProfileConfigs
-                && !includeListingAutoAccounts
                 && participantSymbolConfigUserKey == null;
     }
 

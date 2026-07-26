@@ -71,55 +71,30 @@ class LiquidityProviderTransitionServiceTest {
                 new ObjectMapper(),
                 simulationClockService,
                 marketSessionService,
-                freezeGuard,
-                new MarketRoleOrderCleanupService(jdbcTemplate)
+                freezeGuard
         );
         recommendationService = new LiquidityProviderRecommendationService(
                 JdbcClient.create(dataSource)
         );
-        seedLegacySymbol();
+        seedProvisionableSymbol();
     }
 
     @Test
-    void provisionLive_defaultRates_migratesLegacyAtomically() {
-        seedLegacyOpenOrders();
-
+    void provisionLive_defaultRates_createsDedicatedProviderFromIssueInventory() {
         transactionTemplate.executeWithoutResult(status ->
                 service.provisionLive("demo001", null, "stock-admin"));
 
         assertThat(jdbcTemplate.queryForObject(
-                """
-                select count(*)
-                  from stock_order
-                 where status = 'CANCELLED'
-                   and reserved_cash = 0
-                """,
-                Integer.class
-        )).isEqualTo(2);
-        assertThat(jdbcTemplate.queryForObject(
                 "select cash_balance from stock_account where id = 100",
                 BigDecimal.class
-        )).isEqualByComparingTo("1000.00");
-        assertThat(jdbcTemplate.queryForObject(
-                """
-                select reserved_quantity
-                  from stock_holding
-                 where account_id = 100
-                   and symbol = 'DEMO001'
-                """,
-                Long.class
-        )).isZero();
-        assertThat(jdbcTemplate.queryForObject(
-                "select enabled from stock_listing_auto_account_config where symbol = 'DEMO001'",
-                Boolean.class
-        )).isFalse();
+        )).isEqualByComparingTo("0.00");
         assertThat(jdbcTemplate.queryForMap(
                 """
                 select mandate.execution_mode, mandate.reference_daily_volume,
                        mandate.max_order_quantity, mandate.target_inventory_quantity,
                        mandate.inventory_band_quantity, transition.stage,
                        transition.seed_inventory_quantity, transition.seed_cash_amount,
-                       transition.legacy_disabled_at, transition.activated_at
+                       transition.activated_at
                   from stock_liquidity_mandate mandate
                   join stock_liquidity_transition transition
                     on transition.mandate_id = mandate.id
@@ -216,7 +191,6 @@ class LiquidityProviderTransitionServiceTest {
 
     @Test
     void provisionLive_multipleContractsForSameUnderwriter_resolvesOneSourceAccount() {
-        convertFixtureToPendingRoleSeparatedListing();
         Long participantId = jdbcTemplate.queryForObject(
                 """
                 select id
@@ -271,8 +245,7 @@ class LiquidityProviderTransitionServiceTest {
     }
 
     @Test
-    void provisionLive_participantSelfTradeGroupMismatch_rollsBackLegacyMigration() {
-        seedLegacyOpenOrders();
+    void provisionLive_participantSelfTradeGroupMismatch_rollsBackProvisioning() {
         jdbcTemplate.update(
                 """
                 update stock_market_participant
@@ -287,14 +260,6 @@ class LiquidityProviderTransitionServiceTest {
                 .hasMessageContaining("Default liquidity-provider participant is missing or inconsistent");
 
         assertThat(jdbcTemplate.queryForObject(
-                """
-                select count(*)
-                  from stock_order
-                 where status in ('PENDING', 'PARTIALLY_FILLED')
-                """,
-                Integer.class
-        )).isEqualTo(2);
-        assertThat(jdbcTemplate.queryForObject(
                 "select cash_balance from stock_account where id = 100",
                 BigDecimal.class
         )).isEqualByComparingTo("0.00");
@@ -306,11 +271,7 @@ class LiquidityProviderTransitionServiceTest {
                    and symbol = 'DEMO001'
                 """,
                 Long.class
-        )).isEqualTo(100L);
-        assertThat(jdbcTemplate.queryForObject(
-                "select enabled from stock_listing_auto_account_config where symbol = 'DEMO001'",
-                Boolean.class
-        )).isTrue();
+        )).isZero();
         assertThat(jdbcTemplate.queryForObject(
                 "select count(*) from stock_liquidity_transition",
                 Integer.class
@@ -377,10 +338,6 @@ class LiquidityProviderTransitionServiceTest {
                 "select count(*) from stock_liquidity_transition",
                 Integer.class
         )).isZero();
-        assertThat(jdbcTemplate.queryForObject(
-                "select enabled from stock_listing_auto_account_config where symbol = 'DEMO001'",
-                Boolean.class
-        )).isTrue();
     }
 
     @Test
@@ -400,7 +357,7 @@ class LiquidityProviderTransitionServiceTest {
         )).isOne();
     }
 
-    private void seedLegacySymbol() {
+    private void seedProvisionableSymbol() {
         jdbcTemplate.update(
                 """
                 insert into stock_order_book_instrument(
@@ -435,10 +392,11 @@ class LiquidityProviderTransitionServiceTest {
                 """
                 insert into stock_account(
                     id, user_key, account_code, status, participant_category,
-                    cash_balance, created_at, updated_at
+                    self_trade_group_id, cash_balance, created_at, updated_at
                 ) values (
-                    100, 'stock-listing-demo001', 'LEGACY-DEMO001',
-                    'ACTIVE', 'LISTING_UNDERWRITER', 0, ?, ?
+                    100, 'stock-issue-underwriter-demo001', 'UW-DEMO001',
+                    'ACTIVE', 'ISSUE_UNDERWRITER',
+                    'ISSUE_UNDERWRITER:DEFAULT', 0, ?, ?
                 )
                 """,
                 PRE_OPEN,
@@ -452,96 +410,6 @@ class LiquidityProviderTransitionServiceTest {
                 ) values (100, 'DEMO001', 1000000, 0, 100, ?)
                 """,
                 PRE_OPEN
-        );
-        jdbcTemplate.update(
-                """
-                insert into stock_listing_auto_account_config(
-                    symbol, user_key, display_name, enabled,
-                    position_side, operation_mode, strategy_profile,
-                    initial_inventory_quantity, initial_issue_price,
-                    max_order_quantity, order_ttl_seconds, price_offset_ticks,
-                    target_spread_ticks, inventory_skew_ticks,
-                    minimum_profit_rate, aggressive_unwind_threshold,
-                    aggressive_order_ratio, target_buy_quantity,
-                    target_sell_quantity, target_holding_quantity,
-                    inventory_band_quantity, created_at, updated_at
-                ) values (
-                    'DEMO001', 'stock-listing-demo001', '기존 공급계정', true,
-                    'SELL_ONLY', 'UNDERWRITER_RETURN', 'RETURN_FIRST',
-                    1000000, 100, 1000, 60, 3, 8, 3,
-                    1, 1, 0, 0, 1000, 1000000, 0, ?, ?
-                )
-                """,
-                PRE_OPEN,
-                PRE_OPEN
-        );
-    }
-
-    private void seedLegacyOpenOrders() {
-        jdbcTemplate.update(
-                """
-                update stock_holding
-                   set reserved_quantity = 100
-                 where account_id = 100
-                   and symbol = 'DEMO001'
-                """
-        );
-        jdbcTemplate.update(
-                """
-                insert into stock_order(
-                    id, client_order_id, account_id, market_type,
-                    side, order_type, status, symbol,
-                    quantity, filled_quantity, reserved_cash,
-                    created_at, updated_at
-                ) values (
-                    1001, 'LP-LEGACY-BUY-1001', 100, 'ORDER_BOOK',
-                    'BUY', 'LIMIT', 'PENDING', 'DEMO001',
-                    10, 0, 1000, ?, ?
-                )
-                """,
-                PRE_OPEN.minusMinutes(10),
-                PRE_OPEN.minusMinutes(10)
-        );
-        jdbcTemplate.update(
-                """
-                insert into stock_order(
-                    id, client_order_id, account_id, market_type,
-                    side, order_type, status, symbol,
-                    quantity, filled_quantity, reserved_cash,
-                    created_at, updated_at
-                ) values (
-                    1002, 'LP-LEGACY-SELL-1002', 100, 'ORDER_BOOK',
-                    'SELL', 'LIMIT', 'PARTIALLY_FILLED', 'DEMO001',
-                    150, 50, 0, ?, ?
-                )
-                """,
-                PRE_OPEN.minusMinutes(5),
-                PRE_OPEN.minusMinutes(5)
-        );
-    }
-
-    private void convertFixtureToPendingRoleSeparatedListing() {
-        jdbcTemplate.update(
-                """
-                delete from stock_listing_auto_account_config
-                 where symbol = 'DEMO001'
-                """
-        );
-        jdbcTemplate.update(
-                """
-                update stock_order_book_market_config
-                   set enabled = false,
-                       market_status = 'CLOSED'
-                 where symbol = 'DEMO001'
-                """
-        );
-        jdbcTemplate.update(
-                """
-                update stock_account
-                   set participant_category = 'ISSUE_UNDERWRITER',
-                       self_trade_group_id = 'ISSUE_UNDERWRITER:DEFAULT'
-                 where id = 100
-                """
         );
         Long participantId = jdbcTemplate.queryForObject(
                 """
@@ -572,6 +440,17 @@ class LiquidityProviderTransitionServiceTest {
                 participantId,
                 PRE_OPEN,
                 PRE_OPEN
+        );
+    }
+
+    private void convertFixtureToPendingRoleSeparatedListing() {
+        jdbcTemplate.update(
+                """
+                update stock_order_book_market_config
+                   set enabled = false,
+                       market_status = 'CLOSED'
+                 where symbol = 'DEMO001'
+                """
         );
     }
 

@@ -13,28 +13,6 @@ public record OrderBookInstrumentRequest(
         @NotNull @Positive BigDecimal initialPrice,
         @NotNull @Positive Long issuedShares,
         @Positive BigDecimal priceLimitRate,
-        ListingAutoAccountRequest listingAutoAccount,
         InitialIssueAllocationRequest initialIssueAllocation
 ) {
-
-    public OrderBookInstrumentRequest(
-            String symbol,
-            String name,
-            String market,
-            BigDecimal initialPrice,
-            Long issuedShares,
-            BigDecimal priceLimitRate,
-            ListingAutoAccountRequest listingAutoAccount
-    ) {
-        this(
-                symbol,
-                name,
-                market,
-                initialPrice,
-                issuedShares,
-                priceLimitRate,
-                listingAutoAccount,
-                null
-        );
-    }
 }

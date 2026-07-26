@@ -112,16 +112,6 @@ public class LiquidityProviderMandateQueryService {
                                           or unmanaged_holding.reserved_quantity > 0
                                       )
                                ) as unmanaged_holding_count,
-                               case
-                                 when exists (
-                                     select 1
-                                       from stock_listing_auto_account_config legacy_config
-                                      where legacy_config.symbol = mandate.symbol
-                                        and legacy_config.enabled = true
-                                 )
-                                 then true
-                                 else false
-                               end as legacy_listing_liquidity_enabled,
                                daily_state.simulation_trade_date as state_trade_date,
                                daily_state.reference_daily_volume as state_reference_daily_volume,
                                daily_state.execution_quantity_limit,
@@ -170,9 +160,12 @@ public class LiquidityProviderMandateQueryService {
                                    as transition_reference_daily_volume,
                                transition.seed_inventory_quantity,
                                transition.seed_cash_amount,
+                               transition.transferred_inventory_quantity,
+                               transition.transferred_cash_amount,
                                transition.effective_business_date
                                    as transition_effective_business_date,
                                transition.legacy_disabled_at,
+                               transition.legacy_retired_at,
                                transition.activated_at,
                                transition.requested_by,
                                transition.change_reason,
@@ -301,7 +294,6 @@ public class LiquidityProviderMandateQueryService {
                 localDate(rs, "contract_end_date"),
                 localDateTime(rs, "next_quote_at"),
                 rs.getLong("mandate_policy_version"),
-                rs.getBoolean("legacy_listing_liquidity_enabled"),
                 roleEligibilityIssue == null,
                 roleEligibilityIssue,
                 account,
@@ -326,8 +318,11 @@ public class LiquidityProviderMandateQueryService {
                 rs.getLong("transition_reference_daily_volume"),
                 rs.getLong("seed_inventory_quantity"),
                 money(rs.getBigDecimal("seed_cash_amount")),
+                rs.getLong("transferred_inventory_quantity"),
+                money(rs.getBigDecimal("transferred_cash_amount")),
                 localDate(rs, "transition_effective_business_date"),
                 localDateTime(rs, "legacy_disabled_at"),
+                localDateTime(rs, "legacy_retired_at"),
                 localDateTime(rs, "activated_at"),
                 rs.getString("requested_by"),
                 rs.getString("change_reason"),

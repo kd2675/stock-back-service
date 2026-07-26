@@ -1,7 +1,5 @@
 package stock.back.service.market.biz;
 
-import java.math.BigDecimal;
-import java.math.RoundingMode;
 import java.time.LocalDateTime;
 import java.util.Random;
 import java.util.concurrent.ThreadLocalRandom;
@@ -13,9 +11,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import stock.back.service.common.exception.StockException;
 import stock.back.service.database.entity.StockAutoMarketConfig;
-import stock.back.service.database.entity.StockListingAutoAccountConfig;
 import stock.back.service.database.repository.StockAutoMarketConfigRepository;
-import stock.back.service.database.repository.StockListingAutoAccountConfigRepository;
 import stock.back.service.database.repository.StockOrderBookInstrumentRepository;
 import stock.back.service.market.vo.AutoMarketConfigResponse;
 import stock.back.service.market.vo.AutoMarketConfigUpdateRequest;
@@ -25,75 +21,15 @@ import stock.back.service.market.vo.AutoMarketDistributionBiasResponse;
 import stock.back.service.market.vo.AutoMarketRegimeCountWeightsRequest;
 import stock.back.service.market.vo.AutoMarketRegimeCountWeightsResponse;
 import stock.back.service.market.vo.AutoMarketRegimeModifierResponse;
-import stock.back.service.market.vo.ListingAutoAccountRequest;
-import stock.back.service.market.vo.ListingAutoAccountResponse;
 
 @Service
 @RequiredArgsConstructor
 public class AutoMarketConfigService {
 
     private final StockAutoMarketConfigRepository stockAutoMarketConfigRepository;
-    private final StockListingAutoAccountConfigRepository stockListingAutoAccountConfigRepository;
     private final StockOrderBookInstrumentRepository stockOrderBookInstrumentRepository;
-    private final ListingAutoAccountLedgerQueryService listingAutoAccountLedgerQueryService;
     private final SimulationClockService simulationClockService;
     private final JdbcTemplate jdbcTemplate;
-
-    @Transactional
-    public ListingAutoAccountResponse updateListingAutoAccountConfig(String symbol, ListingAutoAccountRequest request) {
-        String normalizedSymbol = MarketTextNormalizer.symbol(symbol);
-        if (normalizedSymbol.isBlank()) {
-            throw StockException.badRequest("Symbol is required");
-        }
-        if (request == null) {
-            throw StockException.badRequest("Listing auto account update is required");
-        }
-        Boolean migratedToLiquidityProvider = jdbcTemplate.queryForObject(
-                """
-                select exists(
-                    select 1
-                      from stock_liquidity_mandate
-                     where symbol = ?
-                )
-                """,
-                Boolean.class,
-                normalizedSymbol
-        );
-        if (Boolean.TRUE.equals(migratedToLiquidityProvider)) {
-            throw StockException.conflict(
-                    "Legacy listing liquidity is read-only after LP migration: "
-                            + normalizedSymbol
-            );
-        }
-        StockListingAutoAccountConfig config = stockListingAutoAccountConfigRepository.findById(normalizedSymbol)
-                .orElseThrow(() -> StockException.notFound("Listing auto account not found: " + normalizedSymbol));
-        String displayName = request.displayName() == null ? null : MarketTextNormalizer.text(request.displayName());
-        if (displayName != null && displayName.length() > 80) {
-            throw StockException.badRequest("Listing auto account display name must be 80 characters or less");
-        }
-        config.update(
-                displayName,
-                request.enabled(),
-                request.positionSide(),
-                request.operationMode(),
-                request.strategyProfile(),
-                request.maxOrderQuantity(),
-                request.orderTtlSeconds(),
-                request.priceOffsetTicks(),
-                request.targetSpreadTicks(),
-                request.inventorySkewTicks(),
-                request.minimumProfitRate(),
-                request.aggressiveUnwindThreshold(),
-                request.aggressiveOrderRatio(),
-                request.targetBuyQuantity(),
-                request.targetSellQuantity(),
-                request.targetHoldingQuantity(),
-                request.inventoryBandQuantity()
-        );
-        long issuedShares = loadIssuedShares(config.getSymbol());
-        ListingAutoAccountConfigValidator.validate(config, issuedShares);
-        return toListingAutoAccountResponse(config, issuedShares);
-    }
 
     @Transactional
     public AutoMarketConfigResponse updateAutoMarketConfig(String symbol, AutoMarketConfigUpdateRequest request) {
@@ -174,67 +110,6 @@ public class AutoMarketConfigService {
                 config,
                 dailyRegime.withCurrentModifier(modifier)
         );
-    }
-
-    private ListingAutoAccountResponse toListingAutoAccountResponse(
-            StockListingAutoAccountConfig config,
-            long issuedShares
-    ) {
-        ListingAutoAccountLedger ledger = listingAutoAccountLedgerQueryService.findLedger(config);
-        BigDecimal initialInventoryCost = config.getInitialIssuePrice()
-                .multiply(BigDecimal.valueOf(config.getInitialInventoryQuantity()));
-        BigDecimal totalEquity = ledger.cashBalance().add(ledger.reservedBuyCash()).add(ledger.marketValue());
-        BigDecimal netProfit = totalEquity.subtract(initialInventoryCost);
-        BigDecimal returnRate = initialInventoryCost.signum() == 0
-                ? BigDecimal.ZERO
-                : netProfit.multiply(BigDecimal.valueOf(100)).divide(initialInventoryCost, 4, RoundingMode.HALF_UP);
-        return new ListingAutoAccountResponse(
-                config.getSymbol(),
-                config.getUserKey(),
-                config.getDisplayName(),
-                Boolean.TRUE.equals(config.getEnabled()),
-                config.getPositionSide(),
-                config.getOperationMode(),
-                config.getStrategyProfile(),
-                issuedShares,
-                config.getInitialInventoryQuantity(),
-                config.getInitialIssuePrice(),
-                initialInventoryCost,
-                ledger.accountId(),
-                ledger.cashBalance(),
-                ledger.holdingQuantity(),
-                ledger.reservedQuantity(),
-                ledger.availableQuantity(),
-                ledger.averagePrice(),
-                ledger.currentPrice(),
-                ledger.marketValue(),
-                ledger.reservedBuyCash(),
-                totalEquity,
-                netProfit,
-                returnRate,
-                config.getMaxOrderQuantity(),
-                config.getOrderTtlSeconds(),
-                config.getPriceOffsetTicks(),
-                config.getTargetSpreadTicks(),
-                config.getInventorySkewTicks(),
-                config.getMinimumProfitRate(),
-                config.getAggressiveUnwindThreshold(),
-                config.getAggressiveOrderRatio(),
-                config.getTargetBuyQuantity(),
-                config.getTargetSellQuantity(),
-                config.getTargetHoldingQuantity(),
-                config.getInventoryBandQuantity(),
-                ledger.openBuyQuantity(),
-                ledger.openSellQuantity(),
-                config.getCreatedAt(),
-                config.getUpdatedAt()
-        );
-    }
-
-    private long loadIssuedShares(String symbol) {
-        return stockOrderBookInstrumentRepository.findById(symbol)
-                .map(instrument -> instrument.getIssuedShares() == null ? 0L : instrument.getIssuedShares())
-                .orElse(0L);
     }
 
     private AutoMarketConfigResponse toAutoMarketConfigResponse(StockAutoMarketConfig config) {

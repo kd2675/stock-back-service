@@ -28,7 +28,6 @@ import stock.back.service.database.entity.StockOrderBookMarketConfig;
 import stock.back.service.database.repository.StockAutoMarketConfigRepository;
 import stock.back.service.database.repository.StockCorporateActionRepository;
 import stock.back.service.database.repository.StockInstrumentRepository;
-import stock.back.service.database.repository.StockListingAutoAccountConfigRepository;
 import stock.back.service.database.repository.StockOrderBookInstrumentRepository;
 import stock.back.service.database.repository.StockOrderBookMarketConfigRepository;
 import stock.back.service.database.repository.StockPriceRepository;
@@ -54,7 +53,6 @@ class OrderBookInstrumentRoleSeparatedIntegrationTest {
     private JdbcTemplate jdbcTemplate;
     private StockOrderBookInstrumentRepository instrumentRepository;
     private StockCorporateActionRepository corporateActionRepository;
-    private StockListingAutoAccountConfigRepository listingConfigRepository;
     private StockOrderBookMarketConfigRepository marketConfigRepository;
     private OrderBookInstrumentCommandService service;
     private SystemCustodyQueryService systemCustodyQueryService;
@@ -82,7 +80,6 @@ class OrderBookInstrumentRoleSeparatedIntegrationTest {
         instrumentRepository = mock(StockOrderBookInstrumentRepository.class);
         marketConfigRepository = mock(StockOrderBookMarketConfigRepository.class);
         corporateActionRepository = mock(StockCorporateActionRepository.class);
-        listingConfigRepository = mock(StockListingAutoAccountConfigRepository.class);
         SimulationClockService simulationClockService = mock(SimulationClockService.class);
         SimulationMarketSessionService marketSessionService =
                 mock(SimulationMarketSessionService.class);
@@ -108,7 +105,6 @@ class OrderBookInstrumentRoleSeparatedIntegrationTest {
                 instrumentRepository,
                 marketConfigRepository,
                 corporateActionRepository,
-                listingConfigRepository,
                 jdbcTemplate,
                 simulationClockService,
                 marketSessionService,
@@ -228,10 +224,6 @@ class OrderBookInstrumentRoleSeparatedIntegrationTest {
                         )
                 );
         assertThat(jdbcTemplate.queryForObject(
-                "select count(*) from stock_listing_auto_account_config where symbol = 'NEW001'",
-                Integer.class
-        )).isZero();
-        assertThat(jdbcTemplate.queryForObject(
                 """
                 select count(*)
                   from stock_market_policy_version
@@ -239,7 +231,6 @@ class OrderBookInstrumentRoleSeparatedIntegrationTest {
                 """,
                 Integer.class
         )).isZero();
-        verify(listingConfigRepository, never()).save(any());
     }
 
     @Test
@@ -454,7 +445,6 @@ class OrderBookInstrumentRoleSeparatedIntegrationTest {
                 new BigDecimal("10000.00"),
                 100_000L,
                 new BigDecimal("30.00"),
-                null,
                 new InitialIssueAllocationRequest(
                         "SCALED_ROLE_SEPARATED",
                         tradableShareRate

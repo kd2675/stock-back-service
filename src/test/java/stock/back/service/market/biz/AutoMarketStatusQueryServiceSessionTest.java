@@ -4,7 +4,6 @@ import org.junit.jupiter.api.Test;
 import stock.back.service.database.repository.StockAutoMarketConfigRepository;
 import stock.back.service.database.repository.StockAutoParticipantProfileConfigRepository;
 import stock.back.service.database.repository.StockAutoParticipantRepository;
-import stock.back.service.database.repository.StockListingAutoAccountConfigRepository;
 import stock.back.service.database.repository.StockOrderRepository;
 import stock.back.service.market.vo.AutoMarketStatusResponse;
 
@@ -25,7 +24,6 @@ class AutoMarketStatusQueryServiceSessionTest {
                 3L,
                 10L,
                 27L,
-                1L,
                 8L,
                 4L,
                 5L,
@@ -33,17 +31,15 @@ class AutoMarketStatusQueryServiceSessionTest {
                 List.of(),
                 List.of(),
                 List.of(),
-                List.of(),
                 List.of()
         );
-        when(summaryStatusQuery.getSummaryStatus(false, true)).thenReturn(runningSummary);
+        when(summaryStatusQuery.getSummaryStatus(false, false)).thenReturn(runningSummary);
         when(simulationMarketSessionService.isRegularSession()).thenReturn(false);
 
         AutoMarketStatusQueryService service = new AutoMarketStatusQueryService(
                 mock(StockAutoMarketConfigRepository.class),
                 mock(StockAutoParticipantProfileConfigRepository.class),
                 mock(StockAutoParticipantRepository.class),
-                mock(StockListingAutoAccountConfigRepository.class),
                 mock(StockOrderRepository.class),
                 mock(AutoMarketStatusDataLoader.class),
                 summaryStatusQuery,
@@ -57,7 +53,8 @@ class AutoMarketStatusQueryServiceSessionTest {
                 false,
                 false,
                 false,
-                false
+                false,
+                null
         );
 
         assertThat(response.enabled()).isFalse();

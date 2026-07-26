@@ -80,7 +80,13 @@ CREATE TABLE IF NOT EXISTS stock_execution_daily_account_snapshot (
   UNIQUE KEY uk_stock_execution_daily_account_run_symbol_account (close_run_id, symbol, account_id),
   KEY idx_stock_execution_daily_account_symbol_date (symbol, simulation_trade_date, close_run_id, account_id),
   KEY idx_stock_execution_daily_account_account_date (account_id, simulation_trade_date, close_run_id),
-  CONSTRAINT chk_stock_execution_daily_account_category CHECK (CASE `participant_category` WHEN 'LISTING_UNDERWRITER' THEN 1 WHEN 'AUTO_PARTICIPANT' THEN 1 WHEN 'MANUAL_PARTICIPANT' THEN 1 ELSE 0 END = 1),
+  CONSTRAINT chk_stock_execution_daily_account_category CHECK (
+    participant_category IN (
+      'LISTING_UNDERWRITER', 'AUTO_PARTICIPANT', 'MANUAL_PARTICIPANT',
+      'INSTITUTIONAL_INVESTOR', 'LIQUIDITY_PROVIDER',
+      'ISSUE_UNDERWRITER', 'SYSTEM_CUSTODY'
+    )
+  ),
   CONSTRAINT chk_stock_execution_daily_account_quantity CHECK (execution_count >= 0 AND buy_quantity >= 0 AND sell_quantity >= 0),
   CONSTRAINT chk_stock_execution_daily_account_amount CHECK (buy_amount >= 0 AND sell_amount >= 0 AND execution_amount >= 0)
 );
@@ -171,11 +177,7 @@ SELECT snapshot.close_run_id,
        execution.symbol,
        snapshot.simulation_trade_date,
        execution.account_id,
-       CASE
-         WHEN listing_config.user_key IS NOT NULL THEN 'LISTING_UNDERWRITER'
-         WHEN participant.user_key IS NOT NULL THEN 'AUTO_PARTICIPANT'
-         ELSE 'MANUAL_PARTICIPANT'
-       END AS participant_category,
+       account.participant_category,
        COUNT(*),
        SUM(CASE WHEN execution.side = 'BUY' THEN execution.quantity ELSE 0 END),
        SUM(CASE WHEN execution.side = 'SELL' THEN execution.quantity ELSE 0 END),
@@ -195,16 +197,11 @@ SELECT snapshot.close_run_id,
    AND execution.executed_at >= CAST(snapshot.simulation_trade_date AS DATETIME)
    AND execution.executed_at < DATE_ADD(CAST(snapshot.simulation_trade_date AS DATETIME), INTERVAL 1 DAY)
   JOIN stock_account account ON account.id = execution.account_id
-  LEFT JOIN stock_listing_auto_account_config listing_config
-    ON listing_config.user_key = account.user_key
-   AND listing_config.symbol = execution.symbol
-  LEFT JOIN stock_auto_participant participant
-    ON participant.user_key = account.user_key
  GROUP BY snapshot.close_run_id,
           execution.symbol,
           snapshot.simulation_trade_date,
           execution.account_id,
-          participant_category,
+          account.participant_category,
           snapshot.snapshot_at;
 
 REPLACE INTO stock_execution_account_day_summary(

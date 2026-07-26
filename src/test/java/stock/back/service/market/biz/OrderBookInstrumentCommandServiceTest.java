@@ -3,29 +3,18 @@ package stock.back.service.market.biz;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import stock.back.service.common.exception.StockException;
-import stock.back.service.database.entity.MarketSessionStatus;
-import stock.back.service.database.entity.StockAutoMarketConfig;
-import stock.back.service.database.entity.StockCorporateAction;
-import stock.back.service.database.entity.StockCorporateActionStatus;
-import stock.back.service.database.entity.StockCorporateActionType;
-import stock.back.service.database.entity.StockListingAutoAccountConfig;
 import stock.back.service.database.entity.StockOrderBookInstrument;
-import stock.back.service.database.entity.StockOrderBookMarketConfig;
-import stock.back.service.database.entity.StockPrice;
 import stock.back.service.database.repository.StockAutoMarketConfigRepository;
 import stock.back.service.database.repository.StockCorporateActionRepository;
 import stock.back.service.database.repository.StockInstrumentRepository;
-import stock.back.service.database.repository.StockListingAutoAccountConfigRepository;
 import stock.back.service.database.repository.StockOrderBookInstrumentRepository;
 import stock.back.service.database.repository.StockOrderBookMarketConfigRepository;
 import stock.back.service.database.repository.StockPriceRepository;
-import stock.back.service.market.vo.InitialIssueAllocationRequest;
 import stock.back.service.market.vo.OrderBookInstrumentRequest;
 import web.common.core.simulation.SimulationClockSnapshot;
 import web.common.core.simulation.SimulationMarketSession;
@@ -33,9 +22,7 @@ import web.common.core.simulation.SimulationMarketSession;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.util.Optional;
 
-import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
@@ -63,9 +50,6 @@ class OrderBookInstrumentCommandServiceTest {
 
     @Mock
     private StockCorporateActionRepository stockCorporateActionRepository;
-
-    @Mock
-    private StockListingAutoAccountConfigRepository stockListingAutoAccountConfigRepository;
 
     @Mock
     private SimulationClockService simulationClockService;
@@ -98,84 +82,11 @@ class OrderBookInstrumentCommandServiceTest {
                 stockOrderBookInstrumentRepository,
                 stockOrderBookMarketConfigRepository,
                 stockCorporateActionRepository,
-                stockListingAutoAccountConfigRepository,
                 jdbcTemplate,
                 simulationClockService,
                 marketSessionService,
                 marketLedgerFreezeGuard
         );
-    }
-
-    @Test
-    void createOrderBookInstrument_validRequest_recordsInitialIssueAndListingAccount() {
-        when(stockInstrumentRepository.existsById("ZQ001")).thenReturn(false);
-        when(stockOrderBookInstrumentRepository.existsById("ZQ001")).thenReturn(false);
-        when(stockOrderBookInstrumentRepository.save(any(StockOrderBookInstrument.class)))
-                .thenAnswer(invocation -> invocation.getArgument(0));
-        when(stockPriceRepository.findById("ZQ001")).thenReturn(Optional.empty());
-
-        var response = service.createOrderBookInstrument(
-                new OrderBookInstrumentRequest(
-                        " zq001 ",
-                        "제로큐 주문장",
-                        "",
-                        new BigDecimal("70000.00"),
-                        100000L,
-                        new BigDecimal("30.00"),
-                        null,
-                        new InitialIssueAllocationRequest("LEGACY_FULL_FLOAT", null)
-                )
-        );
-
-        ArgumentCaptor<StockOrderBookInstrument> instrumentCaptor = ArgumentCaptor.forClass(StockOrderBookInstrument.class);
-        ArgumentCaptor<StockCorporateAction> actionCaptor = ArgumentCaptor.forClass(StockCorporateAction.class);
-        ArgumentCaptor<StockOrderBookMarketConfig> marketConfigCaptor = ArgumentCaptor.forClass(StockOrderBookMarketConfig.class);
-        ArgumentCaptor<StockAutoMarketConfig> autoMarketConfigCaptor = ArgumentCaptor.forClass(StockAutoMarketConfig.class);
-        ArgumentCaptor<StockPrice> priceCaptor = ArgumentCaptor.forClass(StockPrice.class);
-        ArgumentCaptor<StockListingAutoAccountConfig> listingConfigCaptor = ArgumentCaptor.forClass(StockListingAutoAccountConfig.class);
-        verify(stockOrderBookInstrumentRepository).save(instrumentCaptor.capture());
-        verify(stockCorporateActionRepository).save(actionCaptor.capture());
-        verify(stockOrderBookMarketConfigRepository).save(marketConfigCaptor.capture());
-        verify(stockAutoMarketConfigRepository).save(autoMarketConfigCaptor.capture());
-        verify(stockPriceRepository).save(priceCaptor.capture());
-        verify(stockListingAutoAccountConfigRepository).save(listingConfigCaptor.capture());
-        assertThat(response.symbol()).isEqualTo("ZQ001");
-        assertThat(response.issuedShares()).isEqualTo(100000L);
-        assertThat(response.tickSize()).isEqualByComparingTo(new BigDecimal("100.00"));
-        assertThat(instrumentCaptor.getValue().getCreatedAt()).isEqualTo(simulationNow);
-        assertThat(instrumentCaptor.getValue().getUpdatedAt()).isEqualTo(simulationNow);
-        assertThat(actionCaptor.getValue().getActionType()).isEqualTo(StockCorporateActionType.INITIAL_ISSUE);
-        assertThat(actionCaptor.getValue().getStatus()).isEqualTo(StockCorporateActionStatus.LISTED);
-        assertThat(actionCaptor.getValue().getCreatedAt()).isEqualTo(simulationNow);
-        assertThat(actionCaptor.getValue().getListedAt()).isEqualTo(simulationNow);
-        assertThat(marketConfigCaptor.getValue().getUpdatedAt()).isEqualTo(simulationNow);
-        assertThat(marketConfigCaptor.getValue().getEnabled()).isTrue();
-        assertThat(marketConfigCaptor.getValue().getMarketStatus())
-                .isEqualTo(MarketSessionStatus.OPEN);
-        assertThat(autoMarketConfigCaptor.getValue().getUpdatedAt()).isEqualTo(simulationNow);
-        assertThat(priceCaptor.getValue().getPriceTime()).isEqualTo(simulationNow);
-        assertThat(listingConfigCaptor.getValue().getUserKey()).isEqualTo("stock-listing-zq001");
-        assertThat(listingConfigCaptor.getValue().getDisplayName()).isEqualTo("제로큐 주문장 상장주관사");
-        assertThat(listingConfigCaptor.getValue().getCreatedAt()).isEqualTo(simulationNow);
-        assertThat(listingConfigCaptor.getValue().getUpdatedAt()).isEqualTo(simulationNow);
-        Long accountId = jdbcTemplate.queryForObject(
-                "select id from stock_account where user_key = ?",
-                Long.class,
-                "stock-listing-zq001"
-        );
-        assertThat(accountId).isNotNull();
-        assertThat(jdbcTemplate.queryForObject(
-                "select quantity from stock_holding where account_id = ? and symbol = ?",
-                Long.class,
-                accountId,
-                "ZQ001"
-        )).isEqualTo(100000L);
-        assertThat(jdbcTemplate.queryForObject(
-                "select average_price from stock_holding where account_id = ? and symbol = ?",
-                BigDecimal.class,
-                accountId,
-                "ZQ001"
-        )).isEqualByComparingTo(new BigDecimal("70000.00"));
     }
 
     @Test

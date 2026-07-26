@@ -228,7 +228,6 @@ class StockMysqlDdlContractTest {
             "TRUNCATE TABLE stock_execution_account_day_summary;",
             "TRUNCATE TABLE stock_order_book_daily_snapshot;",
             "TRUNCATE TABLE stock_market_close_run;",
-            "TRUNCATE TABLE stock_listing_auto_account_config;",
             "TRUNCATE TABLE stock_post_close_phase_attempt;",
             "TRUNCATE TABLE stock_post_close_cycle;",
             "TRUNCATE TABLE stock_market_session_fence;",
@@ -285,16 +284,12 @@ class StockMysqlDdlContractTest {
             "CAST(base_simulation_date AS DATETIME)",
             "'runtime-history-reset'",
             "current_price = VALUES(current_price)",
-            "INSERT INTO stock_holding(account_id, symbol, quantity, reserved_quantity, average_price, updated_at)",
-            "FROM stock_listing_auto_account_config c",
             "INSERT INTO stock_market_business_state(",
             "INSERT INTO stock_market_session_fence(",
-            "i.tradable_shares",
-            "trading eligibility must never decide security ownership",
             "JOIN stock_institution_portfolio portfolio",
             "JSON_EXTRACT(policy.config_json, '$.initialCash')",
             "JOIN stock_liquidity_transition transition",
-            "account.cash_balance = transition.seed_cash_amount",
+            "transition.seed_cash_amount + transition.transferred_cash_amount",
             "transition.stage IN ('LIVE_ACTIVE', 'SUSPENDED')",
             "CREATE TEMPORARY TABLE tmp_stock_lp_seed_replay",
             "CREATE TEMPORARY TABLE tmp_stock_lp_seed_replay_guard",
@@ -302,6 +297,8 @@ class StockMysqlDdlContractTest {
             "allocation.allocation_reason = 'LIQUIDITY_SEED_TRANSFER'",
             "allocation.idempotency_key = CONCAT('LP-SEED:', transition.symbol)",
             "replay.source_quantity_before - replay.seed_inventory_quantity",
+            "transition.legacy_retired_at IS NOT NULL",
+            "instrument.tradable_shares",
             "CREATE TEMPORARY TABLE tmp_stock_reset_share_guard",
             "COALESCE(holding_sum.holding_quantity, 0) <> instrument.issued_shares"
     );
@@ -314,7 +311,6 @@ class StockMysqlDdlContractTest {
             "TRUNCATE TABLE stock_auto_participant_profile_config;",
             "TRUNCATE TABLE stock_auto_participant_symbol_config;",
             "TRUNCATE TABLE stock_auto_market_config;",
-            "TRUNCATE TABLE stock_listing_auto_account_config;",
             "TRUNCATE TABLE stock_price;",
             "TRUNCATE TABLE stock_simulation_clock;",
             "TRUNCATE TABLE stock_virtual_market_config;",
@@ -340,23 +336,7 @@ class StockMysqlDdlContractTest {
         assertThat(ddl).contains(BATCH_OPERATION_TABLE_MARKERS.toArray(String[]::new));
         assertThat(ddl).contains(SIMULATION_CLOCK_TABLE_MARKERS.toArray(String[]::new));
         assertThat(ddl).contains(MARKET_CLOSE_SNAPSHOT_TABLE_MARKERS.toArray(String[]::new));
-        assertThat(ddl).contains(
-                "target_buy_quantity BIGINT NOT NULL",
-                "target_sell_quantity BIGINT NOT NULL",
-                "target_holding_quantity BIGINT NOT NULL",
-                "inventory_band_quantity BIGINT NOT NULL",
-                "operation_mode VARCHAR(30) NOT NULL",
-                "strategy_profile VARCHAR(30) NOT NULL",
-                "initial_inventory_quantity BIGINT NOT NULL",
-                "initial_issue_price DECIMAL(19,2) NOT NULL",
-                "target_spread_ticks INT NOT NULL",
-                "aggressive_order_ratio DECIMAL(8,4) NOT NULL",
-                "WHEN 'TWO_SIDED' THEN 1",
-                "chk_stock_listing_auto_account_target_buy",
-                "chk_stock_listing_auto_account_target_sell",
-                "chk_stock_listing_auto_account_target_holding",
-                "chk_stock_listing_auto_account_inventory_band"
-        );
+        assertThat(ddl).doesNotContain("stock_listing_auto_account_config");
         assertThat(ddl).contains(
                 "decision_frequency_multiplier DECIMAL(8,4) NOT NULL DEFAULT 1.0000",
                 "orders_per_decision_multiplier DECIMAL(8,4) NOT NULL DEFAULT 1.0000",
@@ -936,6 +916,46 @@ class StockMysqlDdlContractTest {
                 "DELETE FROM stock_holding",
                 "UPDATE stock_order",
                 "DELETE FROM stock_order"
+        );
+    }
+
+    @Test
+    void legacyLiquidityRetirementAlter_transfersWholeAccountsAndIsBackOwned()
+            throws IOException {
+        Path backPath = Path.of(
+                "src/main/resources/db/ddl/stock_legacy_liquidity_retirement_alter.sql"
+        );
+        Path batchPath = Path.of(
+                "../stock-batch-service/src/main/resources/db/ddl/"
+                        + "stock_legacy_liquidity_retirement_alter.sql"
+        );
+        String ddl = Files.readString(backPath, StandardCharsets.UTF_8);
+
+        assertThat(firstExecutableSqlLine(ddl)).isEqualTo("USE STOCK_SERVICE;");
+        assertThat(batchPath).doesNotExist();
+        assertThat(ddl).contains(
+                "Pause the simulation clock before legacy liquidity retirement",
+                "Every legacy liquidity config must map to exactly one LP transition",
+                "Legacy and LP open orders must be fully cancelled before retirement",
+                "'LIQUIDITY_ACCOUNT_TRANSFER'",
+                "'MARKET_ROLE_TRANSFER'",
+                "transfer.liquidity_cash + transfer.legacy_cash",
+                "transfer.legacy_quantity",
+                "Previously retired legacy liquidity accounts must be closed and empty",
+                "mandate.target_inventory_quantity = transfer.combined_quantity",
+                "daily_state.opening_net_asset_value",
+                "legacy_account.status = 'CLOSED'",
+                "legacy_account.cash_balance <> 0",
+                "Issued-share reconciliation failed after legacy liquidity retirement",
+                "DROP TABLE IF EXISTS stock_listing_auto_account_config"
+        ).doesNotContain(
+                "legacy_holding.average_price = 0.00",
+                "UPDATE stock_order",
+                "DELETE FROM stock_order",
+                "INSERT INTO stock_order",
+                "UPDATE stock_execution",
+                "DELETE FROM stock_execution",
+                "INSERT INTO stock_execution"
         );
     }
 

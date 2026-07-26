@@ -7,10 +7,8 @@
 -- Enabled order-book prices are reset to initial listing prices because price ticks and executions
 -- are removed. The simulation clock keeps its configured base date and day speed, but its
 -- accumulated time is reset so new price history starts at the simulation base date.
--- Legacy listing accounts receive the current tradable share supply again even when quoting
--- is disabled or the market is CLOSED: trading eligibility must never decide security ownership.
--- A listing account retired by a recorded LP transition is therefore also restored as the
--- transfer source before the immutable LP seed transfer is replayed.
+-- Retired listing-liquidity accounts are never reopened. Their tradable supply is restored
+-- directly to the dedicated LP account recorded by the immutable transition audit.
 
 USE STOCK_SERVICE;
 
@@ -214,7 +212,8 @@ SELECT account.id,
 UPDATE stock_account account
 JOIN stock_liquidity_transition transition
   ON transition.liquidity_account_id = account.id
-   SET account.cash_balance = transition.seed_cash_amount,
+   SET account.cash_balance =
+           transition.seed_cash_amount + transition.transferred_cash_amount,
        account.updated_at = NOW()
  WHERE account.status = 'ACTIVE'
    AND transition.stage IN ('LIVE_ACTIVE', 'SUSPENDED');
@@ -226,7 +225,7 @@ INSERT INTO stock_account_cash_flow(
 )
 SELECT account.id,
        'DEPOSIT',
-       transition.seed_cash_amount,
+       transition.seed_cash_amount + transition.transferred_cash_amount,
        'OPENING_GRANT',
        'runtime-history-reset',
        null,
@@ -240,20 +239,7 @@ SELECT account.id,
  WHERE state.state_id = 'DEFAULT'
    AND account.status = 'ACTIVE'
    AND transition.stage IN ('LIVE_ACTIVE', 'SUSPENDED')
-   AND transition.seed_cash_amount > 0;
-
-INSERT INTO stock_holding(account_id, symbol, quantity, reserved_quantity, average_price, updated_at)
-SELECT a.id,
-       i.symbol,
-       i.tradable_shares,
-       0,
-       i.initial_price,
-       NOW()
-  FROM stock_listing_auto_account_config c
-  JOIN stock_account a ON a.user_key = c.user_key
-  JOIN stock_order_book_instrument i ON i.symbol = c.symbol AND i.enabled = true
- WHERE a.status = 'ACTIVE'
-   AND i.tradable_shares > 0;
+   AND transition.seed_cash_amount + transition.transferred_cash_amount > 0;
 
 -- Immutable initial-allocation rows identify the role accounts. Quantity follows the preserved
 -- current instrument configuration so a completed split or capital increase is not lost while
@@ -284,6 +270,15 @@ SELECT allocation.destination_account_id,
    AND allocation.allocation_reason IN (
        'INITIAL_FLOAT_CUSTODY', 'INITIAL_FLOAT_UNDERWRITER',
        'INITIAL_LOCKED_CUSTODY'
+   )
+   AND (
+       allocation.allocation_reason = 'INITIAL_LOCKED_CUSTODY'
+       OR NOT EXISTS (
+           SELECT 1
+             FROM stock_liquidity_transition retired_transition
+            WHERE retired_transition.symbol = allocation.symbol
+              AND retired_transition.legacy_retired_at IS NOT NULL
+       )
    )
    AND CASE allocation.allocation_reason
            WHEN 'INITIAL_FLOAT_CUSTODY' THEN instrument.tradable_shares
@@ -337,6 +332,7 @@ SELECT transition.id,
     ON destination_account.id = transition.liquidity_account_id
    AND destination_account.status = 'ACTIVE'
  WHERE transition.stage IN ('LIVE_ACTIVE', 'SUSPENDED')
+   AND transition.legacy_retired_at IS NULL
    AND source_holding.reserved_quantity = 0
    AND source_holding.quantity >= transition.seed_inventory_quantity;
 
@@ -352,6 +348,7 @@ SELECT COUNT(*)
   LEFT JOIN tmp_stock_lp_seed_replay replay
     ON replay.transition_id = transition.id
  WHERE transition.stage IN ('LIVE_ACTIVE', 'SUSPENDED')
+   AND transition.legacy_retired_at IS NULL
    AND replay.transition_id IS NULL;
 
 UPDATE stock_holding source_holding
@@ -386,6 +383,33 @@ SELECT replay.liquidity_account_id,
        replay.unit_price,
        NOW()
   FROM tmp_stock_lp_seed_replay replay
+ON DUPLICATE KEY UPDATE
+       quantity = VALUES(quantity),
+       reserved_quantity = 0,
+       average_price = VALUES(average_price),
+       updated_at = VALUES(updated_at);
+
+-- A fully retired legacy account no longer acts as a replay source. Restore the current
+-- tradable supply to its dedicated LP account; locked initial allocations remain separate.
+INSERT INTO stock_holding(
+    account_id, symbol, quantity, reserved_quantity, average_price, updated_at
+)
+SELECT transition.liquidity_account_id,
+       transition.symbol,
+       instrument.tradable_shares,
+       0,
+       instrument.initial_price,
+       NOW()
+  FROM stock_liquidity_transition transition
+  JOIN stock_account account
+    ON account.id = transition.liquidity_account_id
+   AND account.status = 'ACTIVE'
+  JOIN stock_order_book_instrument instrument
+    ON instrument.symbol = transition.symbol
+   AND instrument.enabled = true
+ WHERE transition.stage IN ('LIVE_ACTIVE', 'SUSPENDED')
+   AND transition.legacy_retired_at IS NOT NULL
+   AND instrument.tradable_shares > 0
 ON DUPLICATE KEY UPDATE
        quantity = VALUES(quantity),
        reserved_quantity = 0,

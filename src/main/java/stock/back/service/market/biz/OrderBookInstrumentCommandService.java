@@ -7,18 +7,15 @@ import org.springframework.transaction.annotation.Transactional;
 import stock.back.service.common.exception.StockException;
 import stock.back.service.database.entity.StockAutoMarketConfig;
 import stock.back.service.database.entity.StockCorporateAction;
-import stock.back.service.database.entity.StockListingAutoAccountConfig;
 import stock.back.service.database.entity.StockOrderBookInstrument;
 import stock.back.service.database.entity.StockOrderBookMarketConfig;
 import stock.back.service.database.entity.StockPrice;
 import stock.back.service.database.repository.StockAutoMarketConfigRepository;
 import stock.back.service.database.repository.StockCorporateActionRepository;
 import stock.back.service.database.repository.StockInstrumentRepository;
-import stock.back.service.database.repository.StockListingAutoAccountConfigRepository;
 import stock.back.service.database.repository.StockOrderBookInstrumentRepository;
 import stock.back.service.database.repository.StockOrderBookMarketConfigRepository;
 import stock.back.service.database.repository.StockPriceRepository;
-import stock.back.service.market.vo.ListingAutoAccountRequest;
 import stock.back.service.market.vo.InitialIssueAllocationRequest;
 import stock.back.service.market.vo.OrderBookInstrumentRequest;
 import stock.back.service.market.vo.OrderBookInstrumentResponse;
@@ -35,9 +32,7 @@ import java.util.Locale;
 @Service
 public class OrderBookInstrumentCommandService {
 
-    private static final String LISTING_SUPPLY_USER_KEY_PREFIX = "stock-listing-";
     private static final String ROLE_SEPARATED_MODE = "SCALED_ROLE_SEPARATED";
-    private static final String LEGACY_FULL_FLOAT_MODE = "LEGACY_FULL_FLOAT";
     private static final BigDecimal DEFAULT_TRADABLE_SHARE_RATE = new BigDecimal("0.500000");
     private static final BigDecimal MIN_TRADABLE_SHARE_RATE = new BigDecimal("0.200000");
     private static final BigDecimal MAX_TRADABLE_SHARE_RATE = new BigDecimal("0.850000");
@@ -59,7 +54,6 @@ public class OrderBookInstrumentCommandService {
     private final StockOrderBookInstrumentRepository stockOrderBookInstrumentRepository;
     private final StockOrderBookMarketConfigRepository stockOrderBookMarketConfigRepository;
     private final StockCorporateActionRepository stockCorporateActionRepository;
-    private final StockListingAutoAccountConfigRepository stockListingAutoAccountConfigRepository;
     private final JdbcTemplate jdbcTemplate;
     private final JdbcClient jdbcClient;
     private final SimulationClockService simulationClockService;
@@ -73,7 +67,6 @@ public class OrderBookInstrumentCommandService {
             StockOrderBookInstrumentRepository stockOrderBookInstrumentRepository,
             StockOrderBookMarketConfigRepository stockOrderBookMarketConfigRepository,
             StockCorporateActionRepository stockCorporateActionRepository,
-            StockListingAutoAccountConfigRepository stockListingAutoAccountConfigRepository,
             JdbcTemplate jdbcTemplate,
             SimulationClockService simulationClockService,
             SimulationMarketSessionService marketSessionService,
@@ -85,7 +78,6 @@ public class OrderBookInstrumentCommandService {
         this.stockOrderBookInstrumentRepository = stockOrderBookInstrumentRepository;
         this.stockOrderBookMarketConfigRepository = stockOrderBookMarketConfigRepository;
         this.stockCorporateActionRepository = stockCorporateActionRepository;
-        this.stockListingAutoAccountConfigRepository = stockListingAutoAccountConfigRepository;
         this.jdbcTemplate = jdbcTemplate;
         this.jdbcClient = JdbcClient.create(jdbcTemplate);
         this.simulationClockService = simulationClockService;
@@ -126,8 +118,7 @@ public class OrderBookInstrumentCommandService {
 
         InitialIssueAllocationPlan allocationPlan = resolveInitialIssueAllocation(
                 request.initialIssueAllocation(),
-                request.issuedShares(),
-                request.listingAutoAccount()
+                request.issuedShares()
         );
         BigDecimal tickSize = KoreanStockTickSizePolicy.tickSizeForCurrentPrice(market, request.initialPrice());
         BigDecimal priceLimitRate = request.priceLimitRate() == null ? BigDecimal.valueOf(30) : request.priceLimitRate();
@@ -149,31 +140,18 @@ public class OrderBookInstrumentCommandService {
                 StockCorporateAction.initialIssue(symbol, request.issuedShares(), request.initialPrice(), now)
         );
         stockOrderBookMarketConfigRepository.save(
-                allocationPlan.roleSeparated()
-                        ? StockOrderBookMarketConfig.pendingActivation(symbol, now)
-                        : StockOrderBookMarketConfig.enabled(symbol, now)
+                StockOrderBookMarketConfig.pendingActivation(symbol, now)
         );
         stockAutoMarketConfigRepository.save(StockAutoMarketConfig.defaults(symbol, now));
         stockPriceRepository.save(StockPrice.initial(symbol, request.initialPrice(), now));
-        if (allocationPlan.roleSeparated()) {
-            seedRoleSeparatedInitialAllocation(
-                    symbol,
-                    request.initialPrice(),
-                    request.issuedShares(),
-                    allocationPlan,
-                    initialIssue.getId(),
-                    now
-            );
-        } else {
-            seedListingAutoAccount(
-                    symbol,
-                    name,
-                    request.initialPrice(),
-                    allocationPlan.tradableShares(),
-                    request.listingAutoAccount(),
-                    now
-            );
-        }
+        seedRoleSeparatedInitialAllocation(
+                symbol,
+                request.initialPrice(),
+                request.issuedShares(),
+                allocationPlan,
+                initialIssue.getId(),
+                now
+        );
         return OrderBookInstrumentResponseMapper.toResponse(instrument, findPrice(instrument));
     }
 
@@ -233,27 +211,13 @@ public class OrderBookInstrumentCommandService {
 
     private InitialIssueAllocationPlan resolveInitialIssueAllocation(
             InitialIssueAllocationRequest request,
-            long issuedShares,
-            ListingAutoAccountRequest listingAutoAccount
+            long issuedShares
     ) {
         String mode = request == null || request.mode() == null
                 ? ROLE_SEPARATED_MODE
                 : request.mode().trim().toUpperCase(Locale.ROOT);
-        if (LEGACY_FULL_FLOAT_MODE.equals(mode)) {
-            if (request != null && request.tradableShareRate() != null) {
-                throw StockException.badRequest(
-                        "Legacy full-float issuance must not specify a tradable-share rate"
-                );
-            }
-            return new InitialIssueAllocationPlan(false, issuedShares, 0L);
-        }
         if (!ROLE_SEPARATED_MODE.equals(mode)) {
             throw StockException.badRequest("Unsupported initial-issue allocation mode: " + mode);
-        }
-        if (listingAutoAccount != null) {
-            throw StockException.badRequest(
-                    "Role-separated issuance cannot create a legacy listing-auto account"
-            );
         }
         if (issuedShares < 2L) {
             throw StockException.badRequest(
@@ -279,7 +243,6 @@ public class OrderBookInstrumentCommandService {
             );
         }
         return new InitialIssueAllocationPlan(
-                true,
                 tradableShares,
                 Math.subtractExact(issuedShares, tradableShares)
         );
@@ -529,86 +492,11 @@ public class OrderBookInstrumentCommandService {
         }
     }
 
-    private void seedListingAutoAccount(
-            String symbol,
-            String name,
-            BigDecimal initialPrice,
-            long tradableShares,
-            ListingAutoAccountRequest request,
-            LocalDateTime now
-    ) {
-        String listingUserKey = LISTING_SUPPLY_USER_KEY_PREFIX + symbol.toLowerCase(Locale.ROOT);
-        String displayName = MarketTextNormalizer.text(request == null ? null : request.displayName());
-        if (displayName.isBlank()) {
-            displayName = name + " 상장주관사";
-        }
-        if (displayName.length() > 80) {
-            throw StockException.badRequest("Listing auto account display name must be 80 characters or less");
-        }
-        jdbcTemplate.update(
-                """
-                insert into stock_account(
-                    user_key, status, participant_category, cash_balance, created_at, updated_at
-                )
-                values (?, 'ACTIVE', 'LISTING_UNDERWRITER', 0.00, ?, ?)
-                """,
-                listingUserKey,
-                now,
-                now
-        );
-        Long accountId = jdbcClient.sql("select id from stock_account where user_key = ?")
-                .param(listingUserKey)
-                .query(Long.class)
-                .optional()
-                .orElseThrow(() -> StockException.notFound("Listing supply account not found after opening"));
-        jdbcTemplate.update(
-                """
-                insert into stock_holding(
-                    account_id, symbol, quantity, reserved_quantity, average_price, updated_at
-                )
-                values (?, ?, ?, ?, ?, ?)
-                """,
-                accountId,
-                symbol,
-                tradableShares,
-                0L,
-                initialPrice,
-                now
-        );
-        StockListingAutoAccountConfig config = StockListingAutoAccountConfig.defaults(symbol, listingUserKey, displayName, tradableShares, now);
-        config.initializeIssueBasis(tradableShares, initialPrice);
-        if (request != null) {
-            config.update(
-                    displayName,
-                    request.enabled(),
-                    request.positionSide(),
-                    request.operationMode(),
-                    request.strategyProfile(),
-                    request.maxOrderQuantity(),
-                    request.orderTtlSeconds(),
-                    request.priceOffsetTicks(),
-                    request.targetSpreadTicks(),
-                    request.inventorySkewTicks(),
-                    request.minimumProfitRate(),
-                    request.aggressiveUnwindThreshold(),
-                    request.aggressiveOrderRatio(),
-                    request.targetBuyQuantity(),
-                    request.targetSellQuantity(),
-                    request.targetHoldingQuantity(),
-                    request.inventoryBandQuantity(),
-                    now
-            );
-            ListingAutoAccountConfigValidator.validate(config, tradableShares);
-        }
-        stockListingAutoAccountConfigRepository.save(config);
-    }
-
     private StockPrice findPrice(StockOrderBookInstrument instrument) {
         return stockPriceRepository.findById(instrument.getSymbol()).orElse(null);
     }
 
     private record InitialIssueAllocationPlan(
-            boolean roleSeparated,
             long tradableShares,
             long lockedShares
     ) {

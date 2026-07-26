@@ -26,7 +26,6 @@ import stock.back.service.database.entity.StockAutoParticipant;
 import stock.back.service.database.entity.StockAutoParticipantSymbolConfig;
 import stock.back.service.database.entity.StockInstrumentReportEvent;
 import stock.back.service.database.entity.StockInstrumentReportEventType;
-import stock.back.service.database.entity.StockListingAutoAccountConfig;
 import stock.back.service.database.entity.StockOrderBookInstrument;
 import stock.back.service.database.entity.StockPrice;
 import stock.back.service.database.entity.StockPriceTick;
@@ -42,7 +41,6 @@ import stock.back.service.database.repository.StockCorporateActionRepository;
 import stock.back.service.database.repository.StockExecutionMarketViewRepository;
 import stock.back.service.database.repository.StockInstrumentRepository;
 import stock.back.service.database.repository.StockInstrumentReportEventRepository;
-import stock.back.service.database.repository.StockListingAutoAccountConfigRepository;
 import stock.back.service.database.repository.StockOrderBookInstrumentRepository;
 import stock.back.service.database.repository.StockOrderBookMarketConfigRepository;
 import stock.back.service.database.repository.StockOrderRepository;
@@ -61,8 +59,6 @@ import stock.back.service.market.vo.AutoParticipantRequest;
 import stock.back.service.market.vo.AutoParticipantSymbolConfigRequest;
 import stock.back.service.market.vo.CorporateActionRequest;
 import stock.back.service.market.vo.InstrumentReportRequest;
-import stock.back.service.market.vo.InitialIssueAllocationRequest;
-import stock.back.service.market.vo.OrderBookInstrumentRequest;
 import stock.back.service.market.vo.OrderBookInstrumentTradingRulesRequest;
 import stock.back.service.market.vo.AutoMarketStatusResponse;
 import stock.back.service.trading.biz.AccountOrderCleanupService;
@@ -151,9 +147,6 @@ class MarketServiceTest {
     private StockInstrumentReportEventRepository stockInstrumentReportEventRepository;
 
     @Mock
-    private StockListingAutoAccountConfigRepository stockListingAutoAccountConfigRepository;
-
-    @Mock
     private JdbcTemplate jdbcTemplate;
 
     @Mock
@@ -191,8 +184,7 @@ class MarketServiceTest {
                 .thenReturn(listingNow.toLocalDate());
         AutoMarketStatusDataLoader autoMarketStatusDataLoader = new AutoMarketStatusDataLoader(
                 jdbcTemplate,
-                stockAutoParticipantSymbolConfigRepository,
-                new ListingAutoAccountLedgerQueryService(jdbcTemplate)
+                stockAutoParticipantSymbolConfigRepository
         );
         marketService = new MarketServiceTestFacade(
                 new OrderBookInstrumentCommandService(
@@ -202,7 +194,6 @@ class MarketServiceTest {
                         stockOrderBookInstrumentRepository,
                         stockOrderBookMarketConfigRepository,
                         stockCorporateActionRepository,
-                        stockListingAutoAccountConfigRepository,
                         commandJdbcTemplate,
                         listingClockService,
                         listingSessionService,
@@ -259,9 +250,7 @@ class MarketServiceTest {
                 ),
                 new AutoMarketConfigService(
                         stockAutoMarketConfigRepository,
-                        stockListingAutoAccountConfigRepository,
                         stockOrderBookInstrumentRepository,
-                        new ListingAutoAccountLedgerQueryService(jdbcTemplate),
                         simulationClockService,
                         commandJdbcTemplate
                 ),
@@ -308,7 +297,6 @@ class MarketServiceTest {
                         stockAutoMarketConfigRepository,
                         stockAutoParticipantProfileConfigRepository,
                         stockAutoParticipantRepository,
-                        stockListingAutoAccountConfigRepository,
                         stockOrderRepository,
                         autoMarketStatusDataLoader,
                         autoMarketSummaryStatusQuery,
@@ -471,70 +459,6 @@ class MarketServiceTest {
                 org.mockito.ArgumentMatchers.any(),
                 org.mockito.ArgumentMatchers.any(),
                 org.mockito.ArgumentMatchers.any()
-        );
-    }
-
-    @Test
-    void createOrderBookInstrument_validRequest_recordsInitialIssuedShares() {
-        when(stockInstrumentRepository.existsById("ZQ001")).thenReturn(false);
-        when(stockOrderBookInstrumentRepository.existsById("ZQ001")).thenReturn(false);
-        when(stockOrderBookInstrumentRepository.save(any(StockOrderBookInstrument.class)))
-                .thenAnswer(invocation -> invocation.getArgument(0));
-        when(stockPriceRepository.findById("ZQ001")).thenReturn(Optional.empty());
-
-        var response = marketService.createOrderBookInstrument(
-                new OrderBookInstrumentRequest(
-                        " zq001 ",
-                        "제로큐 주문장",
-                        "",
-                        new BigDecimal("70000.00"),
-                        100000L,
-                        new BigDecimal("30.00"),
-                        null,
-                        new InitialIssueAllocationRequest("LEGACY_FULL_FLOAT", null)
-                )
-        );
-
-        ArgumentCaptor<StockCorporateAction> actionCaptor = ArgumentCaptor.forClass(StockCorporateAction.class);
-        ArgumentCaptor<StockListingAutoAccountConfig> listingConfigCaptor = ArgumentCaptor.forClass(StockListingAutoAccountConfig.class);
-        verify(stockCorporateActionRepository).save(actionCaptor.capture());
-        verify(stockListingAutoAccountConfigRepository).save(listingConfigCaptor.capture());
-        assertThat(response.symbol()).isEqualTo("ZQ001");
-        assertThat(response.issuedShares()).isEqualTo(100000L);
-        assertThat(response.tradableShares()).isEqualTo(100000L);
-        assertThat(response.tickSize()).isEqualByComparingTo(new BigDecimal("100.00"));
-        assertThat(response.priceLimitRate()).isEqualByComparingTo(new BigDecimal("30.00"));
-        assertThat(response.priceLimitBase()).isEqualByComparingTo(new BigDecimal("70000.00"));
-        assertThat(actionCaptor.getValue().getActionType()).isEqualTo(StockCorporateActionType.INITIAL_ISSUE);
-        assertThat(actionCaptor.getValue().getShareQuantity()).isEqualTo(100000L);
-        assertThat(actionCaptor.getValue().getIssuePrice()).isEqualByComparingTo(new BigDecimal("70000.00"));
-        assertThat(actionCaptor.getValue().getStatus()).isEqualTo(StockCorporateActionStatus.LISTED);
-        assertThat(actionCaptor.getValue().getListedAt()).isNotNull();
-        Long accountId = commandJdbcTemplate.queryForObject(
-                "select id from stock_account where user_key = ?",
-                Long.class,
-                "stock-listing-zq001"
-        );
-        assertThat(accountId).isNotNull();
-        assertThat(commandJdbcTemplate.queryForObject(
-                "select quantity from stock_holding where account_id = ? and symbol = ?",
-                Long.class,
-                accountId,
-                "ZQ001"
-        )).isEqualTo(100000L);
-        assertThat(commandJdbcTemplate.queryForObject(
-                "select average_price from stock_holding where account_id = ? and symbol = ?",
-                BigDecimal.class,
-                accountId,
-                "ZQ001"
-        )).isEqualByComparingTo(new BigDecimal("70000.00"));
-        assertThat(listingConfigCaptor.getValue().getSymbol()).isEqualTo("ZQ001");
-        assertThat(listingConfigCaptor.getValue().getUserKey()).isEqualTo("stock-listing-zq001");
-        assertThat(listingConfigCaptor.getValue().getDisplayName()).isEqualTo("제로큐 주문장 상장주관사");
-        assertThat(listingConfigCaptor.getValue().getMaxOrderQuantity()).isEqualTo(100);
-        verify(jdbcTemplate, never()).update(
-                org.mockito.ArgumentMatchers.contains("insert into stock_order"),
-                org.mockito.ArgumentMatchers.<Object[]>any()
         );
     }
 
@@ -783,15 +707,14 @@ class MarketServiceTest {
 
     @Test
     void getAutoMarketStatus_summaryOnly_returnsCountsWithoutHeavyCollections() {
-        stubAutoMarketSummaryQuery(3L, 1L, 40L, 31L, 2L, 0L, 0L, false);
+        stubAutoMarketSummaryQuery(3L, 1L, 40L, 31L, 0L, 0L, false);
 
-        var response = marketService.getAutoMarketStatus(false, false, false, false, false, false);
+        var response = marketService.getAutoMarketStatus(false, false, false, false, false);
 
         assertThat(response.enabled()).isTrue();
         assertThat(response.configCount()).isEqualTo(3L);
         assertThat(response.participantCount()).isEqualTo(40L);
         assertThat(response.participantProfileConfigCount()).isEqualTo(AutoParticipantProfileType.values().length);
-        assertThat(response.listingAutoAccountCount()).isEqualTo(2L);
         assertThat(response.enabledParticipantCount()).isEqualTo(31L);
         assertThat(response.salaryEligibleParticipantCount()).isEqualTo(11L);
         assertThat(response.openAutoOrderCount()).isZero();
@@ -800,26 +723,23 @@ class MarketServiceTest {
         assertThat(response.participants()).isEmpty();
         assertThat(response.participantSymbolConfigs()).isEmpty();
         assertThat(response.participantProfileConfigs()).isEmpty();
-        assertThat(response.listingAutoAccounts()).isEmpty();
         verify(stockAutoMarketConfigRepository, never()).findAll();
         verify(stockAutoParticipantRepository, never()).findByWithdrawnAtIsNullOrderByUserKeyAsc();
         verify(stockAutoParticipantSymbolConfigRepository, never()).findByUserKeyInOrderByUserKeyAscSymbolAsc(any());
         verify(stockAutoParticipantProfileConfigRepository, never()).findAllByOrderByProfileTypeAsc();
-        verify(stockListingAutoAccountConfigRepository, never()).findAllByOrderBySymbolAsc();
         verify(stockAutoMarketConfigRepository, never()).count();
         verify(stockAutoMarketConfigRepository, never()).existsByEnabledTrue();
         verify(stockAutoParticipantRepository, never()).countByWithdrawnAtIsNull();
         verify(stockAutoParticipantRepository, never()).countByEnabledTrueAndWithdrawnAtIsNull();
-        verify(stockListingAutoAccountConfigRepository, never()).count();
         verify(stockOrderRepository, never()).countOpenAutoOrders(any(), any());
     }
 
     @Test
     void getAutoMarketStatus_summaryOnlyWithoutSalaryEligibility_skipsSalaryEligibilitySql() {
-        stubAutoMarketSummaryQuery(3L, 1L, 40L, 31L, 2L, 0L, 0L, false);
+        stubAutoMarketSummaryQuery(3L, 1L, 40L, 31L, 0L, 0L, false);
         autoMarketSummaryStatusQuery.salaryEligibleParticipantCount = 0L;
 
-        var response = marketService.getAutoMarketStatus(false, false, false, false, false, false, false, null);
+        var response = marketService.getAutoMarketStatus(false, false, false, false, false, false, null);
 
         assertThat(response.salaryEligibleParticipantCount()).isZero();
         assertThat(autoMarketSummaryStatusQuery.lastIncludeSalaryEligibility).isFalse();
@@ -1242,55 +1162,6 @@ class MarketServiceTest {
         assertThat(response.recurringDepositAmount()).isEqualByComparingTo(BigDecimal.ZERO);
         assertThat(response.recurringDepositIntervalValue()).isEqualByComparingTo(BigDecimal.ZERO);
         assertThat(response.recurringDepositIntervalUnit()).isEqualTo("DAY");
-    }
-
-    @Test
-    void getAutoMarketStatus_listingAutoAccount_includesLedgerSnapshot() throws Exception {
-        StockListingAutoAccountConfig listingConfig = StockListingAutoAccountConfig.defaults(
-                "ZQ001",
-                "stock-listing-zq001",
-                "제로큐 상장주관사",
-                100000L
-        );
-        when(stockAutoMarketConfigRepository.findAll()).thenReturn(List.of());
-        stubAutoParticipantStatusQuery();
-        when(stockListingAutoAccountConfigRepository.findAllByOrderBySymbolAsc()).thenReturn(List.of(listingConfig));
-        when(stockOrderRepository.countOpenAutoOrders(any(), any())).thenReturn(0L);
-        when(jdbcTemplate.query(
-                org.mockito.ArgumentMatchers.contains("from stock_listing_auto_account_config c"),
-                org.mockito.ArgumentMatchers.<org.springframework.jdbc.core.RowMapper<Object>>any(),
-                aryEq(new Object[0])
-        )).thenAnswer(invocation -> {
-            @SuppressWarnings("unchecked")
-            org.springframework.jdbc.core.RowMapper<Object> rowMapper = invocation.getArgument(1);
-            ResultSet resultSet = org.mockito.Mockito.mock(ResultSet.class);
-            when(resultSet.getString("symbol")).thenReturn("ZQ001");
-            when(resultSet.getObject("account_id", Long.class)).thenReturn(77L);
-            when(resultSet.getLong("holding_quantity")).thenReturn(100000L);
-            when(resultSet.getLong("reserved_quantity")).thenReturn(1200L);
-            when(resultSet.getBigDecimal("cash_balance")).thenReturn(new BigDecimal("350000.00"));
-            when(resultSet.getBigDecimal("average_price")).thenReturn(new BigDecimal("70000.00"));
-            when(resultSet.getBigDecimal("current_price")).thenReturn(new BigDecimal("72000.00"));
-            return List.of(rowMapper.mapRow(resultSet, 0));
-        });
-
-        var response = marketService.getAutoMarketStatus();
-
-        assertThat(response.listingAutoAccounts()).hasSize(1);
-        var listingAccount = response.listingAutoAccounts().get(0);
-        assertThat(listingAccount.accountId()).isEqualTo(77L);
-        assertThat(listingAccount.holdingQuantity()).isEqualTo(100000L);
-        assertThat(listingAccount.reservedQuantity()).isEqualTo(1200L);
-        assertThat(listingAccount.availableQuantity()).isEqualTo(98800L);
-        assertThat(listingAccount.cashBalance()).isEqualByComparingTo(new BigDecimal("350000.00"));
-        assertThat(listingAccount.averagePrice()).isEqualByComparingTo(new BigDecimal("70000.00"));
-        assertThat(listingAccount.currentPrice()).isEqualByComparingTo(new BigDecimal("72000.00"));
-        assertThat(listingAccount.marketValue()).isEqualByComparingTo(new BigDecimal("7200000000.00"));
-        verify(jdbcTemplate).query(
-                org.mockito.ArgumentMatchers.contains("from stock_listing_auto_account_config c"),
-                org.mockito.ArgumentMatchers.<org.springframework.jdbc.core.RowMapper<Object>>any(),
-                aryEq(new Object[0])
-        );
     }
 
     private JdbcTemplate createAutoParticipantProfileOverviewJdbcTemplate() {
@@ -2259,7 +2130,6 @@ class MarketServiceTest {
             long enabledConfigCount,
             long participantCount,
             long enabledParticipantCount,
-            long listingAutoAccountCount,
             long openAutoOrderCount,
             long todayAutoExecutionCount,
             boolean includeRuntimeMetrics
@@ -2268,7 +2138,6 @@ class MarketServiceTest {
         autoMarketSummaryStatusQuery.enabledConfigCount = enabledConfigCount;
         autoMarketSummaryStatusQuery.participantCount = participantCount;
         autoMarketSummaryStatusQuery.enabledParticipantCount = enabledParticipantCount;
-        autoMarketSummaryStatusQuery.listingAutoAccountCount = listingAutoAccountCount;
         autoMarketSummaryStatusQuery.salaryEligibleParticipantCount = 11L;
         autoMarketSummaryStatusQuery.openAutoOrderCount = openAutoOrderCount;
         autoMarketSummaryStatusQuery.todayAutoExecutionCount = todayAutoExecutionCount;
@@ -2280,7 +2149,6 @@ class MarketServiceTest {
         private long enabledConfigCount;
         private long participantCount;
         private long enabledParticipantCount;
-        private long listingAutoAccountCount;
         private long salaryEligibleParticipantCount;
         private long openAutoOrderCount;
         private long todayAutoExecutionCount;
@@ -2302,12 +2170,10 @@ class MarketServiceTest {
                     configCount,
                     participantCount,
                     AutoParticipantProfileType.values().length,
-                    listingAutoAccountCount,
                     enabledParticipantCount,
                     includeSalaryEligibility ? salaryEligibleParticipantCount : 0L,
                     includeRuntimeMetrics ? openAutoOrderCount : 0L,
                     includeRuntimeMetrics ? todayAutoExecutionCount : 0L,
-                    List.of(),
                     List.of(),
                     List.of(),
                     List.of(),

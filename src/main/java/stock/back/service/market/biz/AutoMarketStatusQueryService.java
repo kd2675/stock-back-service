@@ -18,7 +18,6 @@ import stock.back.service.database.entity.StockAutoParticipantProfileConfig;
 import stock.back.service.database.repository.StockAutoMarketConfigRepository;
 import stock.back.service.database.repository.StockAutoParticipantProfileConfigRepository;
 import stock.back.service.database.repository.StockAutoParticipantRepository;
-import stock.back.service.database.repository.StockListingAutoAccountConfigRepository;
 import stock.back.service.database.repository.StockOrderRepository;
 import stock.back.service.market.vo.AutoMarketConfigResponse;
 import stock.back.service.market.vo.AutoMarketDailyRegimeResponse;
@@ -26,7 +25,6 @@ import stock.back.service.market.vo.AutoMarketStatusResponse;
 import stock.back.service.market.vo.AutoParticipantProfileConfigResponse;
 import stock.back.service.market.vo.AutoParticipantResponse;
 import stock.back.service.market.vo.AutoParticipantSymbolConfigResponse;
-import stock.back.service.market.vo.ListingAutoAccountResponse;
 
 @Service
 @RequiredArgsConstructor
@@ -35,7 +33,6 @@ public class AutoMarketStatusQueryService {
     private final StockAutoMarketConfigRepository stockAutoMarketConfigRepository;
     private final StockAutoParticipantProfileConfigRepository stockAutoParticipantProfileConfigRepository;
     private final StockAutoParticipantRepository stockAutoParticipantRepository;
-    private final StockListingAutoAccountConfigRepository stockListingAutoAccountConfigRepository;
     private final StockOrderRepository stockOrderRepository;
     private final AutoMarketStatusDataLoader autoMarketStatusDataLoader;
     private final AutoMarketSummaryStatusQuery autoMarketSummaryStatusQuery;
@@ -44,7 +41,9 @@ public class AutoMarketStatusQueryService {
 
     @Transactional(readOnly = true)
     public AutoMarketStatusResponse getAutoMarketStatus() {
-        return getAutoMarketStatus(AutoMarketStatusQueryOptions.of(true, true, true, true, true, true, true, null));
+        return getAutoMarketStatus(AutoMarketStatusQueryOptions.of(
+                true, true, true, true, true, true, null
+        ));
     }
 
     @Transactional(readOnly = true)
@@ -53,7 +52,6 @@ public class AutoMarketStatusQueryService {
                 true,
                 true,
                 includeParticipantSymbolConfigs,
-                true,
                 true,
                 true,
                 true,
@@ -67,7 +65,6 @@ public class AutoMarketStatusQueryService {
             boolean includeParticipants,
             boolean includeParticipantSymbolConfigs,
             boolean includeParticipantProfileConfigs,
-            boolean includeListingAutoAccounts,
             boolean includeRuntimeMetrics
     ) {
         return getAutoMarketStatus(AutoMarketStatusQueryOptions.of(
@@ -75,7 +72,6 @@ public class AutoMarketStatusQueryService {
                 includeParticipants,
                 includeParticipantSymbolConfigs,
                 includeParticipantProfileConfigs,
-                includeListingAutoAccounts,
                 includeRuntimeMetrics,
                 true,
                 null
@@ -88,7 +84,6 @@ public class AutoMarketStatusQueryService {
             boolean includeParticipants,
             boolean includeParticipantSymbolConfigs,
             boolean includeParticipantProfileConfigs,
-            boolean includeListingAutoAccounts,
             boolean includeRuntimeMetrics,
             boolean includeSalaryEligibility,
             String participantSymbolConfigUserKey
@@ -98,7 +93,6 @@ public class AutoMarketStatusQueryService {
                 includeParticipants,
                 includeParticipantSymbolConfigs,
                 includeParticipantProfileConfigs,
-                includeListingAutoAccounts,
                 includeRuntimeMetrics,
                 includeSalaryEligibility,
                 participantSymbolConfigUserKey
@@ -143,13 +137,9 @@ public class AutoMarketStatusQueryService {
         List<AutoParticipantProfileConfigResponse> participantProfileConfigs = options.includeParticipantProfileConfigs()
                 ? getAutoParticipantProfileConfigs()
                 : List.of();
-        List<ListingAutoAccountResponse> listingAutoAccounts = options.includeListingAutoAccounts()
-                ? autoMarketStatusDataLoader.toListingAutoAccountResponses(stockListingAutoAccountConfigRepository.findAllByOrderBySymbolAsc())
-                : List.of();
         long configCount = options.shouldLoadConfigs() ? configEntities.size() : stockAutoMarketConfigRepository.count();
         long participantCount = options.shouldLoadParticipants() ? participants.size() : stockAutoParticipantRepository.countByWithdrawnAtIsNull();
         long participantProfileConfigCount = AutoParticipantProfileType.values().length;
-        long listingAutoAccountCount = options.includeListingAutoAccounts() ? listingAutoAccounts.size() : stockListingAutoAccountConfigRepository.count();
         long enabledParticipantCount = options.shouldLoadParticipants()
                 ? participants.stream().filter(AutoParticipantResponse::enabled).count()
                 : stockAutoParticipantRepository.countByEnabledTrueAndWithdrawnAtIsNull();
@@ -174,7 +164,6 @@ public class AutoMarketStatusQueryService {
                         configCount,
                         participantCount,
                         participantProfileConfigCount,
-                        listingAutoAccountCount,
                         enabledParticipantCount,
                         salaryEligibleParticipantCount,
                         openAutoOrderCount,
@@ -183,8 +172,7 @@ public class AutoMarketStatusQueryService {
                 configs,
                 participants,
                 participantSymbolConfigs,
-                participantProfileConfigs,
-                listingAutoAccounts
+                participantProfileConfigs
         );
     }
 
@@ -198,7 +186,6 @@ public class AutoMarketStatusQueryService {
                         response.configCount(),
                         response.participantCount(),
                         response.participantProfileConfigCount(),
-                        response.listingAutoAccountCount(),
                         response.enabledParticipantCount(),
                         response.salaryEligibleParticipantCount(),
                         response.openAutoOrderCount(),
@@ -207,8 +194,7 @@ public class AutoMarketStatusQueryService {
                 response.configs(),
                 response.participants(),
                 response.participantSymbolConfigs(),
-                response.participantProfileConfigs(),
-                response.listingAutoAccounts()
+                response.participantProfileConfigs()
         );
     }
 

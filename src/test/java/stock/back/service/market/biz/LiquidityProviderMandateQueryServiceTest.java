@@ -54,14 +54,13 @@ class LiquidityProviderMandateQueryServiceTest {
     }
 
     @Test
-    void getMandates_currentTradeDate_exposesRolePolicyStateAndLegacyOverlap() {
+    void getMandates_currentTradeDate_exposesRolePolicyStateAndTransitionAudit() {
         List<LiquidityProviderMandateResponse> result = service.getMandates();
 
         assertThat(result).singleElement().satisfies(mandate -> {
             assertThat(mandate.mandateCode()).isEqualTo("LP-DEMO001");
             assertThat(mandate.executionMode()).isEqualTo("LIVE");
             assertThat(mandate.simulationTradeDate()).isEqualTo(BUSINESS_DATE);
-            assertThat(mandate.legacyListingLiquidityEnabled()).isTrue();
             assertThat(mandate.roleEligible()).isTrue();
             assertThat(mandate.roleEligibilityIssue()).isNull();
             assertThat(mandate.account().participantSelfTradeGroupId()).isEqualTo("LP:ONE");
@@ -84,6 +83,10 @@ class LiquidityProviderMandateQueryServiceTest {
             assertThat(mandate.transition().seedInventoryQuantity()).isEqualTo(1_000L);
             assertThat(mandate.transition().seedCashAmount())
                     .isEqualByComparingTo("500000.00");
+            assertThat(mandate.transition().transferredInventoryQuantity()).isZero();
+            assertThat(mandate.transition().transferredCashAmount())
+                    .isEqualByComparingTo("0.00");
+            assertThat(mandate.transition().legacyRetiredAt()).isNull();
             assertThat(mandate.transition().effectiveBusinessDate())
                     .isEqualTo(BUSINESS_DATE);
             assertThat(mandate.transition().activatedAt()).isEqualTo(NOW);
@@ -315,29 +318,6 @@ class LiquidityProviderMandateQueryServiceTest {
                 BUSINESS_DATE,
                 NOW,
                 NOW,
-                NOW,
-                NOW
-        );
-        jdbcTemplate.update(
-                """
-                insert into stock_listing_auto_account_config(
-                    symbol, user_key, display_name, enabled,
-                    position_side, operation_mode, strategy_profile,
-                    initial_inventory_quantity, initial_issue_price,
-                    max_order_quantity, order_ttl_seconds, price_offset_ticks,
-                    target_spread_ticks, inventory_skew_ticks, minimum_profit_rate,
-                    aggressive_unwind_threshold, aggressive_order_ratio,
-                    target_buy_quantity, target_sell_quantity,
-                    target_holding_quantity, inventory_band_quantity,
-                    created_at, updated_at
-                ) values (
-                    'DEMO001', 'legacy-underwriter', '레거시 유동성', true,
-                    'TWO_SIDED', 'LIQUIDITY_PROVIDER', 'BALANCED',
-                    10000, 100, 100, 60, 1, 4, 2, 0,
-                    0, 0, 1000, 1000, 5000, 500,
-                    ?, ?
-                )
-                """,
                 NOW,
                 NOW
         );

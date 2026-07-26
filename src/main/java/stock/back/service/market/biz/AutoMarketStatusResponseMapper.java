@@ -3,7 +3,6 @@ package stock.back.service.market.biz;
 import stock.back.service.database.entity.AutoParticipantProfileType;
 import stock.back.service.database.entity.StockAutoMarketConfig;
 import stock.back.service.database.entity.StockAutoParticipantSymbolConfig;
-import stock.back.service.database.entity.StockListingAutoAccountConfig;
 import stock.back.service.market.vo.AutoMarketConfigResponse;
 import stock.back.service.market.vo.AutoMarketDailyRegimeResponse;
 import stock.back.service.market.vo.AutoMarketDistributionBiasResponse;
@@ -12,10 +11,7 @@ import stock.back.service.market.vo.AutoMarketStatusResponse;
 import stock.back.service.market.vo.AutoParticipantProfileConfigResponse;
 import stock.back.service.market.vo.AutoParticipantResponse;
 import stock.back.service.market.vo.AutoParticipantSymbolConfigResponse;
-import stock.back.service.market.vo.ListingAutoAccountResponse;
 
-import java.math.BigDecimal;
-import java.math.RoundingMode;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.LocalDateTime;
@@ -33,12 +29,10 @@ final class AutoMarketStatusResponseMapper {
                 rs.getLong("config_count"),
                 rs.getLong("participant_count"),
                 profileConfigCount,
-                rs.getLong("listing_auto_account_count"),
                 enabledParticipantCount,
                 rs.getLong("salary_eligible_participant_count"),
                 rs.getLong("open_auto_order_count"),
                 rs.getLong("today_auto_execution_count"),
-                List.of(),
                 List.of(),
                 List.of(),
                 List.of(),
@@ -52,15 +46,13 @@ final class AutoMarketStatusResponseMapper {
             List<AutoMarketConfigResponse> configs,
             List<AutoParticipantResponse> participants,
             List<AutoParticipantSymbolConfigResponse> participantSymbolConfigs,
-            List<AutoParticipantProfileConfigResponse> participantProfileConfigs,
-            List<ListingAutoAccountResponse> listingAutoAccounts
+            List<AutoParticipantProfileConfigResponse> participantProfileConfigs
     ) {
         return new AutoMarketStatusResponse(
                 enabled,
                 counts.configCount(),
                 counts.participantCount(),
                 counts.participantProfileConfigCount(),
-                counts.listingAutoAccountCount(),
                 counts.enabledParticipantCount(),
                 counts.salaryEligibleParticipantCount(),
                 counts.openAutoOrderCount(),
@@ -68,8 +60,7 @@ final class AutoMarketStatusResponseMapper {
                 configs,
                 participants,
                 participantSymbolConfigs,
-                participantProfileConfigs,
-                listingAutoAccounts
+                participantProfileConfigs
         );
     }
 
@@ -150,61 +141,6 @@ final class AutoMarketStatusResponseMapper {
         );
     }
 
-    static ListingAutoAccountResponse toListingAutoAccount(
-            StockListingAutoAccountConfig config,
-            ListingAutoAccountLedger ledger,
-            long issuedShares
-    ) {
-        BigDecimal initialInventoryCost = config.getInitialIssuePrice()
-                .multiply(BigDecimal.valueOf(config.getInitialInventoryQuantity()));
-        BigDecimal totalEquity = ledger.cashBalance().add(ledger.reservedBuyCash()).add(ledger.marketValue());
-        BigDecimal netProfit = totalEquity.subtract(initialInventoryCost);
-        BigDecimal returnRate = initialInventoryCost.signum() == 0
-                ? BigDecimal.ZERO
-                : netProfit.multiply(BigDecimal.valueOf(100)).divide(initialInventoryCost, 4, RoundingMode.HALF_UP);
-        return new ListingAutoAccountResponse(
-                config.getSymbol(),
-                config.getUserKey(),
-                config.getDisplayName(),
-                Boolean.TRUE.equals(config.getEnabled()),
-                config.getPositionSide(),
-                config.getOperationMode(),
-                config.getStrategyProfile(),
-                issuedShares,
-                config.getInitialInventoryQuantity(),
-                config.getInitialIssuePrice(),
-                initialInventoryCost,
-                ledger.accountId(),
-                ledger.cashBalance(),
-                ledger.holdingQuantity(),
-                ledger.reservedQuantity(),
-                ledger.availableQuantity(),
-                ledger.averagePrice(),
-                ledger.currentPrice(),
-                ledger.marketValue(),
-                ledger.reservedBuyCash(),
-                totalEquity,
-                netProfit,
-                returnRate,
-                config.getMaxOrderQuantity(),
-                config.getOrderTtlSeconds(),
-                config.getPriceOffsetTicks(),
-                config.getTargetSpreadTicks(),
-                config.getInventorySkewTicks(),
-                config.getMinimumProfitRate(),
-                config.getAggressiveUnwindThreshold(),
-                config.getAggressiveOrderRatio(),
-                config.getTargetBuyQuantity(),
-                config.getTargetSellQuantity(),
-                config.getTargetHoldingQuantity(),
-                config.getInventoryBandQuantity(),
-                ledger.openBuyQuantity(),
-                ledger.openSellQuantity(),
-                config.getCreatedAt(),
-                config.getUpdatedAt()
-        );
-    }
-
     private static String defaultProfileTypeName(String profileType) {
         return profileType == null ? AutoParticipantProfileType.defaultType().name() : profileType;
     }
@@ -248,7 +184,6 @@ final class AutoMarketStatusResponseMapper {
             long configCount,
             long participantCount,
             long participantProfileConfigCount,
-            long listingAutoAccountCount,
             long enabledParticipantCount,
             long salaryEligibleParticipantCount,
             long openAutoOrderCount,
