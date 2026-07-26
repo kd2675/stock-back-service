@@ -50,13 +50,15 @@ public class LiquidityProviderTransitionService {
     private final SimulationClockService simulationClockService;
     private final SimulationMarketSessionService marketSessionService;
     private final MarketLedgerFreezeGuard marketLedgerFreezeGuard;
+    private final LiquidityProviderPolicyPresetCatalog policyPresetCatalog;
 
     public LiquidityProviderTransitionService(
             JdbcTemplate jdbcTemplate,
             ObjectMapper objectMapper,
             SimulationClockService simulationClockService,
             SimulationMarketSessionService marketSessionService,
-            MarketLedgerFreezeGuard marketLedgerFreezeGuard
+            MarketLedgerFreezeGuard marketLedgerFreezeGuard,
+            LiquidityProviderPolicyPresetCatalog policyPresetCatalog
     ) {
         this.jdbcTemplate = jdbcTemplate;
         this.jdbcClient = JdbcClient.create(jdbcTemplate);
@@ -64,6 +66,7 @@ public class LiquidityProviderTransitionService {
         this.simulationClockService = simulationClockService;
         this.marketSessionService = marketSessionService;
         this.marketLedgerFreezeGuard = marketLedgerFreezeGuard;
+        this.policyPresetCatalog = policyPresetCatalog;
     }
 
     @Transactional(transactionManager = "pubJdbcTransactionManager")
@@ -192,6 +195,7 @@ public class LiquidityProviderTransitionService {
                 participant.id(),
                 liquidityAccountId,
                 normalizedSymbol,
+                marketSymbol.tradableShares(),
                 referenceDailyVolume,
                 seedInventoryQuantity,
                 seedCashAmount,
@@ -679,6 +683,7 @@ public class LiquidityProviderTransitionService {
             long participantId,
             long accountId,
             String symbol,
+            long tradableShares,
             long referenceDailyVolume,
             long seedInventoryQuantity,
             BigDecimal seedCashAmount,
@@ -686,20 +691,16 @@ public class LiquidityProviderTransitionService {
             LocalDate businessDate,
             LocalDateTime now
     ) {
-        long maxOrderQuantity = Math.max(
-                1L,
-                BigDecimal.valueOf(referenceDailyVolume)
-                        .multiply(new BigDecimal("0.010000"))
-                        .setScale(0, RoundingMode.CEILING)
-                        .longValueExact()
-        );
         BigDecimal openingNetAssetValue = seedCashAmount.add(
                 currentPrice.multiply(BigDecimal.valueOf(seedInventoryQuantity))
         );
-        BigDecimal dailyLossLimit = openingNetAssetValue
-                .multiply(new BigDecimal("0.010000"))
-                .max(BigDecimal.ONE)
-                .setScale(2, RoundingMode.HALF_UP);
+        LiquidityProviderPolicyPresetCatalog.ResolvedPolicy policy =
+                policyPresetCatalog.resolveBalancedForReferenceVolume(
+                        tradableShares,
+                        referenceDailyVolume,
+                        seedInventoryQuantity,
+                        openingNetAssetValue
+                ).policy();
         return insertWithGeneratedKey(
                 """
                 insert into stock_liquidity_mandate(
@@ -722,13 +723,13 @@ public class LiquidityProviderTransitionService {
                 ) values (
                     ?, ?, ?, ?,
                     'LIVE', 'ACTIVE', ?, null,
-                    4, 12, ?,
-                    ?, 0.050000, 0.080000,
-                    0.010000, 5, 0.100000,
-                    0.100000, 2.0000,
-                    ?, ?, 3, 0.700000,
-                    0.250000, 4, 1, true,
-                    30, 2, 300, 30,
+                    ?, ?, ?,
+                    ?, ?, ?,
+                    ?, ?, ?,
+                    ?, ?,
+                    ?, ?, ?, ?,
+                    ?, ?, ?, true,
+                    ?, ?, ?, ?,
                     ?, ?, 1, ?, ?
                 )
                 """,
@@ -738,14 +739,32 @@ public class LiquidityProviderTransitionService {
                     statement.setString(3, symbol);
                     statement.setString(4, "LP-SCALED:" + symbol);
                     statement.setObject(5, businessDate);
-                    statement.setLong(6, maxOrderQuantity);
-                    statement.setLong(7, referenceDailyVolume);
-                    statement.setLong(8, seedInventoryQuantity);
-                    statement.setLong(9, seedInventoryQuantity);
-                    statement.setBigDecimal(10, dailyLossLimit);
-                    statement.setObject(11, businessDate.atTime(marketSessionService.openTime()));
-                    statement.setObject(12, now);
-                    statement.setObject(13, now);
+                    statement.setInt(6, policy.targetSpreadTicks());
+                    statement.setInt(7, policy.maxSpreadTicks());
+                    statement.setLong(8, policy.maxOrderQuantity());
+                    statement.setLong(9, policy.referenceDailyVolume());
+                    statement.setBigDecimal(10, policy.targetOpenParticipationRate());
+                    statement.setBigDecimal(11, policy.maxOpenParticipationRate());
+                    statement.setBigDecimal(12, policy.maxSingleOrderParticipationRate());
+                    statement.setInt(13, policy.externalDepthLevels());
+                    statement.setBigDecimal(14, policy.maxExternalDepthParticipationRate());
+                    statement.setBigDecimal(15, policy.dailyExecutionParticipationRate());
+                    statement.setBigDecimal(16, policy.dailySubmissionMultiplier());
+                    statement.setLong(17, policy.targetInventoryQuantity());
+                    statement.setLong(18, policy.inventoryBandQuantity());
+                    statement.setInt(19, policy.inventorySkewTicks());
+                    statement.setBigDecimal(20, policy.primaryRegimeWeight());
+                    statement.setBigDecimal(21, policy.liquiditySizeSensitivity());
+                    statement.setInt(22, policy.volatilitySpreadMaxTicks());
+                    statement.setInt(23, policy.priceRegimeMaxSkewTicks());
+                    statement.setInt(24, policy.minimumQuoteLifetimeSeconds());
+                    statement.setInt(25, policy.repriceThresholdTicks());
+                    statement.setInt(26, policy.orderTtlSeconds());
+                    statement.setInt(27, policy.quoteIntervalSeconds());
+                    statement.setBigDecimal(28, policy.dailyLossLimitAmount());
+                    statement.setObject(29, businessDate.atTime(marketSessionService.openTime()));
+                    statement.setObject(30, now);
+                    statement.setObject(31, now);
                 }
         );
     }
@@ -855,7 +874,7 @@ public class LiquidityProviderTransitionService {
             LocalDateTime now
     ) {
         Map<String, Object> config = new LinkedHashMap<>();
-        config.put("preset", "INDEPENDENT_LIQUIDITY_PROVIDER_V1");
+        config.put("preset", "SCALED_BALANCED_V1");
         config.put("symbol", symbol);
         config.put("executionMode", executionMode);
         config.put("referenceDailyVolumeRate", referenceVolumeRate);

@@ -51,7 +51,8 @@ class LiquidityProviderMandateQueryServiceTest {
         service = new LiquidityProviderMandateQueryService(
                 JdbcClient.create(dataSource),
                 simulationClockService,
-                new ObjectMapper()
+                new ObjectMapper(),
+                new LiquidityProviderPolicyPresetCatalog()
         );
         seedLiquidityMandate();
     }
@@ -76,6 +77,20 @@ class LiquidityProviderMandateQueryServiceTest {
             assertThat(mandate.policy().referenceDailyVolume()).isEqualTo(20_000L);
             assertThat(mandate.policy().targetOpenParticipationRate())
                     .isEqualByComparingTo("0.050000");
+            assertThat(mandate.policyPresets()).hasSize(3);
+            assertThat(mandate.policyPresets())
+                    .filteredOn(LiquidityProviderMandateResponse.PolicyPreset::recommended)
+                    .singleElement()
+                    .satisfies(preset -> {
+                        assertThat(preset.presetCode()).isEqualTo("BALANCED");
+                        assertThat(preset.referenceDailyVolumeFloatRate())
+                                .isEqualByComparingTo("0.03000000");
+                        assertThat(preset.oneSideQuoteFloatRate())
+                                .isEqualByComparingTo("0.00022500");
+                        assertThat(preset.policy().maxOrderQuantity()).isEqualTo(225L);
+                        assertThat(preset.policy().minimumQuoteLifetimeSeconds()).isEqualTo(600);
+                        assertThat(preset.policy().orderTtlSeconds()).isEqualTo(1_800);
+                    });
             assertThat(mandate.scheduledPolicy()).isNull();
             assertThat(mandate.transition()).isNotNull();
             assertThat(mandate.transition().transitionKey())

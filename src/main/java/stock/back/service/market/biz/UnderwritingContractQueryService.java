@@ -625,14 +625,17 @@ public class UnderwritingContractQueryService {
         if (!"ACTIVE".equals(contract.participantStatus())) {
             issues.add("ROLE_PARTICIPANT_NOT_ACTIVE");
         }
-        if (!"ACTIVE".equals(contract.accountStatus())) {
+        if (!roleLifecycleStatusEligible(contract.status(), contract.accountStatus())) {
             issues.add("ROLE_ACCOUNT_NOT_ACTIVE");
         }
         if (!"ISSUE_UNDERWRITER".equals(contract.participantCategory())) {
             issues.add("ROLE_ACCOUNT_CATEGORY_MISMATCH");
         }
         if (!"ISSUE_UNDERWRITER".equals(contract.accountRole())
-                || !"ACTIVE".equals(contract.roleMappingStatus())) {
+                || !roleLifecycleStatusEligible(
+                        contract.status(),
+                        contract.roleMappingStatus()
+                )) {
             issues.add("ROLE_MAPPING_MISMATCH");
         }
         if (contract.participantSelfTradeGroupId() == null
@@ -661,6 +664,18 @@ public class UnderwritingContractQueryService {
             issues.add("HOLDING_RESERVATION_INVALID");
         }
         return List.copyOf(issues);
+    }
+
+    private boolean roleLifecycleStatusEligible(
+            String contractStatus,
+            String roleStatus
+    ) {
+        if ("ACTIVE".equals(roleStatus)) {
+            return true;
+        }
+        return ("COMPLETED".equals(contractStatus)
+                || "CANCELLED".equals(contractStatus))
+                && "CLOSED".equals(roleStatus);
     }
 
     private Long nullableLong(ResultSet resultSet, String column) throws SQLException {

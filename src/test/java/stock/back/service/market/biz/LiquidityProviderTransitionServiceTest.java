@@ -71,7 +71,8 @@ class LiquidityProviderTransitionServiceTest {
                 new ObjectMapper(),
                 simulationClockService,
                 marketSessionService,
-                freezeGuard
+                freezeGuard,
+                new LiquidityProviderPolicyPresetCatalog()
         );
         recommendationService = new LiquidityProviderRecommendationService(
                 JdbcClient.create(dataSource)
@@ -92,7 +93,14 @@ class LiquidityProviderTransitionServiceTest {
                 """
                 select mandate.execution_mode, mandate.reference_daily_volume,
                        mandate.max_order_quantity, mandate.target_inventory_quantity,
-                       mandate.inventory_band_quantity, transition.stage,
+                       mandate.inventory_band_quantity,
+                       mandate.target_open_participation_rate,
+                       mandate.daily_execution_participation_rate,
+                       mandate.daily_submission_multiplier,
+                       mandate.minimum_quote_lifetime_seconds,
+                       mandate.order_ttl_seconds,
+                       mandate.quote_interval_seconds,
+                       transition.stage,
                        transition.seed_inventory_quantity, transition.seed_cash_amount,
                        transition.activated_at
                   from stock_liquidity_mandate mandate
@@ -102,9 +110,21 @@ class LiquidityProviderTransitionServiceTest {
                 """
         )).containsEntry("execution_mode", "LIVE")
                 .containsEntry("reference_daily_volume", 30_000L)
-                .containsEntry("max_order_quantity", 300L)
+                .containsEntry("max_order_quantity", 225L)
                 .containsEntry("target_inventory_quantity", 5_000L)
                 .containsEntry("inventory_band_quantity", 5_000L)
+                .containsEntry(
+                        "target_open_participation_rate",
+                        new BigDecimal("0.007500")
+                )
+                .containsEntry(
+                        "daily_execution_participation_rate",
+                        new BigDecimal("0.180000")
+                )
+                .containsEntry("daily_submission_multiplier", new BigDecimal("5.0000"))
+                .containsEntry("minimum_quote_lifetime_seconds", 600)
+                .containsEntry("order_ttl_seconds", 1_800)
+                .containsEntry("quote_interval_seconds", 300)
                 .containsEntry("stage", "LIVE_ACTIVE")
                 .containsEntry("seed_inventory_quantity", 5_000L)
                 .containsEntry("seed_cash_amount", new BigDecimal("500000.00"))

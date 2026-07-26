@@ -3,6 +3,7 @@ package stock.back.service.market.vo;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.List;
 
 public record LiquidityProviderMandateResponse(
         long mandateId,
@@ -19,10 +20,15 @@ public record LiquidityProviderMandateResponse(
         String roleEligibilityIssue,
         Account account,
         Policy policy,
+        List<PolicyPreset> policyPresets,
         ScheduledPolicy scheduledPolicy,
         DailyState dailyState,
         Transition transition
 ) {
+
+    public LiquidityProviderMandateResponse {
+        policyPresets = policyPresets == null ? List.of() : List.copyOf(policyPresets);
+    }
 
     public record Account(
             long participantId,
@@ -76,6 +82,19 @@ public record LiquidityProviderMandateResponse(
             int orderTtlSeconds,
             int quoteIntervalSeconds,
             BigDecimal dailyLossLimitAmount
+    ) {
+    }
+
+    public record PolicyPreset(
+            String presetCode,
+            boolean recommended,
+            BigDecimal referenceDailyVolumeFloatRate,
+            BigDecimal oneSideQuoteFloatRate,
+            BigDecimal dailyExecutionFloatRate,
+            BigDecimal dailySubmissionFloatRate,
+            BigDecimal inventoryBandFloatRate,
+            BigDecimal dailyLossNetAssetRate,
+            Policy policy
     ) {
     }
 

@@ -175,6 +175,91 @@ class UnderwritingContractQueryServiceTest {
     }
 
     @Test
+    void getContracts_completedContractWithClosedHistoricalAccount_keepsRoleEligible() {
+        jdbcTemplate.update(
+                """
+                update stock_underwriting_contract
+                   set status = 'COMPLETED',
+                       updated_at = ?
+                 where id = 401
+                """,
+                NOW.plusDays(1)
+        );
+        jdbcTemplate.update(
+                """
+                update stock_account
+                   set status = 'CLOSED',
+                       updated_at = ?
+                 where id = 101
+                """,
+                NOW.plusDays(1)
+        );
+        jdbcTemplate.update(
+                """
+                update stock_market_participant_account
+                   set status = 'CLOSED',
+                       effective_to = ?,
+                       updated_at = ?
+                 where account_id = 101
+                """,
+                BUSINESS_DATE.plusDays(1),
+                NOW.plusDays(1)
+        );
+        jdbcTemplate.update(
+                """
+                update stock_holding
+                   set quantity = 0,
+                       updated_at = ?
+                 where account_id = 101
+                   and symbol = 'DEMO001'
+                """,
+                NOW.plusDays(1)
+        );
+        jdbcTemplate.update(
+                """
+                update stock_holding
+                   set quantity = quantity + 50000,
+                       updated_at = ?
+                 where account_id = ?
+                   and symbol = 'DEMO001'
+                """,
+                NOW.plusDays(1),
+                custodyAccountId
+        );
+
+        UnderwritingContractResponse contract = service.getContracts().getFirst();
+
+        assertThat(contract.reconciliation()).satisfies(reconciliation -> {
+            assertThat(reconciliation.roleEligible()).isTrue();
+            assertThat(reconciliation.holdingSupplyMatched()).isTrue();
+            assertThat(reconciliation.issues()).isEmpty();
+        });
+    }
+
+    @Test
+    void getContracts_openContractWithClosedAccount_remainsRoleIneligible() {
+        jdbcTemplate.update(
+                "update stock_account set status = 'CLOSED' where id = 101"
+        );
+        jdbcTemplate.update(
+                """
+                update stock_market_participant_account
+                   set status = 'CLOSED',
+                       effective_to = ?
+                 where account_id = 101
+                """,
+                BUSINESS_DATE
+        );
+
+        UnderwritingContractResponse contract = service.getContracts().getFirst();
+
+        assertThat(contract.reconciliation().issues()).contains(
+                "ROLE_ACCOUNT_NOT_ACTIVE",
+                "ROLE_MAPPING_MISMATCH"
+        );
+    }
+
+    @Test
     void getContract_supplyState_exposesNonRefundableBudgetAndExecutionSeparately() {
         jdbcTemplate.update(
                 """

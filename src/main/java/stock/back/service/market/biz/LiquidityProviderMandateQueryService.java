@@ -27,15 +27,18 @@ public class LiquidityProviderMandateQueryService {
     private final JdbcClient jdbcClient;
     private final SimulationClockService simulationClockService;
     private final ObjectMapper objectMapper;
+    private final LiquidityProviderPolicyPresetCatalog policyPresetCatalog;
 
     public LiquidityProviderMandateQueryService(
             JdbcClient jdbcClient,
             SimulationClockService simulationClockService,
-            ObjectMapper objectMapper
+            ObjectMapper objectMapper,
+            LiquidityProviderPolicyPresetCatalog policyPresetCatalog
     ) {
         this.jdbcClient = jdbcClient;
         this.simulationClockService = simulationClockService;
         this.objectMapper = objectMapper;
+        this.policyPresetCatalog = policyPresetCatalog;
     }
 
     @Transactional(readOnly = true)
@@ -76,6 +79,7 @@ public class LiquidityProviderMandateQueryService {
                                mandate.order_ttl_seconds,
                                mandate.quote_interval_seconds,
                                mandate.daily_loss_limit_amount,
+                               instrument.tradable_shares,
                                scheduled_policy.version_no as scheduled_policy_version,
                                scheduled_policy.effective_business_date
                                    as scheduled_effective_business_date,
@@ -201,6 +205,8 @@ public class LiquidityProviderMandateQueryService {
                                transition.created_at as transition_created_at,
                                transition.updated_at as transition_updated_at
                           from stock_liquidity_mandate mandate
+                          join stock_order_book_instrument instrument
+                            on instrument.symbol = mandate.symbol
                           join stock_market_participant participant
                             on participant.id = mandate.participant_id
                           join stock_account account
@@ -315,6 +321,17 @@ public class LiquidityProviderMandateQueryService {
                         rs.getInt("quote_interval_seconds"),
                         money(rs.getBigDecimal("daily_loss_limit_amount"))
                 );
+        LiquidityProviderMandateResponse.DailyState dailyState = mapDailyState(rs);
+        BigDecimal currentNetAssetValue = dailyState != null
+                && dailyState.currentNetAssetValue().signum() > 0
+                ? dailyState.currentNetAssetValue()
+                : account.availableCash().add(account.holdingMarketValue());
+        List<LiquidityProviderMandateResponse.PolicyPreset> policyPresets =
+                resolvePolicyPresets(
+                        rs.getLong("tradable_shares"),
+                        policy,
+                        currentNetAssetValue
+                );
         return new LiquidityProviderMandateResponse(
                 rs.getLong("mandate_id"),
                 rs.getString("mandate_code"),
@@ -330,9 +347,78 @@ public class LiquidityProviderMandateQueryService {
                 roleEligibilityIssue,
                 account,
                 policy,
+                policyPresets,
                 mapScheduledPolicy(rs),
-                mapDailyState(rs),
+                dailyState,
                 mapTransition(rs)
+        );
+    }
+
+    private List<LiquidityProviderMandateResponse.PolicyPreset> resolvePolicyPresets(
+            long tradableShares,
+            LiquidityProviderMandateResponse.Policy policy,
+            BigDecimal currentNetAssetValue
+    ) {
+        try {
+            return policyPresetCatalog.resolveAll(
+                            tradableShares,
+                            policy.targetInventoryQuantity(),
+                            currentNetAssetValue,
+                            policy.primaryRegimeWeight(),
+                            policy.liquiditySizeSensitivity()
+                    )
+                    .stream()
+                    .map(this::mapPolicyPreset)
+                    .toList();
+        } catch (IllegalArgumentException ex) {
+            return List.of();
+        }
+    }
+
+    private LiquidityProviderMandateResponse.PolicyPreset mapPolicyPreset(
+            LiquidityProviderPolicyPresetCatalog.ResolvedPreset preset
+    ) {
+        return new LiquidityProviderMandateResponse.PolicyPreset(
+                preset.code(),
+                preset.recommended(),
+                preset.referenceDailyVolumeFloatRate(),
+                preset.oneSideQuoteFloatRate(),
+                preset.dailyExecutionFloatRate(),
+                preset.dailySubmissionFloatRate(),
+                preset.inventoryBandFloatRate(),
+                preset.dailyLossNetAssetRate(),
+                mapPolicy(preset.policy())
+        );
+    }
+
+    private LiquidityProviderMandateResponse.Policy mapPolicy(
+            LiquidityProviderPolicyPresetCatalog.ResolvedPolicy policy
+    ) {
+        return new LiquidityProviderMandateResponse.Policy(
+                policy.targetSpreadTicks(),
+                policy.maxSpreadTicks(),
+                policy.maxOrderQuantity(),
+                policy.referenceDailyVolume(),
+                policy.targetOpenParticipationRate(),
+                policy.maxOpenParticipationRate(),
+                policy.maxSingleOrderParticipationRate(),
+                policy.externalDepthLevels(),
+                policy.maxExternalDepthParticipationRate(),
+                policy.dailyExecutionParticipationRate(),
+                policy.dailySubmissionMultiplier(),
+                policy.targetInventoryQuantity(),
+                policy.inventoryBandQuantity(),
+                policy.inventorySkewTicks(),
+                policy.primaryRegimeWeight(),
+                policy.liquiditySizeSensitivity(),
+                policy.volatilitySpreadMaxTicks(),
+                policy.priceRegimeMaxSkewTicks(),
+                policy.passiveOnly(),
+                policy.minimumQuoteLifetimeSeconds(),
+                policy.repriceThresholdTicks(),
+                policy.orderTtlSeconds(),
+                policy.quoteIntervalSeconds(),
+                policy.dailyLossLimitAmount()
         );
     }
 

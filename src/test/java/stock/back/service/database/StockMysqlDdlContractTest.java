@@ -960,6 +960,48 @@ class StockMysqlDdlContractTest {
     }
 
     @Test
+    void legacyUnderwritingHistoryBackfill_reconstructsAuditWithoutMutatingAssetsOrHotLedgers()
+            throws IOException {
+        Path backPath = Path.of(
+                "src/main/resources/db/ddl/"
+                        + "stock_legacy_underwriting_history_backfill.sql"
+        );
+        Path batchPath = Path.of(
+                "../stock-batch-service/src/main/resources/db/ddl/"
+                        + "stock_legacy_underwriting_history_backfill.sql"
+        );
+        String ddl = Files.readString(backPath, StandardCharsets.UTF_8);
+
+        assertThat(firstExecutableSqlLine(ddl)).isEqualTo("USE STOCK_SERVICE;");
+        assertThat(batchPath).doesNotExist();
+        assertThat(ddl).contains(
+                "Pause the simulation clock before legacy underwriting history backfill",
+                "Every retired legacy liquidity transition must map to one underwriting history candidate",
+                "Historical underwriting accounts must be closed, empty, and role-compatible",
+                "Issued-share reconciliation failed before underwriting history backfill",
+                "'INITIAL-ISSUE:'",
+                "'HISTORICAL-INITIAL-ISSUE:'",
+                "'INITIAL_FLOAT_UNDERWRITER'",
+                "'COMPLETED'",
+                "'HISTORICAL_COMPLETED_UNDERWRITING_V1'",
+                "Issued-share reconciliation failed after underwriting history backfill"
+        ).doesNotContain(
+                "UPDATE stock_holding",
+                "DELETE FROM stock_holding",
+                "INSERT INTO stock_holding",
+                "UPDATE stock_order",
+                "DELETE FROM stock_order",
+                "INSERT INTO stock_order",
+                "UPDATE stock_execution",
+                "DELETE FROM stock_execution",
+                "INSERT INTO stock_execution",
+                "UPDATE stock_close_",
+                "DELETE FROM stock_close_",
+                "INSERT INTO stock_close_"
+        );
+    }
+
+    @Test
     void liquidityLiveOnlyAlter_matchesBatchCopyAndOnlyChangesDefaults()
             throws IOException {
         String backDdl = Files.readString(
