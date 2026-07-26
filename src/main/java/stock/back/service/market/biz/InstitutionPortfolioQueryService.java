@@ -15,6 +15,7 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import stock.back.service.common.exception.StockException;
 import stock.back.service.market.vo.InstitutionPortfolioResponse;
 import stock.back.service.market.vo.InstitutionSymbolMandateResponse;
 
@@ -47,6 +48,19 @@ public class InstitutionPortfolioQueryService {
                         mandatesByPortfolioId.getOrDefault(header.portfolioId(), List.of())
                 ))
                 .toList();
+    }
+
+    @Transactional(readOnly = true)
+    public InstitutionPortfolioResponse getPortfolio(long portfolioId) {
+        if (portfolioId <= 0L) {
+            throw StockException.badRequest("Institution portfolio id must be positive");
+        }
+        return getPortfolios().stream()
+                .filter(portfolio -> portfolio.portfolioId() == portfolioId)
+                .findFirst()
+                .orElseThrow(() -> StockException.notFound(
+                        "Unknown institution portfolio: " + portfolioId
+                ));
     }
 
     private List<PortfolioHeader> queryHeaders(LocalDate simulationTradeDate) {

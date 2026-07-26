@@ -9,8 +9,11 @@ import java.sql.PreparedStatement;
 import java.sql.Statement;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.Collections;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
@@ -22,24 +25,17 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import stock.back.service.common.exception.StockException;
-import stock.back.service.market.vo.InstitutionScaledPresetRequest;
+import stock.back.service.market.vo.InstitutionPortfolioCreateRequest;
 import web.common.core.simulation.SimulationClockSnapshot;
 import web.common.core.simulation.SimulationMarketSession;
 
 @Service
-public class InstitutionScaledPresetService {
+public class InstitutionPortfolioProvisionService {
 
     private static final BigDecimal DEFAULT_AUM_RATE = new BigDecimal("0.010000");
     private static final BigDecimal MIN_AUM_RATE = new BigDecimal("0.001000");
     private static final BigDecimal MAX_AUM_RATE = new BigDecimal("0.020000");
     private static final BigDecimal REFERENCE_VOLUME_RATE = new BigDecimal("0.030000");
-    private static final Set<String> PRESET_CODES = Set.of(
-            "INST_PENSION",
-            "INST_VALUE",
-            "INST_MOMENTUM",
-            "INST_ACTIVE"
-    );
-
     private final JdbcTemplate jdbcTemplate;
     private final JdbcClient jdbcClient;
     private final ObjectMapper objectMapper;
@@ -47,7 +43,7 @@ public class InstitutionScaledPresetService {
     private final SimulationMarketSessionService marketSessionService;
     private final MarketLedgerFreezeGuard marketLedgerFreezeGuard;
 
-    public InstitutionScaledPresetService(
+    public InstitutionPortfolioProvisionService(
             JdbcTemplate jdbcTemplate,
             ObjectMapper objectMapper,
             SimulationClockService simulationClockService,
@@ -63,104 +59,101 @@ public class InstitutionScaledPresetService {
     }
 
     @Transactional
-    public void createScaledDefaults(
-            InstitutionScaledPresetRequest request,
+    public long createPortfolio(
+            InstitutionPortfolioCreateRequest request,
             String changedBy
     ) {
+        if (request == null) {
+            throw StockException.badRequest("Institution portfolio request is required");
+        }
+        String portfolioCode = normalizePortfolioCode(request.portfolioCode());
+        String displayName = normalizeDisplayName(request.displayName());
+        InstitutionPortfolioPolicyCatalog.Policy style =
+                InstitutionPortfolioPolicyCatalog.require(request.investmentStyle());
+        PresetPolicy policy = provisioningPolicy(portfolioCode, displayName, style);
         BigDecimal aumRate = normalizeAumRate(request);
         String changeReason = normalizeChangeReason(request);
         String normalizedChangedBy = normalizeChangedBy(changedBy);
-        List<String> existingCodes = jdbcClient.sql(
-                        """
-                        select portfolio_code
-                          from stock_institution_portfolio
-                         where portfolio_code in (:portfolioCodes)
-                         order by portfolio_code asc
-                         for update
-                        """
-                )
-                .param("portfolioCodes", PRESET_CODES)
-                .query(String.class)
-                .list();
-        if (existingCodes.size() == PRESET_CODES.size()) {
-            return;
-        }
-        if (!existingCodes.isEmpty()) {
-            throw StockException.conflict(
-                    "Scaled institution preset is partially provisioned; repair the existing set first: "
-                            + String.join(",", existingCodes)
-            );
-        }
+        requirePortfolioCodeAvailable(portfolioCode);
 
         SimulationClockSnapshot clock = requirePausedPreOpen();
         LocalDate activeBusinessDate = marketLedgerFreezeGuard.acquireMutationPermit(
-                "scaled institution preset creation"
+                "institution portfolio creation"
         );
         if (!activeBusinessDate.equals(clock.simulationDate())) {
             throw StockException.conflict(
                     "Simulation date and active market business date must match"
             );
         }
-        List<MarketSymbol> symbols = findActiveMarketSymbols();
+        List<MarketSymbol> activeMarketSymbols = findActiveMarketSymbols();
+        List<MarketSymbol> symbols = selectMarketSymbols(
+                activeMarketSymbols,
+                request.symbols()
+        );
         if (symbols.isEmpty()) {
             throw StockException.conflict(
                     "At least one active order-book symbol with a positive price is required"
             );
         }
-        BigDecimal marketCapitalization = symbols.stream()
+        BigDecimal totalMarketCapitalization = activeMarketSymbols.stream()
                 .map(MarketSymbol::marketCapitalization)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
-        BigDecimal initialCash = marketCapitalization.multiply(aumRate)
+        BigDecimal selectedMarketCapitalization = symbols.stream()
+                .map(MarketSymbol::marketCapitalization)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal initialCash = totalMarketCapitalization.multiply(aumRate)
                 .setScale(2, RoundingMode.DOWN);
         if (initialCash.signum() <= 0) {
-            throw StockException.badRequest("Scaled institution initial AUM must be positive");
+            throw StockException.badRequest("Institution initial AUM must be positive");
         }
         LocalDateTime now = clock.simulationDateTime();
         LocalDate firstDecisionDate = activeBusinessDate.plusDays(1);
         LocalDateTime firstDecisionAt = firstDecisionDate.atTime(marketSessionService.openTime());
-        Map<String, BigDecimal> marketWeights = marketWeights(symbols, marketCapitalization);
+        Map<String, BigDecimal> marketWeights = marketWeights(
+                symbols,
+                selectedMarketCapitalization
+        );
 
-        for (PresetPolicy preset : presets()) {
-            long participantId = insertParticipant(preset, now);
-            long accountId = insertAccount(preset, initialCash, now);
-            insertParticipantAccount(
-                    participantId,
-                    accountId,
-                    preset,
-                    firstDecisionDate,
-                    now
-            );
-            long portfolioId = insertPortfolio(
-                    participantId,
-                    accountId,
-                    preset,
-                    firstDecisionAt,
-                    now
-            );
-            insertMandates(
-                    portfolioId,
-                    preset,
-                    symbols,
-                    marketWeights,
-                    now
-            );
-            insertOpeningGrant(
-                    accountId,
-                    initialCash,
-                    activeBusinessDate,
-                    normalizedChangedBy,
-                    now
-            );
-            insertPolicyVersion(
-                    preset,
-                    aumRate,
-                    initialCash,
-                    firstDecisionDate,
-                    changeReason,
-                    normalizedChangedBy,
-                    now
-            );
-        }
+        long participantId = insertParticipant(policy, now);
+        long accountId = insertAccount(policy, initialCash, now);
+        insertParticipantAccount(
+                participantId,
+                accountId,
+                policy,
+                firstDecisionDate,
+                now
+        );
+        long portfolioId = insertPortfolio(
+                participantId,
+                accountId,
+                policy,
+                firstDecisionAt,
+                now
+        );
+        insertMandates(
+                portfolioId,
+                policy,
+                symbols,
+                marketWeights,
+                now
+        );
+        insertOpeningGrant(
+                accountId,
+                initialCash,
+                activeBusinessDate,
+                normalizedChangedBy,
+                now
+        );
+        insertPolicyVersion(
+                policy,
+                aumRate,
+                initialCash,
+                firstDecisionDate,
+                changeReason,
+                normalizedChangedBy,
+                now
+        );
+        return portfolioId;
     }
 
     private SimulationClockSnapshot requirePausedPreOpen() {
@@ -172,14 +165,14 @@ public class InstitutionScaledPresetService {
         }
         if (marketSessionService.currentSession() != SimulationMarketSession.PRE_OPEN) {
             throw StockException.conflict(
-                    "Scaled institution presets can only be created during a paused pre-open"
+                    "Institution portfolios can only be created during a paused pre-open"
             );
         }
         return clock;
     }
 
-    private BigDecimal normalizeAumRate(InstitutionScaledPresetRequest request) {
-        BigDecimal rate = request == null || request.institutionAumRateOfMarketCap() == null
+    private BigDecimal normalizeAumRate(InstitutionPortfolioCreateRequest request) {
+        BigDecimal rate = request.institutionAumRateOfMarketCap() == null
                 ? DEFAULT_AUM_RATE
                 : request.institutionAumRateOfMarketCap();
         if (rate.compareTo(MIN_AUM_RATE) < 0 || rate.compareTo(MAX_AUM_RATE) > 0) {
@@ -190,11 +183,11 @@ public class InstitutionScaledPresetService {
         return rate.setScale(6, RoundingMode.HALF_UP);
     }
 
-    private String normalizeChangeReason(InstitutionScaledPresetRequest request) {
-        String reason = request == null ? null : request.changeReason();
+    private String normalizeChangeReason(InstitutionPortfolioCreateRequest request) {
+        String reason = request.changeReason();
         String normalized = reason == null ? "" : reason.trim();
         if (normalized.isBlank()) {
-            return "Create scaled four-institution shadow preset";
+            return "Create one institution portfolio in shadow mode";
         }
         return normalized.length() <= 500 ? normalized : normalized.substring(0, 500);
     }
@@ -205,6 +198,63 @@ public class InstitutionScaledPresetService {
             return "SYSTEM";
         }
         return normalized.length() <= 64 ? normalized : normalized.substring(0, 64);
+    }
+
+    private String normalizePortfolioCode(String value) {
+        String normalized = value == null ? "" : value.trim().toUpperCase(Locale.ROOT);
+        if (!normalized.matches("[A-Z0-9_]{3,24}")) {
+            throw StockException.badRequest(
+                    "Portfolio code must be 3-24 uppercase letters, digits, or underscores"
+            );
+        }
+        return normalized;
+    }
+
+    private String normalizeDisplayName(String value) {
+        String normalized = value == null ? "" : value.trim();
+        if (normalized.isBlank() || normalized.length() > 120) {
+            throw StockException.badRequest(
+                    "Institution display name must be between 1 and 120 characters"
+            );
+        }
+        return normalized;
+    }
+
+    private Set<String> normalizeSymbols(List<String> values) {
+        if (values == null || values.isEmpty()) {
+            return Set.of();
+        }
+        LinkedHashSet<String> normalized = new LinkedHashSet<>();
+        for (String value : values) {
+            String symbol = value == null ? "" : value.trim().toUpperCase(Locale.ROOT);
+            if (!symbol.matches("[A-Z0-9]{2,20}")) {
+                throw StockException.badRequest(
+                        "Institution symbol must be 2-20 uppercase letters or digits"
+                );
+            }
+            normalized.add(symbol);
+        }
+        return Collections.unmodifiableSet(normalized);
+    }
+
+    private void requirePortfolioCodeAvailable(String portfolioCode) {
+        Boolean exists = jdbcClient.sql(
+                        """
+                        select exists(
+                            select 1
+                              from stock_institution_portfolio
+                             where portfolio_code = ?
+                        )
+                        """
+                )
+                .param(portfolioCode)
+                .query(Boolean.class)
+                .single();
+        if (Boolean.TRUE.equals(exists)) {
+            throw StockException.conflict(
+                    "Institution portfolio code already exists: " + portfolioCode
+            );
+        }
     }
 
     private List<MarketSymbol> findActiveMarketSymbols() {
@@ -232,6 +282,35 @@ public class InstitutionScaledPresetService {
                         rs.getBigDecimal("current_price")
                 ))
                 .list();
+    }
+
+    private List<MarketSymbol> selectMarketSymbols(
+            List<MarketSymbol> available,
+            List<String> requestedSymbols
+    ) {
+        Set<String> normalizedSymbols = normalizeSymbols(requestedSymbols);
+        if (normalizedSymbols.isEmpty()) {
+            return available;
+        }
+        Map<String, MarketSymbol> availableBySymbol = available.stream()
+                .collect(java.util.stream.Collectors.toMap(
+                        MarketSymbol::symbol,
+                        symbol -> symbol,
+                        (left, right) -> left,
+                        LinkedHashMap::new
+                ));
+        List<String> missing = normalizedSymbols.stream()
+                .filter(symbol -> !availableBySymbol.containsKey(symbol))
+                .toList();
+        if (!missing.isEmpty()) {
+            throw StockException.badRequest(
+                    "Institution symbols must be active order-book symbols with positive prices: "
+                            + String.join(",", missing)
+            );
+        }
+        return normalizedSymbols.stream()
+                .map(availableBySymbol::get)
+                .toList();
     }
 
     private Map<String, BigDecimal> marketWeights(
@@ -450,7 +529,7 @@ public class InstitutionScaledPresetService {
             LocalDateTime now
     ) {
         Map<String, Object> config = new LinkedHashMap<>();
-        config.put("preset", "SCALED_FOUR_INSTITUTIONS_V1");
+        config.put("preset", "INDEPENDENT_INSTITUTION_PORTFOLIO_V1");
         config.put("portfolioCode", preset.portfolioCode());
         config.put("executionMode", "SHADOW");
         config.put("institutionAumRateOfMarketCap", aumRate);
@@ -503,57 +582,38 @@ public class InstitutionScaledPresetService {
         return keyHolder.getKey().longValue();
     }
 
-    private List<PresetPolicy> presets() {
-        return List.of(
-                new PresetPolicy(
-                        "INST_PENSION", "INSTITUTION_PENSION", "축소 연기금 균형형",
-                        "stock-institution-pension", "INST-PENSION",
-                        "INSTITUTION:PENSION", "BALANCED", "BALANCED_LONG_TERM",
-                        decimal("0.600000"), decimal("0.500000"), decimal("0.700000"),
-                        decimal("0.800000"), decimal("0.015000"), decimal("0.020000"),
-                        decimal("0.005000"), decimal("0.002000"),
-                        decimal("0.005000"), decimal("0.001000"), 120,
-                        decimal("0.020000"), decimal("0.020000"),
-                        decimal("0.020000"), decimal("0.020000"), decimal("0.010000")
-                ),
-                new PresetPolicy(
-                        "INST_VALUE", "INSTITUTION_VALUE", "축소 가치 역추세형",
-                        "stock-institution-value", "INST-VALUE",
-                        "INSTITUTION:VALUE", "VALUE", "VALUE_CONTRARIAN",
-                        decimal("0.650000"), decimal("0.450000"), decimal("0.800000"),
-                        decimal("0.750000"), decimal("0.020000"), decimal("0.020000"),
-                        decimal("0.005000"), decimal("0.002000"),
-                        decimal("0.010000"), decimal("0.002000"), 90,
-                        decimal("-0.120000"), decimal("-0.020000"),
-                        decimal("0.250000"), decimal("0.080000"), decimal("0.020000")
-                ),
-                new PresetPolicy(
-                        "INST_MOMENTUM", "INSTITUTION_MOMENTUM", "축소 모멘텀형",
-                        "stock-institution-momentum", "INST-MOMENTUM",
-                        "INSTITUTION:MOMENTUM", "MOMENTUM", "MOMENTUM",
-                        decimal("0.600000"), decimal("0.350000"), decimal("0.850000"),
-                        decimal("0.600000"), decimal("0.025000"), decimal("0.025000"),
-                        decimal("0.006000"), decimal("0.002500"),
-                        decimal("0.015000"), decimal("0.003000"), 60,
-                        decimal("0.150000"), decimal("0.250000"),
-                        decimal("-0.030000"), decimal("0.100000"), decimal("0.020000")
-                ),
-                new PresetPolicy(
-                        "INST_ACTIVE", "INSTITUTION_ACTIVE", "축소 단기 적극형",
-                        "stock-institution-active", "INST-ACTIVE",
-                        "INSTITUTION:ACTIVE", "ACTIVE", "ACTIVE_SHORT_TERM",
-                        decimal("0.550000"), decimal("0.250000"), decimal("0.850000"),
-                        decimal("0.400000"), decimal("0.030000"), decimal("0.030000"),
-                        decimal("0.008000"), decimal("0.003000"),
-                        decimal("0.020000"), decimal("0.004000"), 30,
-                        decimal("0.200000"), decimal("0.200000"),
-                        decimal("0.000000"), decimal("0.120000"), decimal("0.030000")
-                )
+    private PresetPolicy provisioningPolicy(
+            String portfolioCode,
+            String displayName,
+            InstitutionPortfolioPolicyCatalog.Policy style
+    ) {
+        String keyFragment = portfolioCode.toLowerCase(Locale.ROOT).replace('_', '-');
+        return new PresetPolicy(
+                portfolioCode,
+                "INSTITUTION_" + portfolioCode,
+                displayName,
+                "stock-institution-" + keyFragment,
+                "INST-" + portfolioCode,
+                "INSTITUTION:" + portfolioCode,
+                portfolioCode,
+                style.investmentStyle(),
+                style.baseStockAllocationRate(),
+                style.minStockAllocationRate(),
+                style.maxStockAllocationRate(),
+                style.primaryRegimeWeight(),
+                style.assetPreferenceSensitivity(),
+                style.volatilitySensitivity(),
+                style.entryThresholdRate(),
+                style.exitThresholdRate(),
+                style.dailyTurnoverLimitRate(),
+                style.maxDecisionTurnoverRate(),
+                style.decisionIntervalMinutes(),
+                style.pricePressureSensitivity(),
+                style.momentumSensitivity(),
+                style.valueSensitivity(),
+                style.reportSensitivity(),
+                style.dailyParticipationRate()
         );
-    }
-
-    private BigDecimal decimal(String value) {
-        return new BigDecimal(value);
     }
 
     private record MarketSymbol(String symbol, long tradableShares, BigDecimal currentPrice) {

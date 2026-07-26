@@ -16,6 +16,7 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.core.io.FileSystemResource;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.jdbc.datasource.SingleConnectionDataSource;
 import org.springframework.jdbc.datasource.init.ResourceDatabasePopulator;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -34,6 +35,7 @@ import stock.back.service.database.repository.StockPriceRepository;
 import stock.back.service.market.vo.InitialIssueAllocationRequest;
 import stock.back.service.market.vo.OrderBookInstrumentRequest;
 import stock.back.service.market.vo.OrderBookInstrumentResponse;
+import stock.back.service.market.vo.UnderwritingContractCreateRequest;
 import web.common.core.simulation.SimulationClockSnapshot;
 import web.common.core.simulation.SimulationMarketSession;
 
@@ -55,6 +57,10 @@ class OrderBookInstrumentRoleSeparatedIntegrationTest {
     private StockListingAutoAccountConfigRepository listingConfigRepository;
     private StockOrderBookMarketConfigRepository marketConfigRepository;
     private OrderBookInstrumentCommandService service;
+    private SystemCustodyQueryService systemCustodyQueryService;
+    private UnderwritingContractQueryService underwritingContractQueryService;
+    private UnderwritingContractProvisionService underwritingProvisionService;
+    private UnderwritingContractRecommendationService underwritingRecommendationService;
 
     @BeforeEach
     void setUp() {
@@ -107,10 +113,21 @@ class OrderBookInstrumentRoleSeparatedIntegrationTest {
                 marketSessionService,
                 freezeGuard
         );
+        underwritingProvisionService = new UnderwritingContractProvisionService(
+                jdbcTemplate,
+                simulationClockService,
+                marketSessionService,
+                freezeGuard
+        );
+        JdbcClient jdbcClient = JdbcClient.create(dataSource);
+        systemCustodyQueryService = new SystemCustodyQueryService(jdbcClient);
+        underwritingContractQueryService = new UnderwritingContractQueryService(jdbcClient);
+        underwritingRecommendationService =
+                new UnderwritingContractRecommendationService(jdbcClient);
     }
 
     @Test
-    void create_defaultIssueSplitsFloatAndLockedSharesWithoutLegacyLiquidity() {
+    void create_defaultIssueStagesFloatAndLockedSharesWithoutEconomicRoles() {
         OrderBookInstrumentResponse response = service.createOrderBookInstrument(
                 defaultRequest()
         );
@@ -128,17 +145,17 @@ class OrderBookInstrumentRoleSeparatedIntegrationTest {
                 select account.user_key, account.account_code,
                        account.participant_category, account.self_trade_group_id,
                        holding.quantity, holding.reserved_quantity
-                  from stock_holding holding
+                 from stock_holding holding
                   join stock_account account on account.id = holding.account_id
                  where holding.symbol = 'NEW001'
-                 order by account.participant_category
+                 order by account.user_key
                 """
         )).containsExactly(
                 Map.of(
-                        "user_key", "stock-issue-underwriter-new001",
-                        "account_code", "UW-NEW001",
-                        "participant_category", "ISSUE_UNDERWRITER",
-                        "self_trade_group_id", "ISSUE_UNDERWRITER:DEFAULT",
+                        "user_key", "stock-issuance-float-new001",
+                        "account_code", "FLOAT-NEW001",
+                        "participant_category", "SYSTEM_CUSTODY",
+                        "self_trade_group_id", "SYSTEM_CUSTODY:DEFAULT",
                         "quantity", 50_000L,
                         "reserved_quantity", 0L
                 ),
@@ -166,28 +183,23 @@ class OrderBookInstrumentRoleSeparatedIntegrationTest {
                 select mapping.account_role, mapping.desk_code
                   from stock_market_participant_account mapping
                   join stock_account account on account.id = mapping.account_id
+                 where account.user_key = 'stock-issuance-float-new001'
+                """
+        )).containsEntry("account_role", "SYSTEM_CUSTODY")
+                .containsEntry("desk_code", "ISSUANCE_FLOAT:NEW001");
+        assertThat(jdbcTemplate.queryForMap(
+                """
+                select mapping.account_role, mapping.desk_code
+                  from stock_market_participant_account mapping
+                  join stock_account account on account.id = mapping.account_id
                  where account.user_key = 'stock-issuance-lockup-new001'
                 """
         )).containsEntry("account_role", "SYSTEM_CUSTODY")
                 .containsEntry("desk_code", "ISSUANCE_LOCKUP:NEW001");
-        assertThat(jdbcTemplate.queryForMap(
-                """
-                select total_issue_quantity, tradable_allocation_quantity,
-                       locked_allocation_quantity, external_allocation_quantity,
-                       underwritten_quantity, underwriting_type, status,
-                       stabilization_quantity_limit, stabilization_amount_limit
-                  from stock_underwriting_contract
-                 where symbol = 'NEW001'
-                """
-        )).containsEntry("total_issue_quantity", 100_000L)
-                .containsEntry("tradable_allocation_quantity", 50_000L)
-                .containsEntry("locked_allocation_quantity", 50_000L)
-                .containsEntry("external_allocation_quantity", 0L)
-                .containsEntry("underwritten_quantity", 50_000L)
-                .containsEntry("underwriting_type", "FIRM_COMMITMENT")
-                .containsEntry("status", "ALLOCATED")
-                .containsEntry("stabilization_quantity_limit", 0L)
-                .containsEntry("stabilization_amount_limit", new BigDecimal("0.00"));
+        assertThat(jdbcTemplate.queryForObject(
+                "select count(*) from stock_underwriting_contract where symbol = 'NEW001'",
+                Integer.class
+        )).isZero();
         assertThat(jdbcTemplate.queryForList(
                 """
                 select allocation_reason, tradability_status, quantity,
@@ -204,7 +216,7 @@ class OrderBookInstrumentRoleSeparatedIntegrationTest {
                 )
                 .containsExactly(
                         org.assertj.core.groups.Tuple.tuple(
-                                "INITIAL_FLOAT_UNDERWRITER",
+                                "INITIAL_FLOAT_CUSTODY",
                                 "TRADABLE",
                                 50_000L
                         ),
@@ -218,24 +230,203 @@ class OrderBookInstrumentRoleSeparatedIntegrationTest {
                 "select count(*) from stock_listing_auto_account_config where symbol = 'NEW001'",
                 Integer.class
         )).isZero();
-        assertThat(jdbcTemplate.queryForMap(
+        assertThat(jdbcTemplate.queryForObject(
                 """
-                select policy_scope, scope_key, version_no, status,
-                       change_reason, changed_by
+                select count(*)
                   from stock_market_policy_version
                  where policy_scope = 'UNDERWRITING_CONTRACT'
-                   and scope_key = 'INITIAL-ISSUE:NEW001'
-                """
-        )).containsEntry("policy_scope", "UNDERWRITING_CONTRACT")
-                .containsEntry("scope_key", "INITIAL-ISSUE:NEW001")
-                .containsEntry("version_no", 1L)
-                .containsEntry("status", "ACTIVE")
-                .containsEntry(
-                        "change_reason",
-                        "Create inactive role-separated underwriting contract"
-                )
-                .containsEntry("changed_by", "SYSTEM_INITIAL_ISSUE");
+                """,
+                Integer.class
+        )).isZero();
         verify(listingConfigRepository, never()).save(any());
+    }
+
+    @Test
+    void create_underwritingContractMovesOnlyStagedFloatInventory() {
+        service.createOrderBookInstrument(defaultRequest());
+        persistPendingInstrumentRows();
+
+        long contractId = underwritingProvisionService.createContract(
+                "NEW001",
+                new UnderwritingContractCreateRequest(
+                        "FIRM_COMMITMENT",
+                        "독립 인수계약 생성 검증"
+                ),
+                "admin"
+        );
+
+        assertThat(contractId).isPositive();
+        assertThat(jdbcTemplate.queryForMap(
+                """
+                select total_issue_quantity, tradable_allocation_quantity,
+                       locked_allocation_quantity, external_allocation_quantity,
+                       underwritten_quantity, underwriting_type, status
+                  from stock_underwriting_contract
+                 where id = ?
+                """,
+                contractId
+        )).containsEntry("total_issue_quantity", 100_000L)
+                .containsEntry("tradable_allocation_quantity", 50_000L)
+                .containsEntry("locked_allocation_quantity", 50_000L)
+                .containsEntry("external_allocation_quantity", 0L)
+                .containsEntry("underwritten_quantity", 50_000L)
+                .containsEntry("underwriting_type", "FIRM_COMMITMENT")
+                .containsEntry("status", "ALLOCATED");
+        assertThat(jdbcTemplate.queryForList(
+                """
+                select account.user_key, holding.quantity
+                  from stock_holding holding
+                  join stock_account account on account.id = holding.account_id
+                 where holding.symbol = 'NEW001'
+                 order by account.user_key
+                """
+        )).extracting(
+                row -> row.get("user_key"),
+                row -> row.get("quantity")
+        ).containsExactly(
+                org.assertj.core.groups.Tuple.tuple(
+                        "stock-issuance-float-new001",
+                        0L
+                ),
+                org.assertj.core.groups.Tuple.tuple(
+                        "stock-issuance-lockup-new001",
+                        50_000L
+                ),
+                org.assertj.core.groups.Tuple.tuple(
+                        "stock-issue-underwriter-new001",
+                        50_000L
+                )
+        );
+        assertThat(jdbcTemplate.queryForList(
+                """
+                select event_type, allocation_reason, underwriting_contract_id,
+                       source_account_id, destination_account_id, quantity
+                  from stock_security_allocation_ledger
+                 where symbol = 'NEW001'
+                 order by id
+                """
+        )).hasSize(3);
+        assertThat(jdbcTemplate.queryForObject(
+                "select coalesce(sum(quantity), 0) from stock_holding where symbol = 'NEW001'",
+                Long.class
+        )).isEqualTo(100_000L);
+        assertThat(underwritingContractQueryService.getContract(contractId)
+                .reconciliation()
+                .issues()).isEmpty();
+    }
+
+    @Test
+    void getRecommendations_stagedIssueReportsIndependentAccountCountsAndExactQuantity() {
+        service.createOrderBookInstrument(defaultRequest());
+        persistPendingInstrumentRows();
+
+        var underwriting = underwritingRecommendationService.getRecommendation();
+        var custody = systemCustodyQueryService.getOverview();
+
+        assertThat(underwriting.recommendedUnderwriterOrganizationCount()).isEqualTo(1);
+        assertThat(underwriting.recommendedAccountCountPerSymbol()).isEqualTo(1);
+        assertThat(underwriting.recommendedRemainingContractCount()).isEqualTo(1);
+        assertThat(underwriting.symbols()).singleElement().satisfies(symbol -> {
+            assertThat(symbol.symbol()).isEqualTo("NEW001");
+            assertThat(symbol.floatCustodyAvailableQuantity()).isEqualTo(50_000L);
+            assertThat(symbol.creationEligible()).isTrue();
+        });
+        assertThat(custody.roleSeparatedIssueSymbolCount()).isEqualTo(1);
+        assertThat(custody.recommendedIssuanceCustodyAccountCount()).isEqualTo(2);
+        assertThat(custody.currentIssuanceCustodyAccountCount()).isEqualTo(2);
+    }
+
+    @Test
+    void getRecommendations_multipleContractsForSymbol_returnsOneSymbol() {
+        service.createOrderBookInstrument(defaultRequest());
+        persistPendingInstrumentRows();
+        long initialContractId = underwritingProvisionService.createContract(
+                "NEW001",
+                new UnderwritingContractCreateRequest(
+                        "FIRM_COMMITMENT",
+                        "initial contract"
+                ),
+                "admin"
+        );
+        jdbcTemplate.update(
+                """
+                insert into stock_underwriting_contract(
+                    contract_code, corporate_action_id, symbol,
+                    participant_id, account_id, total_issue_quantity,
+                    tradable_allocation_quantity, locked_allocation_quantity,
+                    external_allocation_quantity, underwritten_quantity,
+                    issue_price, underwriting_type, status, policy_version,
+                    created_at, updated_at
+                )
+                select 'FOLLOW-ON:NEW001', null, symbol,
+                       participant_id, account_id, total_issue_quantity,
+                       tradable_allocation_quantity, locked_allocation_quantity,
+                       external_allocation_quantity, underwritten_quantity,
+                       issue_price, underwriting_type, 'COMPLETED', policy_version,
+                       ?, ?
+                  from stock_underwriting_contract
+                 where id = ?
+                """,
+                NOW,
+                NOW,
+                initialContractId
+        );
+
+        var recommendation = underwritingRecommendationService.getRecommendation();
+
+        assertThat(recommendation.currentContractCount()).isEqualTo(1);
+        assertThat(recommendation.recommendedRemainingContractCount()).isZero();
+        assertThat(recommendation.symbols()).singleElement().satisfies(symbol -> {
+            assertThat(symbol.symbol()).isEqualTo("NEW001");
+            assertThat(symbol.existingContract()).isTrue();
+            assertThat(symbol.creationEligible()).isFalse();
+        });
+    }
+
+    @Test
+    void create_underwritingContractBestEfforts_rejectsBecauseAllFloatIsTransferred() {
+        service.createOrderBookInstrument(defaultRequest());
+        persistPendingInstrumentRows();
+
+        assertThatThrownBy(() -> underwritingProvisionService.createContract(
+                "NEW001",
+                new UnderwritingContractCreateRequest(
+                        "BEST_EFFORTS",
+                        "unsupported partial underwriting"
+                ),
+                "admin"
+        )).isInstanceOf(StockException.class)
+                .hasMessageContaining("FIRM_COMMITMENT only");
+        assertThat(jdbcTemplate.queryForObject(
+                "select count(*) from stock_underwriting_contract",
+                Integer.class
+        )).isZero();
+    }
+
+    private void persistPendingInstrumentRows() {
+        jdbcTemplate.update(
+                """
+                insert into stock_order_book_instrument(
+                    symbol, name, market, initial_price, issued_shares,
+                    tradable_shares, tick_size, price_limit_rate,
+                    enabled, created_at, updated_at
+                ) values (
+                    'NEW001', 'New One', 'KOSPI', 10000.00, 100000,
+                    50000, 50.00, 30.00,
+                    true, ?, ?
+                )
+                """,
+                NOW,
+                NOW
+        );
+        jdbcTemplate.update(
+                """
+                insert into stock_order_book_market_config(
+                    symbol, enabled, market_status, updated_at
+                ) values ('NEW001', false, 'CLOSED', ?)
+                """,
+                NOW
+        );
     }
 
     @Test

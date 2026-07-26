@@ -799,15 +799,20 @@ class StockBackAuthorizationBoundaryTest {
             "PATCH /api/stock/v1/markets/batch-jobs/runtime-controls/auto-market",
             "PATCH /api/stock/v1/markets/simulation-clock",
             "GET /api/stock/v1/markets/institution-portfolios",
-            "POST /api/stock/v1/markets/institution-portfolios/scaled-defaults",
+            "GET /api/stock/v1/markets/institution-portfolios/recommendations",
+            "POST /api/stock/v1/markets/institution-portfolios",
             "POST /api/stock/v1/markets/institution-portfolios/1/pilot",
             "POST /api/stock/v1/markets/institution-portfolios/1/suspend",
             "GET /api/stock/v1/markets/liquidity-mandates",
-            "POST /api/stock/v1/markets/liquidity-mandates/ZQAUTH01/scaled-shadow",
+            "GET /api/stock/v1/markets/liquidity-mandates/recommendations",
+            "POST /api/stock/v1/markets/liquidity-mandates/ZQAUTH01",
             "POST /api/stock/v1/markets/liquidity-mandates/ZQAUTH01/activate",
-            "POST /api/stock/v1/markets/underwriting-contracts/1/scaled-supply/activate",
-            "POST /api/stock/v1/markets/underwriting-contracts/1/scaled-supply/suspend",
-            "GET /api/stock/v1/markets/underwriting-contracts"
+            "POST /api/stock/v1/markets/underwriting-contracts/ZQAUTH01",
+            "POST /api/stock/v1/markets/underwriting-contracts/1/supply/activate",
+            "POST /api/stock/v1/markets/underwriting-contracts/1/supply/suspend",
+            "GET /api/stock/v1/markets/underwriting-contracts",
+            "GET /api/stock/v1/markets/underwriting-contracts/recommendations",
+            "GET /api/stock/v1/markets/system-custody"
     })
     void autoParticipantCashFlowAdminEndpoints_withoutPrincipalHeaders_returnUnauthorized(String requestLine) throws Exception {
         String[] parts = requestLine.split(" ", 2);
@@ -847,15 +852,20 @@ class StockBackAuthorizationBoundaryTest {
             "PATCH /api/stock/v1/markets/batch-jobs/runtime-controls/auto-market",
             "PATCH /api/stock/v1/markets/simulation-clock",
             "GET /api/stock/v1/markets/institution-portfolios",
-            "POST /api/stock/v1/markets/institution-portfolios/scaled-defaults",
+            "GET /api/stock/v1/markets/institution-portfolios/recommendations",
+            "POST /api/stock/v1/markets/institution-portfolios",
             "POST /api/stock/v1/markets/institution-portfolios/1/pilot",
             "POST /api/stock/v1/markets/institution-portfolios/1/suspend",
             "GET /api/stock/v1/markets/liquidity-mandates",
-            "POST /api/stock/v1/markets/liquidity-mandates/ZQAUTH01/scaled-shadow",
+            "GET /api/stock/v1/markets/liquidity-mandates/recommendations",
+            "POST /api/stock/v1/markets/liquidity-mandates/ZQAUTH01",
             "POST /api/stock/v1/markets/liquidity-mandates/ZQAUTH01/activate",
-            "POST /api/stock/v1/markets/underwriting-contracts/1/scaled-supply/activate",
-            "POST /api/stock/v1/markets/underwriting-contracts/1/scaled-supply/suspend",
-            "GET /api/stock/v1/markets/underwriting-contracts"
+            "POST /api/stock/v1/markets/underwriting-contracts/ZQAUTH01",
+            "POST /api/stock/v1/markets/underwriting-contracts/1/supply/activate",
+            "POST /api/stock/v1/markets/underwriting-contracts/1/supply/suspend",
+            "GET /api/stock/v1/markets/underwriting-contracts",
+            "GET /api/stock/v1/markets/underwriting-contracts/recommendations",
+            "GET /api/stock/v1/markets/system-custody"
     })
     void autoParticipantCashFlowAdminEndpoints_userPrincipalHeaders_returnForbidden(String requestLine) throws Exception {
         String[] parts = requestLine.split(" ", 2);

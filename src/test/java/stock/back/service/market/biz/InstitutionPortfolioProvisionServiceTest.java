@@ -27,8 +27,8 @@ import stock.back.service.database.entity.StockAccount;
 import stock.back.service.database.repository.StockAccountRepository;
 import stock.back.service.market.vo.InstitutionPilotActivationRequest;
 import stock.back.service.market.vo.InstitutionPilotSuspensionRequest;
+import stock.back.service.market.vo.InstitutionPortfolioCreateRequest;
 import stock.back.service.market.vo.InstitutionPortfolioResponse;
-import stock.back.service.market.vo.InstitutionScaledPresetRequest;
 import stock.back.service.market.vo.InstitutionSymbolMandateResponse;
 import stock.back.service.trading.biz.AccountOrderCleanupService;
 import web.common.core.simulation.SimulationClockSnapshot;
@@ -42,14 +42,15 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-class InstitutionScaledPresetServiceTest {
+class InstitutionPortfolioProvisionServiceTest {
 
     private static final LocalDate BUSINESS_DATE = LocalDate.of(2027, 1, 27);
     private static final LocalDateTime NOW = BUSINESS_DATE.atTime(5, 0);
 
     private JdbcTemplate jdbcTemplate;
     private TransactionTemplate transactionTemplate;
-    private InstitutionScaledPresetService presetService;
+    private InstitutionPortfolioProvisionService provisionService;
+    private InstitutionPortfolioRecommendationService recommendationService;
     private InstitutionPilotTransitionService pilotTransitionService;
     private InstitutionPilotEmergencyStopService emergencyStopService;
     private InstitutionPortfolioQueryService queryService;
@@ -79,10 +80,10 @@ class InstitutionScaledPresetServiceTest {
         SimulationMarketSessionService marketSessionService =
                 new SimulationMarketSessionService(simulationClockService, "06:00", "18:00");
         freezeGuard = mock(MarketLedgerFreezeGuard.class);
-        when(freezeGuard.acquireMutationPermit("scaled institution preset creation"))
+        when(freezeGuard.acquireMutationPermit("institution portfolio creation"))
                 .thenReturn(BUSINESS_DATE);
 
-        presetService = new InstitutionScaledPresetService(
+        provisionService = new InstitutionPortfolioProvisionService(
                 jdbcTemplate,
                 new ObjectMapper(),
                 simulationClockService,
@@ -110,38 +111,35 @@ class InstitutionScaledPresetServiceTest {
                 JdbcClient.create(dataSource),
                 simulationClockService
         );
+        recommendationService = new InstitutionPortfolioRecommendationService(
+                JdbcClient.create(dataSource)
+        );
         seedPreOpenSymbols();
     }
 
     @Test
-    void createScaledDefaults_threeSymbolMarket_createsFourShadowPortfoliosWithoutOrders() {
-        transactionTemplate.executeWithoutResult(status -> presetService.createScaledDefaults(
-                new InstitutionScaledPresetRequest(
-                        new BigDecimal("0.010000"),
-                        "scaled market baseline"
-                ),
-                "stock-admin"
-        ));
+    void createPortfolio_threeSymbolMarket_createsOneShadowPortfolioWithoutOrders() {
+        createDefaultPortfolio();
 
         assertThat(jdbcTemplate.queryForObject(
                 "select count(*) from stock_market_participant "
                         + "where participant_type = 'INSTITUTIONAL_INVESTOR'",
                 Integer.class
-        )).isEqualTo(4);
+        )).isEqualTo(1);
         assertThat(jdbcTemplate.queryForObject(
                 "select count(*) from stock_account "
                         + "where participant_category = 'INSTITUTIONAL_INVESTOR'",
                 Integer.class
-        )).isEqualTo(4);
+        )).isEqualTo(1);
         assertThat(jdbcTemplate.queryForObject(
                 "select count(*) from stock_market_participant_account "
                         + "where account_role = 'INSTITUTIONAL_INVESTOR'",
                 Integer.class
-        )).isEqualTo(4);
-        assertThat(count("stock_institution_portfolio")).isEqualTo(4);
-        assertThat(count("stock_institution_symbol_mandate")).isEqualTo(12);
-        assertThat(count("stock_account_cash_flow")).isEqualTo(4);
-        assertThat(count("stock_market_policy_version")).isEqualTo(4);
+        )).isEqualTo(1);
+        assertThat(count("stock_institution_portfolio")).isEqualTo(1);
+        assertThat(count("stock_institution_symbol_mandate")).isEqualTo(3);
+        assertThat(count("stock_account_cash_flow")).isEqualTo(1);
+        assertThat(count("stock_market_policy_version")).isEqualTo(1);
         assertThat(count("stock_order")).isZero();
 
         assertThat(jdbcTemplate.queryForList(
@@ -164,33 +162,83 @@ class InstitutionScaledPresetServiceTest {
     }
 
     @Test
-    void createScaledDefaults_secondCall_isIdempotentAndDoesNotDuplicateOpeningCash() {
-        transactionTemplate.executeWithoutResult(status ->
-                presetService.createScaledDefaults(null, "stock-admin"));
-        transactionTemplate.executeWithoutResult(status ->
-                presetService.createScaledDefaults(null, "stock-admin"));
+    void createPortfolio_twoIndependentCalls_createOnlyRequestedPortfolios() {
+        createDefaultPortfolio();
+        createPortfolio("INST_VALUE", "VALUE_CONTRARIAN");
 
-        assertThat(count("stock_institution_portfolio")).isEqualTo(4);
-        assertThat(count("stock_account_cash_flow")).isEqualTo(4);
+        assertThat(count("stock_institution_portfolio")).isEqualTo(2);
+        assertThat(count("stock_account_cash_flow")).isEqualTo(2);
         assertThat(jdbcTemplate.queryForObject(
                 "select sum(cash_balance) from stock_account",
                 BigDecimal.class
-        )).isEqualByComparingTo("24000000.00");
-        verify(freezeGuard, times(1))
-                .acquireMutationPermit("scaled institution preset creation");
+        )).isEqualByComparingTo("12000000.00");
+        verify(freezeGuard, times(2))
+                .acquireMutationPermit("institution portfolio creation");
     }
 
     @Test
-    void createScaledDefaults_runningClock_rejectsBeforeOpeningCapitalMutation() {
+    void createPortfolio_selectedSymbol_keepsAumBasedOnWholeActiveMarket() {
+        transactionTemplate.executeWithoutResult(status ->
+                provisionService.createPortfolio(
+                        new InstitutionPortfolioCreateRequest(
+                                "INST_ONE",
+                                "단일 종목 기관",
+                                "BALANCED_LONG_TERM",
+                                new BigDecimal("0.010000"),
+                                List.of("DEMO001"),
+                                "single symbol mandate"
+                        ),
+                        "stock-admin"
+                )
+        );
+
+        assertThat(jdbcTemplate.queryForObject(
+                """
+                select account.cash_balance
+                  from stock_institution_portfolio portfolio
+                  join stock_account account on account.id = portfolio.account_id
+                 where portfolio.portfolio_code = 'INST_ONE'
+                """,
+                BigDecimal.class
+        )).isEqualByComparingTo("6000000.00");
+        assertThat(jdbcTemplate.queryForObject(
+                """
+                select count(*)
+                  from stock_institution_symbol_mandate mandate
+                  join stock_institution_portfolio portfolio
+                    on portfolio.id = mandate.portfolio_id
+                 where portfolio.portfolio_code = 'INST_ONE'
+                """,
+                Integer.class
+        )).isEqualTo(1);
+    }
+
+    @Test
+    void getRecommendation_threeSymbols_reportsThreePortfoliosAndExactAum() {
+        var recommendation = recommendationService.getRecommendation();
+
+        assertThat(recommendation.activeSymbolCount()).isEqualTo(3);
+        assertThat(recommendation.recommendedPortfolioCount()).isEqualTo(3);
+        assertThat(recommendation.recommendedRemainingCount()).isEqualTo(3);
+        assertThat(recommendation.recommendedAumAmountPerPortfolio())
+                .isEqualByComparingTo("6000000.00");
+        assertThat(recommendation.styles()).hasSize(4);
+        assertThat(recommendation.symbols())
+                .extracting(symbol -> symbol.recommendedReferenceDailyVolume())
+                .containsOnly(30_000L);
+    }
+
+    @Test
+    void createPortfolio_runningClock_rejectsBeforeOpeningCapitalMutation() {
         when(simulationClockService.currentSnapshot()).thenReturn(clockSnapshot(true));
 
         assertThatThrownBy(() -> transactionTemplate.executeWithoutResult(status ->
-                presetService.createScaledDefaults(null, "stock-admin")
+                provisionService.createPortfolio(defaultCreateRequest(), "stock-admin")
         )).isInstanceOf(StockException.class)
                 .hasMessageContaining("Pause the simulation clock");
 
         verify(freezeGuard, never())
-                .acquireMutationPermit("scaled institution preset creation");
+                .acquireMutationPermit("institution portfolio creation");
         assertThat(jdbcTemplate.queryForObject(
                 "select count(*) from stock_account "
                         + "where participant_category = 'INSTITUTIONAL_INVESTOR'",
@@ -200,13 +248,12 @@ class InstitutionScaledPresetServiceTest {
 
     @Test
     void getPortfolios_afterProvision_exposesAccountMandatesAndNoLiveOriginOrders() {
-        transactionTemplate.executeWithoutResult(status ->
-                presetService.createScaledDefaults(null, "stock-admin"));
+        createDefaultPortfolio();
 
         List<InstitutionPortfolioResponse> portfolios =
                 transactionTemplate.execute(status -> queryService.getPortfolios());
 
-        assertThat(portfolios).hasSize(4);
+        assertThat(portfolios).hasSize(1);
         assertThat(portfolios).allSatisfy(portfolio -> {
             assertThat(portfolio.executionMode()).isEqualTo("SHADOW");
             assertThat(portfolio.accountStatus()).isEqualTo("ACTIVE");
@@ -229,8 +276,7 @@ class InstitutionScaledPresetServiceTest {
 
     @Test
     void getPortfolios_dailyShadowPlans_areIncludedInProjectedQuantity() {
-        transactionTemplate.executeWithoutResult(status ->
-                presetService.createScaledDefaults(null, "stock-admin"));
+        createDefaultPortfolio();
         jdbcTemplate.update(
                 """
                 insert into stock_institution_daily_budget(
@@ -270,8 +316,7 @@ class InstitutionScaledPresetServiceTest {
 
     @Test
     void activatePilot_reviewedShadowPortfolio_selectsOneSymbolAndVersionsPolicy() {
-        transactionTemplate.executeWithoutResult(status ->
-                presetService.createScaledDefaults(null, "stock-admin"));
+        createDefaultPortfolio();
         long portfolioId = portfolioId("INST_PENSION");
         seedCompletedShadowDays(portfolioId, 20);
         LocalDate pilotDate = BUSINESS_DATE.plusDays(21);
@@ -330,8 +375,7 @@ class InstitutionScaledPresetServiceTest {
 
     @Test
     void activatePilot_insufficientShadowDays_rejectsWithoutModeChange() {
-        transactionTemplate.executeWithoutResult(status ->
-                presetService.createScaledDefaults(null, "stock-admin"));
+        createDefaultPortfolio();
         long portfolioId = portfolioId("INST_PENSION");
         seedCompletedShadowDays(portfolioId, 19);
         LocalDate pilotDate = BUSINESS_DATE.plusDays(21);
@@ -369,8 +413,7 @@ class InstitutionScaledPresetServiceTest {
 
     @Test
     void suspendPilot_runningClock_suspendsRejectsIntentAndCancelsOrdersAtomically() {
-        transactionTemplate.executeWithoutResult(status ->
-                presetService.createScaledDefaults(null, "stock-admin"));
+        createDefaultPortfolio();
         long portfolioId = portfolioId("INST_PENSION");
         seedCompletedShadowDays(portfolioId, 20);
         LocalDate pilotDate = BUSINESS_DATE.plusDays(21);
@@ -466,8 +509,7 @@ class InstitutionScaledPresetServiceTest {
 
     @Test
     void suspendPilot_orderCleanupFails_rollsBackPortfolioIntentAndPolicyTogether() {
-        transactionTemplate.executeWithoutResult(status ->
-                presetService.createScaledDefaults(null, "stock-admin"));
+        createDefaultPortfolio();
         long portfolioId = portfolioId("INST_PENSION");
         seedCompletedShadowDays(portfolioId, 20);
         LocalDate pilotDate = BUSINESS_DATE.plusDays(21);
@@ -541,6 +583,39 @@ class InstitutionScaledPresetServiceTest {
                 """,
                 Integer.class
         )).isZero();
+    }
+
+    private void createDefaultPortfolio() {
+        transactionTemplate.executeWithoutResult(status ->
+                provisionService.createPortfolio(defaultCreateRequest(), "stock-admin")
+        );
+    }
+
+    private void createPortfolio(String portfolioCode, String investmentStyle) {
+        transactionTemplate.executeWithoutResult(status ->
+                provisionService.createPortfolio(
+                        new InstitutionPortfolioCreateRequest(
+                                portfolioCode,
+                                portfolioCode + " 테스트",
+                                investmentStyle,
+                                new BigDecimal("0.010000"),
+                                List.of("DEMO001", "DEMO002", "DEMO003"),
+                                "independent institution test"
+                        ),
+                        "stock-admin"
+                )
+        );
+    }
+
+    private InstitutionPortfolioCreateRequest defaultCreateRequest() {
+        return new InstitutionPortfolioCreateRequest(
+                "INST_PENSION",
+                "축소 연기금 균형형",
+                "BALANCED_LONG_TERM",
+                new BigDecimal("0.010000"),
+                List.of("DEMO001", "DEMO002", "DEMO003"),
+                "independent institution baseline"
+        );
     }
 
     private int count(String table) {

@@ -16,6 +16,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.core.io.FileSystemResource;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.SingleConnectionDataSource;
 import org.springframework.jdbc.datasource.init.ResourceDatabasePopulator;
@@ -26,7 +27,7 @@ import stock.back.service.common.exception.StockException;
 import stock.back.service.database.entity.StockAccount;
 import stock.back.service.database.repository.StockAccountRepository;
 import stock.back.service.market.vo.LiquidityProviderActivationRequest;
-import stock.back.service.market.vo.LiquidityProviderScaledProvisionRequest;
+import stock.back.service.market.vo.LiquidityProviderProvisionRequest;
 import stock.back.service.trading.biz.AccountOrderCleanupService;
 import web.common.core.simulation.SimulationClockSnapshot;
 
@@ -49,6 +50,7 @@ class LiquidityProviderTransitionServiceTest {
     private StockAccountRepository stockAccountRepository;
     private AccountOrderCleanupService accountOrderCleanupService;
     private LiquidityProviderTransitionService service;
+    private LiquidityProviderRecommendationService recommendationService;
 
     @BeforeEach
     void setUp() {
@@ -85,13 +87,16 @@ class LiquidityProviderTransitionServiceTest {
                 stockAccountRepository,
                 accountOrderCleanupService
         );
+        recommendationService = new LiquidityProviderRecommendationService(
+                JdbcClient.create(dataSource)
+        );
         seedLegacySymbol();
     }
 
     @Test
-    void provisionScaledShadow_defaultRates_separatesInventoryAndCreatesNoOrders() {
+    void provisionShadow_defaultRates_separatesInventoryAndCreatesNoOrders() {
         transactionTemplate.executeWithoutResult(status ->
-                service.provisionScaledShadow("demo001", null, "stock-admin"));
+                service.provisionShadow("demo001", null, "stock-admin"));
 
         assertThat(jdbcTemplate.queryForObject(
                 "select count(*) from stock_order",
@@ -162,7 +167,7 @@ class LiquidityProviderTransitionServiceTest {
     @Test
     void activateLive_pausedPreOpen_cleansLegacyThenSwitchesAtomically() {
         transactionTemplate.executeWithoutResult(status ->
-                service.provisionScaledShadow("DEMO001", null, "stock-admin"));
+                service.provisionShadow("DEMO001", null, "stock-admin"));
         StockAccount legacyAccount = StockAccount.open("stock-listing-demo001");
         ReflectionTestUtils.setField(legacyAccount, "id", 100L);
         when(stockAccountRepository.findAllByIdInForUpdate(List.of(100L)))
@@ -206,7 +211,7 @@ class LiquidityProviderTransitionServiceTest {
     void activateLive_pendingRoleSeparatedListing_enablesMarketForNextSession() {
         convertFixtureToPendingRoleSeparatedListing();
         transactionTemplate.executeWithoutResult(status ->
-                service.provisionScaledShadow("DEMO001", null, "stock-admin"));
+                service.provisionShadow("DEMO001", null, "stock-admin"));
 
         assertThat(jdbcTemplate.queryForMap(
                 """
@@ -244,7 +249,7 @@ class LiquidityProviderTransitionServiceTest {
     }
 
     @Test
-    void provisionScaledShadow_multipleContractsForSameUnderwriter_resolvesOneSourceAccount() {
+    void provisionShadow_multipleContractsForSameUnderwriter_resolvesOneSourceAccount() {
         convertFixtureToPendingRoleSeparatedListing();
         Long participantId = jdbcTemplate.queryForObject(
                 """
@@ -277,8 +282,17 @@ class LiquidityProviderTransitionServiceTest {
                 PRE_OPEN
         );
 
+        var recommendation = recommendationService.getRecommendation();
+
+        assertThat(recommendation.recommendedProviderCount()).isEqualTo(1);
+        assertThat(recommendation.symbols()).singleElement().satisfies(symbol -> {
+            assertThat(symbol.symbol()).isEqualTo("DEMO001");
+            assertThat(symbol.recommendedSourceAccountId()).isEqualTo(100L);
+            assertThat(symbol.creationEligible()).isTrue();
+        });
+
         transactionTemplate.executeWithoutResult(status ->
-                service.provisionScaledShadow("DEMO001", null, "stock-admin"));
+                service.provisionShadow("DEMO001", null, "stock-admin"));
 
         assertThat(jdbcTemplate.queryForObject(
                 """
@@ -293,7 +307,7 @@ class LiquidityProviderTransitionServiceTest {
     @Test
     void activateLive_selfTradeGroupMismatch_rejectsBeforeLegacyCleanup() {
         transactionTemplate.executeWithoutResult(status ->
-                service.provisionScaledShadow("DEMO001", null, "stock-admin"));
+                service.provisionShadow("DEMO001", null, "stock-admin"));
         jdbcTemplate.update(
                 """
                 update stock_account
@@ -323,12 +337,12 @@ class LiquidityProviderTransitionServiceTest {
     }
 
     @Test
-    void provisionScaledShadow_runningClock_rejectsBeforeAssetMutation() {
+    void provisionShadow_runningClock_rejectsBeforeAssetMutation() {
         when(simulationClockService.currentSnapshot())
                 .thenReturn(clockSnapshot(true, PRE_OPEN));
 
         assertThatThrownBy(() -> transactionTemplate.executeWithoutResult(status ->
-                service.provisionScaledShadow("DEMO001", null, "stock-admin")
+                service.provisionShadow("DEMO001", null, "stock-admin")
         )).isInstanceOf(StockException.class)
                 .hasMessageContaining("Pause the simulation clock");
 
@@ -345,7 +359,7 @@ class LiquidityProviderTransitionServiceTest {
     }
 
     @Test
-    void provisionScaledShadow_insufficientUnreservedSourceInventory_rollsBack() {
+    void provisionShadow_insufficientUnreservedSourceInventory_rollsBack() {
         jdbcTemplate.update(
                 """
                 update stock_holding
@@ -356,9 +370,9 @@ class LiquidityProviderTransitionServiceTest {
         );
 
         assertThatThrownBy(() -> transactionTemplate.executeWithoutResult(status ->
-                service.provisionScaledShadow(
+                service.provisionShadow(
                         "DEMO001",
-                        new LiquidityProviderScaledProvisionRequest(
+                        new LiquidityProviderProvisionRequest(
                                 null,
                                 null,
                                 null,

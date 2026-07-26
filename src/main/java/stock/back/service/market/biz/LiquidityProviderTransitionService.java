@@ -25,7 +25,7 @@ import stock.back.service.common.exception.StockException;
 import stock.back.service.database.entity.StockAccount;
 import stock.back.service.database.repository.StockAccountRepository;
 import stock.back.service.market.vo.LiquidityProviderActivationRequest;
-import stock.back.service.market.vo.LiquidityProviderScaledProvisionRequest;
+import stock.back.service.market.vo.LiquidityProviderProvisionRequest;
 import stock.back.service.trading.biz.AccountOrderCleanupService;
 import web.common.core.simulation.SimulationClockSnapshot;
 import web.common.core.simulation.SimulationMarketSession;
@@ -78,9 +78,9 @@ public class LiquidityProviderTransitionService {
     }
 
     @Transactional
-    public void provisionScaledShadow(
+    public void provisionShadow(
             String symbol,
-            LiquidityProviderScaledProvisionRequest request,
+            LiquidityProviderProvisionRequest request,
             String requestedBy
     ) {
         String normalizedSymbol = normalizedSymbol(symbol);
@@ -215,7 +215,7 @@ public class LiquidityProviderTransitionService {
         );
         String changeReason = normalizeReason(
                 request == null ? null : request.changeReason(),
-                "Provision scaled liquidity provider in shadow mode"
+                "Provision one liquidity provider mandate in shadow mode"
         );
         insertTransition(
                 normalizedSymbol,
@@ -402,7 +402,7 @@ public class LiquidityProviderTransitionService {
         );
         String changeReason = normalizeReason(
                 request == null ? null : request.changeReason(),
-                "Activate scaled liquidity provider and retire legacy listing liquidity"
+                "Activate independent liquidity provider and retire legacy listing liquidity"
         );
         insertPolicyVersion(
                 normalizedSymbol,
@@ -1036,7 +1036,7 @@ public class LiquidityProviderTransitionService {
             LocalDateTime now
     ) {
         Map<String, Object> config = new LinkedHashMap<>();
-        config.put("preset", "SCALED_LIQUIDITY_PROVIDER_V1");
+        config.put("preset", "INDEPENDENT_LIQUIDITY_PROVIDER_V1");
         config.put("symbol", symbol);
         config.put("executionMode", executionMode);
         config.put("referenceDailyVolumeRate", referenceVolumeRate);

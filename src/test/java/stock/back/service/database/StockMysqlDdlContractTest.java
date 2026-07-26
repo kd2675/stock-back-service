@@ -951,6 +951,38 @@ class StockMysqlDdlContractTest {
     }
 
     @Test
+    void independentProvisioningAlter_matchesBatchAndAvoidsHotLedgers()
+            throws IOException {
+        String backDdl = Files.readString(
+                Path.of(
+                        "src/main/resources/db/ddl/"
+                                + "stock_market_role_independent_provisioning_alter.sql"
+                ),
+                StandardCharsets.UTF_8
+        );
+        String batchDdl = Files.readString(
+                Path.of(
+                        "../stock-batch-service/src/main/resources/db/ddl/"
+                                + "stock_market_role_independent_provisioning_alter.sql"
+                ),
+                StandardCharsets.UTF_8
+        );
+
+        assertThat(firstExecutableSqlLine(backDdl)).isEqualTo("USE STOCK_SERVICE;");
+        assertThat(normalizeSqlBlock(backDdl)).isEqualTo(normalizeSqlBlock(batchDdl));
+        assertThat(backDdl).contains(
+                "INITIAL_FLOAT_CUSTODY",
+                "chk_stock_security_allocation_reason",
+                "stock_security_allocation_ledger"
+        ).doesNotContain(
+                "ALTER TABLE stock_order",
+                "ALTER TABLE stock_execution",
+                "UPDATE stock_order",
+                "UPDATE stock_execution"
+        );
+    }
+
+    @Test
     void underwriterScaledSupplyAlter_matchesCanonicalAndBatchCopiesWithoutHotLedgerMutation()
             throws IOException {
         String backDdl = Files.readString(

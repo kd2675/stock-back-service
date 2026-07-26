@@ -41,13 +41,13 @@ public class OrderBookInstrumentCommandService {
     private static final BigDecimal DEFAULT_TRADABLE_SHARE_RATE = new BigDecimal("0.500000");
     private static final BigDecimal MIN_TRADABLE_SHARE_RATE = new BigDecimal("0.200000");
     private static final BigDecimal MAX_TRADABLE_SHARE_RATE = new BigDecimal("0.850000");
-    private static final String DEFAULT_UNDERWRITER_PARTICIPANT_CODE =
-            "DEFAULT_ISSUE_UNDERWRITER";
-    private static final String DEFAULT_UNDERWRITER_SELF_TRADE_GROUP =
-            "ISSUE_UNDERWRITER:DEFAULT";
     private static final String SYSTEM_CUSTODY_PARTICIPANT_CODE = "SYSTEM_CUSTODY";
     private static final String SYSTEM_CUSTODY_SELF_TRADE_GROUP =
             "SYSTEM_CUSTODY:DEFAULT";
+    private static final String ISSUANCE_FLOAT_USER_KEY_PREFIX =
+            "stock-issuance-float-";
+    private static final String ISSUANCE_FLOAT_ACCOUNT_CODE_PREFIX =
+            "FLOAT-";
     private static final String ISSUANCE_LOCKUP_USER_KEY_PREFIX =
             "stock-issuance-lockup-";
     private static final String ISSUANCE_LOCKUP_ACCOUNT_CODE_PREFIX =
@@ -298,106 +298,29 @@ public class OrderBookInstrumentCommandService {
                     "Role-separated initial issue requires a persisted corporate action"
             );
         }
-        MarketRoleParticipant underwriter = requireMarketRoleParticipant(
-                DEFAULT_UNDERWRITER_PARTICIPANT_CODE,
-                "ISSUE_UNDERWRITER",
-                DEFAULT_UNDERWRITER_SELF_TRADE_GROUP
-        );
         MarketRoleParticipant custody = requireMarketRoleParticipant(
                 SYSTEM_CUSTODY_PARTICIPANT_CODE,
                 "SYSTEM_CUSTODY",
                 SYSTEM_CUSTODY_SELF_TRADE_GROUP
         );
-        long lockupCustodyAccountId = createIssuanceLockupCustodyAccount(
+        long floatCustodyAccountId = createIssuanceCustodyAccount(
                 custody.participantId(),
                 symbol,
+                ISSUANCE_FLOAT_USER_KEY_PREFIX,
+                ISSUANCE_FLOAT_ACCOUNT_CODE_PREFIX,
+                "ISSUANCE_FLOAT:",
                 now
         );
-        String underwriterUserKey = "stock-issue-underwriter-" + symbol.toLowerCase(Locale.ROOT);
-        String underwriterAccountCode = "UW-" + symbol;
-        int accountInserted = jdbcTemplate.update(
-                """
-                insert into stock_account(
-                    user_key, account_code, status, participant_category,
-                    self_trade_group_id, cash_balance, created_at, updated_at
-                ) values (?, ?, 'ACTIVE', 'ISSUE_UNDERWRITER', ?, 0.00, ?, ?)
-                """,
-                underwriterUserKey,
-                underwriterAccountCode,
-                DEFAULT_UNDERWRITER_SELF_TRADE_GROUP,
-                now,
-                now
-        );
-        if (accountInserted != 1) {
-            throw new IllegalStateException("Issue-underwriter account creation failed");
-        }
-        long underwriterAccountId = jdbcClient.sql(
-                        "select id from stock_account where user_key = ?"
-                )
-                .param(underwriterUserKey)
-                .query(Long.class)
-                .single();
-        int mappingInserted = jdbcTemplate.update(
-                """
-                insert into stock_market_participant_account(
-                    participant_id, account_id, account_role, desk_code,
-                    effective_from, effective_to, status, created_at, updated_at
-                ) values (?, ?, 'ISSUE_UNDERWRITER', ?, ?, null, 'ACTIVE', ?, ?)
-                """,
-                underwriter.participantId(),
-                underwriterAccountId,
+        long lockupCustodyAccountId = createIssuanceCustodyAccount(
+                custody.participantId(),
                 symbol,
-                now.toLocalDate(),
-                now,
+                ISSUANCE_LOCKUP_USER_KEY_PREFIX,
+                ISSUANCE_LOCKUP_ACCOUNT_CODE_PREFIX,
+                "ISSUANCE_LOCKUP:",
                 now
         );
-        if (mappingInserted != 1) {
-            throw new IllegalStateException("Issue-underwriter account mapping creation failed");
-        }
-        int contractInserted = jdbcTemplate.update(
-                """
-                insert into stock_underwriting_contract(
-                    contract_code, corporate_action_id, symbol,
-                    participant_id, account_id,
-                    total_issue_quantity, tradable_allocation_quantity,
-                    locked_allocation_quantity, external_allocation_quantity,
-                    underwritten_quantity, issue_price, underwriting_type,
-                    stabilization_start_date, stabilization_end_date,
-                    stabilization_quantity_limit, stabilization_amount_limit,
-                    status, policy_version, created_at, updated_at
-                ) values (
-                    ?, ?, ?, ?, ?,
-                    ?, ?, ?, 0,
-                    ?, ?, 'FIRM_COMMITMENT',
-                    null, null, 0, 0.00,
-                    'ALLOCATED', 1, ?, ?
-                )
-                """,
-                "INITIAL-ISSUE:" + symbol,
-                corporateActionId,
-                symbol,
-                underwriter.participantId(),
-                underwriterAccountId,
-                issuedShares,
-                allocationPlan.tradableShares(),
-                allocationPlan.lockedShares(),
-                allocationPlan.tradableShares(),
-                issuePrice,
-                now,
-                now
-        );
-        if (contractInserted != 1) {
-            throw new IllegalStateException("Initial underwriting contract creation failed");
-        }
-        long contractId = jdbcClient.sql(
-                        "select id from stock_underwriting_contract where contract_code = ?"
-                )
-                .param("INITIAL-ISSUE:" + symbol)
-                .query(Long.class)
-                .single();
-        insertInitialUnderwritingPolicy(contractId, symbol, now);
         insertInitialHolding(
-                underwriterAccountId,
+                floatCustodyAccountId,
                 symbol,
                 allocationPlan.tradableShares(),
                 issuePrice,
@@ -411,21 +334,21 @@ public class OrderBookInstrumentCommandService {
                 now
         );
         insertSecurityAllocation(
-                "INITIAL_ISSUE:" + symbol + ":UNDERWRITER",
+                "INITIAL_ISSUE:" + symbol + ":FLOAT_CUSTODY",
                 corporateActionId,
-                contractId,
-                underwriterAccountId,
+                null,
+                floatCustodyAccountId,
                 symbol,
                 allocationPlan.tradableShares(),
                 issuePrice,
-                "INITIAL_FLOAT_UNDERWRITER",
+                "INITIAL_FLOAT_CUSTODY",
                 "TRADABLE",
                 now
         );
         insertSecurityAllocation(
                 "INITIAL_ISSUE:" + symbol + ":LOCKED",
                 corporateActionId,
-                contractId,
+                null,
                 lockupCustodyAccountId,
                 symbol,
                 allocationPlan.lockedShares(),
@@ -447,52 +370,6 @@ public class OrderBookInstrumentCommandService {
         if (allocatedQuantity == null || allocatedQuantity != issuedShares) {
             throw new IllegalStateException(
                     "Initial security allocation does not reconcile to issued shares"
-            );
-        }
-    }
-
-    private void insertInitialUnderwritingPolicy(
-            long contractId,
-            String symbol,
-            LocalDateTime now
-    ) {
-        String contractCode = "INITIAL-ISSUE:" + symbol;
-        String configJson = """
-                {
-                  "preset": "SCALED_PASSIVE_UNDERWRITER_SUPPLY_V1",
-                  "contractId": %d,
-                  "contractCode": "%s",
-                  "symbol": "%s",
-                  "status": "ALLOCATED",
-                  "quantityLimit": 0,
-                  "amountLimit": 0.00,
-                  "sellOnly": true,
-                  "passiveOnly": true,
-                  "cancellationRefundsSubmissionBudget": false
-                }
-                """.formatted(contractId, contractCode, symbol).trim();
-        int inserted = jdbcTemplate.update(
-                """
-                insert into stock_market_policy_version(
-                    policy_scope, scope_key, version_no,
-                    effective_business_date, status, config_json,
-                    change_reason, changed_by, created_at, updated_at
-                ) values (
-                    'UNDERWRITING_CONTRACT', ?, 1,
-                    ?, 'ACTIVE', ?,
-                    'Create inactive role-separated underwriting contract',
-                    'SYSTEM_INITIAL_ISSUE', ?, ?
-                )
-                """,
-                contractCode,
-                now.toLocalDate(),
-                configJson,
-                now,
-                now
-        );
-        if (inserted != 1) {
-            throw new IllegalStateException(
-                    "Initial underwriting policy creation failed: " + symbol
             );
         }
     }
@@ -526,14 +403,16 @@ public class OrderBookInstrumentCommandService {
                 ));
     }
 
-    private long createIssuanceLockupCustodyAccount(
+    private long createIssuanceCustodyAccount(
             long participantId,
             String symbol,
+            String userKeyPrefix,
+            String accountCodePrefix,
+            String deskCodePrefix,
             LocalDateTime now
     ) {
-        String userKey = ISSUANCE_LOCKUP_USER_KEY_PREFIX
-                + symbol.toLowerCase(Locale.ROOT);
-        String accountCode = ISSUANCE_LOCKUP_ACCOUNT_CODE_PREFIX + symbol;
+        String userKey = userKeyPrefix + symbol.toLowerCase(Locale.ROOT);
+        String accountCode = accountCodePrefix + symbol;
         int accountInserted = jdbcTemplate.update(
                 """
                 insert into stock_account(
@@ -549,7 +428,7 @@ public class OrderBookInstrumentCommandService {
         );
         if (accountInserted != 1) {
             throw new IllegalStateException(
-                    "Issuance-lockup custody account creation failed: " + symbol
+                    "Issuance custody account creation failed: " + symbol
             );
         }
         long accountId = jdbcClient.sql(
@@ -570,14 +449,14 @@ public class OrderBookInstrumentCommandService {
                         """,
                 participantId,
                 accountId,
-                "ISSUANCE_LOCKUP:" + symbol,
+                deskCodePrefix + symbol,
                 now.toLocalDate(),
                 now,
                 now
         );
         if (mappingInserted != 1) {
             throw new IllegalStateException(
-                    "Issuance-lockup custody mapping creation failed: " + symbol
+                    "Issuance custody mapping creation failed: " + symbol
             );
         }
         return accountId;
@@ -610,7 +489,7 @@ public class OrderBookInstrumentCommandService {
     private void insertSecurityAllocation(
             String idempotencyKey,
             long corporateActionId,
-            long contractId,
+            Long contractId,
             long destinationAccountId,
             String symbol,
             long quantity,

@@ -171,7 +171,7 @@ ON DUPLICATE KEY UPDATE
        price_time = VALUES(price_time),
        provider = VALUES(provider);
 
--- Restore structural opening capital for scaled institution presets. Runtime gains,
+-- Restore structural opening capital for independently provisioned institution portfolios. Runtime gains,
 -- losses, deposits, and order reservations do not survive this reset.
 UPDATE stock_account account
 JOIN stock_institution_portfolio portfolio
@@ -264,6 +264,7 @@ INSERT INTO stock_holding(
 SELECT allocation.destination_account_id,
        allocation.symbol,
        CASE allocation.allocation_reason
+           WHEN 'INITIAL_FLOAT_CUSTODY' THEN instrument.tradable_shares
            WHEN 'INITIAL_FLOAT_UNDERWRITER' THEN instrument.tradable_shares
            WHEN 'INITIAL_LOCKED_CUSTODY' THEN
                instrument.issued_shares - instrument.tradable_shares
@@ -281,9 +282,11 @@ SELECT allocation.destination_account_id,
  WHERE allocation.event_type = 'INITIAL_ISSUE'
    AND allocation.source_account_id IS NULL
    AND allocation.allocation_reason IN (
-       'INITIAL_FLOAT_UNDERWRITER', 'INITIAL_LOCKED_CUSTODY'
+       'INITIAL_FLOAT_CUSTODY', 'INITIAL_FLOAT_UNDERWRITER',
+       'INITIAL_LOCKED_CUSTODY'
    )
    AND CASE allocation.allocation_reason
+           WHEN 'INITIAL_FLOAT_CUSTODY' THEN instrument.tradable_shares
            WHEN 'INITIAL_FLOAT_UNDERWRITER' THEN instrument.tradable_shares
            WHEN 'INITIAL_LOCKED_CUSTODY' THEN
                instrument.issued_shares - instrument.tradable_shares

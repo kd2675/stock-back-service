@@ -610,7 +610,7 @@ public class UnderwritingSupplyTransitionService {
     ) {
         retireExistingPolicyVersions(target.contractCode(), now);
         Map<String, Object> config = new LinkedHashMap<>();
-        config.put("preset", "SCALED_PASSIVE_UNDERWRITER_SUPPLY_V1");
+        config.put("preset", "INDEPENDENT_PASSIVE_UNDERWRITER_SUPPLY_V1");
         config.put("contractId", target.contractId());
         config.put("contractCode", target.contractCode());
         config.put("symbol", target.symbol());

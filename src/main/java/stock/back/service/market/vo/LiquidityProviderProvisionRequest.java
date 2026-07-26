@@ -2,7 +2,7 @@ package stock.back.service.market.vo;
 
 import java.math.BigDecimal;
 
-public record LiquidityProviderScaledProvisionRequest(
+public record LiquidityProviderProvisionRequest(
         Long sourceAccountId,
         BigDecimal referenceDailyVolumeRate,
         BigDecimal seedInventoryRate,
