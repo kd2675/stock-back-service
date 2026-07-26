@@ -28,6 +28,7 @@ import web.common.core.simulation.SimulationClockSnapshot;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class UnderwritingSupplyTransitionServiceTest {
@@ -70,6 +71,9 @@ class UnderwritingSupplyTransitionServiceTest {
         freezeGuard = mock(MarketLedgerFreezeGuard.class);
         when(freezeGuard.acquireJdbcPreOpenMutationPermit(
                 "issue-underwriter scaled supply activation"
+        )).thenReturn(BUSINESS_DATE);
+        when(freezeGuard.acquireJdbcMutationPermit(
+                "issue-underwriter supply emergency suspension"
         )).thenReturn(BUSINESS_DATE);
         service = new UnderwritingSupplyTransitionService(
                 jdbcTemplate,
@@ -305,6 +309,44 @@ class UnderwritingSupplyTransitionServiceTest {
                 """,
                 Integer.class
         )).isEqualTo(2);
+        verify(freezeGuard).acquireJdbcMutationPermit(
+                "issue-underwriter supply emergency suspension"
+        );
+    }
+
+    @Test
+    void suspend_eodFreezeInProgress_leavesContractOrderAndReservationUnchanged() {
+        transactionTemplate.executeWithoutResult(status ->
+                service.activate(401L, null, "stock-admin")
+        );
+        seedOpenSupplyOrderAndBudget();
+        when(freezeGuard.acquireJdbcMutationPermit(
+                "issue-underwriter supply emergency suspension"
+        )).thenThrow(StockException.conflict("ledger freeze is in progress"));
+
+        assertThatThrownBy(() -> transactionTemplate.executeWithoutResult(status ->
+                service.suspend(401L, null, "stock-admin")
+        ))
+                .isInstanceOf(StockException.class)
+                .hasMessageContaining("ledger freeze is in progress");
+
+        assertThat(jdbcTemplate.queryForObject(
+                "select status from stock_underwriting_contract where id = 401",
+                String.class
+        )).isEqualTo("STABILIZING");
+        assertThat(jdbcTemplate.queryForMap(
+                "select status, reserved_cash from stock_order where id = 701"
+        )).containsEntry("status", "PENDING")
+                .containsEntry("reserved_cash", BigDecimal.ZERO.setScale(2));
+        assertThat(jdbcTemplate.queryForObject(
+                """
+                select reserved_quantity
+                  from stock_holding
+                 where account_id = 101
+                   and symbol = 'DEMO001'
+                """,
+                Long.class
+        )).isEqualTo(100L);
     }
 
     @Test

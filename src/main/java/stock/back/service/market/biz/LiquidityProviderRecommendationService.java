@@ -37,33 +37,13 @@ public class LiquidityProviderRecommendationService {
                                market.market_status,
                                case when mandate.id is null then false else true end
                                    as existing_mandate,
-                               case
-                                 when underwriter.account_id is not null
-                                 then underwriter.account_id
-                                 else float_source.account_id
-                               end as source_account_id,
-                               case
-                                 when underwriter.account_id is not null
-                                 then greatest(
-                                     coalesce(underwriter_holding.quantity, 0)
-                                     - coalesce(
-                                         underwriter_holding.reserved_quantity,
-                                         0
-                                     ),
-                                     0
-                                 )
-                                 else greatest(
-                                     coalesce(float_holding.quantity, 0)
-                                     - coalesce(float_holding.reserved_quantity, 0),
-                                     0
-                                 )
-                               end as source_available_quantity,
-                               case
-                                 when underwriter.account_id is not null
-                                   or float_source.account_id is not null
-                                 then true
-                                 else false
-                               end as has_source
+                               eligible_source.account_id as source_account_id,
+                               coalesce(
+                                   eligible_source.available_quantity,
+                                   0
+                               ) as source_available_quantity,
+                               case when eligible_source.account_id is null
+                                   then false else true end as has_source
                           from stock_order_book_instrument instrument
                           join stock_order_book_market_config market
                             on market.symbol = instrument.symbol
@@ -73,35 +53,41 @@ public class LiquidityProviderRecommendationService {
                           left join stock_liquidity_mandate mandate
                             on mandate.symbol = instrument.symbol
                           left join (
-                              select symbol, max(id) as contract_id
-                                from stock_underwriting_contract
-                               where status in (
-                                   'ALLOCATED', 'STABILIZING', 'COMPLETED'
-                               )
-                               group by symbol
-                          ) latest_underwriter
-                            on latest_underwriter.symbol = instrument.symbol
-                          left join stock_underwriting_contract underwriter
-                            on underwriter.id = latest_underwriter.contract_id
-                          left join stock_holding underwriter_holding
-                            on underwriter_holding.account_id = underwriter.account_id
-                           and underwriter_holding.symbol = instrument.symbol
-                          left join (
-                              select allocation.symbol,
-                                     max(allocation.destination_account_id) as account_id
-                                from stock_security_allocation_ledger allocation
+                              select candidate.symbol,
+                                     min(candidate.account_id) as account_id,
+                                     max(
+                                         holding.quantity
+                                         - holding.reserved_quantity
+                                     ) as available_quantity
+                                from (
+                                    select contract.symbol,
+                                           contract.account_id
+                                      from stock_underwriting_contract contract
+                                     where contract.status in (
+                                         'ALLOCATED', 'STABILIZING', 'COMPLETED'
+                                     )
+                                    union
+                                    select allocation.symbol,
+                                           allocation.destination_account_id
+                                      from stock_security_allocation_ledger allocation
+                                     where allocation.allocation_reason =
+                                               'INITIAL_FLOAT_CUSTODY'
+                                       and allocation.tradability_status = 'TRADABLE'
+                                ) candidate
                                 join stock_account source_account
-                                  on source_account.id = allocation.destination_account_id
+                                  on source_account.id = candidate.account_id
                                  and source_account.status = 'ACTIVE'
-                                 and source_account.participant_category = 'SYSTEM_CUSTODY'
-                               where allocation.allocation_reason = 'INITIAL_FLOAT_CUSTODY'
-                                 and allocation.tradability_status = 'TRADABLE'
-                               group by allocation.symbol
-                          ) float_source
-                            on float_source.symbol = instrument.symbol
-                          left join stock_holding float_holding
-                            on float_holding.account_id = float_source.account_id
-                           and float_holding.symbol = instrument.symbol
+                                 and source_account.participant_category in (
+                                     'ISSUE_UNDERWRITER', 'SYSTEM_CUSTODY'
+                                 )
+                                join stock_holding holding
+                                  on holding.account_id = candidate.account_id
+                                 and holding.symbol = candidate.symbol
+                                 and holding.quantity > holding.reserved_quantity
+                               group by candidate.symbol
+                              having count(distinct candidate.account_id) = 1
+                          ) eligible_source
+                            on eligible_source.symbol = instrument.symbol
                          where instrument.enabled = true
                            and instrument.issued_shares > 0
                            and instrument.tradable_shares > 0

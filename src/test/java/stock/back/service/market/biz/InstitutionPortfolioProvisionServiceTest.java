@@ -75,6 +75,9 @@ class InstitutionPortfolioProvisionServiceTest {
         freezeGuard = mock(MarketLedgerFreezeGuard.class);
         when(freezeGuard.acquireJdbcPreOpenMutationPermit("institution portfolio creation"))
                 .thenReturn(BUSINESS_DATE);
+        when(freezeGuard.acquireJdbcMutationPermit(
+                "institution portfolio emergency suspension"
+        )).thenReturn(BUSINESS_DATE);
 
         provisionService = new InstitutionPortfolioProvisionService(
                 jdbcTemplate,
@@ -87,6 +90,7 @@ class InstitutionPortfolioProvisionServiceTest {
                 jdbcTemplate,
                 new ObjectMapper(),
                 simulationClockService,
+                freezeGuard,
                 new MarketRoleOrderCleanupService(jdbcTemplate),
                 transactionManager
         );
@@ -384,6 +388,9 @@ class InstitutionPortfolioProvisionServiceTest {
                 BigDecimal.class,
                 accountId
         )).isEqualByComparingTo("6000000.00");
+        verify(freezeGuard, times(2)).acquireJdbcMutationPermit(
+                "institution portfolio emergency suspension"
+        );
     }
 
     @Test
@@ -413,6 +420,7 @@ class InstitutionPortfolioProvisionServiceTest {
                         jdbcTemplate,
                         new ObjectMapper(),
                         simulationClockService,
+                        freezeGuard,
                         failingCleanup,
                         transactionManager
                 );
@@ -457,6 +465,47 @@ class InstitutionPortfolioProvisionServiceTest {
                 """,
                 Integer.class
         )).isZero();
+    }
+
+    @Test
+    void suspendLive_eodFreezeInProgress_leavesPortfolioAndIntentUnchanged() {
+        createDefaultPortfolio();
+        long portfolioId = portfolioId("INST_PENSION");
+        LocalDateTime emergencyStopNow = BUSINESS_DATE.atTime(6, 30);
+        long decisionRunId = insertPendingLiveIntent(portfolioId, emergencyStopNow);
+        when(simulationClockService.currentSnapshot())
+                .thenReturn(clockSnapshot(emergencyStopNow, true));
+        when(freezeGuard.acquireJdbcMutationPermit(
+                "institution portfolio emergency suspension"
+        )).thenThrow(StockException.conflict("ledger freeze is in progress"));
+
+        assertThatThrownBy(() -> emergencyStopService.suspend(
+                portfolioId,
+                new InstitutionSuspensionRequest("동결 중 중단 요청"),
+                "stock-admin"
+        ))
+                .isInstanceOf(StockException.class)
+                .hasMessageContaining("ledger freeze is in progress");
+
+        assertThat(jdbcTemplate.queryForMap(
+                """
+                select status, policy_version
+                  from stock_institution_portfolio
+                 where id = ?
+                """,
+                portfolioId
+        )).containsEntry("status", "ACTIVE")
+                .containsEntry("policy_version", 1L);
+        assertThat(jdbcTemplate.queryForMap(
+                """
+                select status, submission_reason
+                  from stock_institution_order_intent
+                 where decision_run_id = ?
+                   and symbol = 'DEMO002'
+                """,
+                decisionRunId
+        )).containsEntry("status", "PENDING")
+                .containsEntry("submission_reason", null);
     }
 
     private void createDefaultPortfolio() {

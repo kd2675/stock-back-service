@@ -7,6 +7,8 @@ import javax.sql.DataSource;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
@@ -90,6 +92,34 @@ class MarketLedgerFreezeGuardTest {
         assertThatCode(() -> transactionTemplate.executeWithoutResult(
                 status -> guard.acquireMutationPermit("cash adjustment")
         )).doesNotThrowAnyException();
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "CLOSE_REQUESTED",
+            "ORDER_ENTRY_CLOSED",
+            "EXECUTION_DRAINED"
+    })
+    void acquireJdbcMutationPermit_closeFreezePhase_rejectsBeforeJdbcMutation(String phase) {
+        insertCycle(phase, "RUNNING");
+
+        assertThatThrownBy(() -> transactionTemplate.executeWithoutResult(
+                status -> guard.acquireJdbcMutationPermit("market-role emergency suspension")
+        ))
+                .isInstanceOf(StockException.class)
+                .hasMessageContaining("ledger freeze is in progress");
+    }
+
+    @Test
+    void acquireJdbcMutationPermit_withoutFreeze_returnsLockedActiveBusinessDate() {
+        LocalDate activeBusinessDate = transactionTemplate.execute(
+                status -> guard.acquireJdbcMutationPermit(
+                        "market-role emergency suspension"
+                )
+        );
+
+        org.assertj.core.api.Assertions.assertThat(activeBusinessDate)
+                .isEqualTo(LocalDate.of(2026, 7, 3));
     }
 
     @Test

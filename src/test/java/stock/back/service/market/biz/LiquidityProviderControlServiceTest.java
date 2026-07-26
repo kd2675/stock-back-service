@@ -20,12 +20,15 @@ import org.springframework.jdbc.datasource.SingleConnectionDataSource;
 import org.springframework.jdbc.datasource.init.ResourceDatabasePopulator;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import stock.back.service.common.exception.StockException;
 import stock.back.service.market.vo.LiquidityProviderPolicyUpdateRequest;
 import stock.back.service.market.vo.LiquidityProviderStatusChangeRequest;
 import web.common.core.simulation.SimulationClockSnapshot;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class LiquidityProviderControlServiceTest {
@@ -35,6 +38,7 @@ class LiquidityProviderControlServiceTest {
 
     private JdbcTemplate jdbcTemplate;
     private TransactionTemplate transactionTemplate;
+    private MarketLedgerFreezeGuard freezeGuard;
     private LiquidityProviderControlService service;
 
     @BeforeEach
@@ -56,7 +60,10 @@ class LiquidityProviderControlServiceTest {
         when(simulationClockService.currentSnapshot()).thenReturn(clockSnapshot(PRE_OPEN));
         SimulationMarketSessionService marketSessionService =
                 new SimulationMarketSessionService(simulationClockService, "06:00", "18:00");
-        MarketLedgerFreezeGuard freezeGuard = mock(MarketLedgerFreezeGuard.class);
+        freezeGuard = mock(MarketLedgerFreezeGuard.class);
+        when(freezeGuard.acquireJdbcMutationPermit(
+                "liquidity-provider emergency suspension"
+        )).thenReturn(BUSINESS_DATE);
         when(freezeGuard.acquireJdbcPreOpenMutationPermit(
                 "liquidity-provider policy update"
         )).thenReturn(BUSINESS_DATE);
@@ -73,6 +80,114 @@ class LiquidityProviderControlServiceTest {
                 new MarketRoleOrderCleanupService(jdbcTemplate)
         );
         seedMandate();
+    }
+
+    @Test
+    void suspend_eodFreezeInProgress_leavesPolicyOrdersAndReservationsUnchanged() {
+        seedOpenOrders();
+        when(freezeGuard.acquireJdbcMutationPermit(
+                "liquidity-provider emergency suspension"
+        )).thenThrow(StockException.conflict("ledger freeze is in progress"));
+
+        assertThatThrownBy(() -> transactionTemplate.executeWithoutResult(ignored ->
+                service.suspend(
+                        "DEMO001",
+                        new LiquidityProviderStatusChangeRequest("동결 중 중단 요청"),
+                        "stock-admin"
+                )
+        ))
+                .isInstanceOf(StockException.class)
+                .hasMessageContaining("ledger freeze is in progress");
+
+        assertThat(jdbcTemplate.queryForMap(
+                "select status, policy_version from stock_liquidity_mandate where id = 1"
+        )).containsEntry("status", "ACTIVE")
+                .containsEntry("policy_version", 3L);
+        assertThat(jdbcTemplate.queryForObject(
+                """
+                select count(*)
+                  from stock_order
+                 where account_id = 101
+                   and status = 'PENDING'
+                """,
+                Long.class
+        )).isEqualTo(2L);
+        assertThat(jdbcTemplate.queryForObject(
+                "select cash_balance from stock_account where id = 101",
+                BigDecimal.class
+        )).isEqualByComparingTo("499000.00");
+        assertThat(jdbcTemplate.queryForObject(
+                """
+                select reserved_quantity
+                  from stock_holding
+                 where account_id = 101
+                   and symbol = 'DEMO001'
+                """,
+                Long.class
+        )).isEqualTo(20L);
+    }
+
+    @Test
+    void resume_suspendedUnusedPreOpen_reactivatesMandateAndAuditState() {
+        jdbcTemplate.update(
+                """
+                update stock_liquidity_mandate
+                   set status = 'SUSPENDED',
+                       next_quote_at = null
+                 where id = 1
+                """
+        );
+        jdbcTemplate.update(
+                """
+                update stock_liquidity_daily_state
+                   set submitted_buy_quantity = 0,
+                       submitted_sell_quantity = 0,
+                       executed_buy_quantity = 0,
+                       executed_sell_quantity = 0
+                 where simulation_trade_date = ?
+                   and mandate_id = 1
+                """,
+                BUSINESS_DATE
+        );
+
+        transactionTemplate.executeWithoutResult(ignored ->
+                service.resume(
+                        "DEMO001",
+                        new LiquidityProviderStatusChangeRequest("장전 운영 재개"),
+                        "stock-admin"
+                )
+        );
+
+        assertThat(jdbcTemplate.queryForMap(
+                """
+                select status, policy_version, next_quote_at
+                  from stock_liquidity_mandate
+                 where id = 1
+                """
+        )).containsEntry("status", "ACTIVE")
+                .containsEntry("policy_version", 4L)
+                .containsEntry(
+                        "next_quote_at",
+                        java.sql.Timestamp.valueOf(BUSINESS_DATE.atTime(6, 0))
+                );
+        assertThat(jdbcTemplate.queryForMap(
+                """
+                select state_status, gate_reason, policy_version
+                  from stock_liquidity_daily_state
+                 where simulation_trade_date = ?
+                   and mandate_id = 1
+                """,
+                BUSINESS_DATE
+        )).containsEntry("state_status", "EXEMPT")
+                .containsEntry("gate_reason", "ADMIN_RESUMED_PREOPEN")
+                .containsEntry("policy_version", 4L);
+        assertThat(jdbcTemplate.queryForMap(
+                "select stage, policy_version from stock_liquidity_transition where mandate_id = 1"
+        )).containsEntry("stage", "LIVE_ACTIVE")
+                .containsEntry("policy_version", 4L);
+        verify(freezeGuard).acquireJdbcPreOpenMutationPermit(
+                "liquidity-provider resume"
+        );
     }
 
     @Test

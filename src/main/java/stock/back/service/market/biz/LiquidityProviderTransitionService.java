@@ -469,6 +469,9 @@ public class LiquidityProviderTransitionService {
                           join stock_account account
                             on account.id = candidate.account_id
                            and account.status = 'ACTIVE'
+                           and account.participant_category in (
+                               'ISSUE_UNDERWRITER', 'SYSTEM_CUSTODY'
+                           )
                           join stock_holding holding
                             on holding.account_id = candidate.account_id
                            and holding.symbol = ?

@@ -177,6 +177,91 @@ class LiquidityProviderMandateQueryServiceTest {
         assertThat(mandate.account().unmanagedHoldingCount()).isEqualTo(1L);
     }
 
+    @Test
+    void getMandates_roleDeskSymbolMismatch_matchesBatchEligibility() {
+        jdbcTemplate.update(
+                """
+                update stock_market_participant_account
+                   set desk_code = 'DEMO999'
+                 where participant_id = 11
+                   and account_id = 101
+                """
+        );
+
+        LiquidityProviderMandateResponse mandate = service.getMandates().getFirst();
+
+        assertThat(mandate.roleEligible()).isFalse();
+        assertThat(mandate.roleEligibilityIssue())
+                .isEqualTo("ROLE_DESK_SYMBOL_MISMATCH");
+    }
+
+    @Test
+    void getMandates_lpOrderWithoutMatchingStrategyOrigin_marksAccountIneligible() {
+        jdbcTemplate.update(
+                """
+                insert into stock_order(
+                    client_order_id, account_id, origin_type, self_trade_group_id,
+                    symbol, market_type, side, order_type, status, limit_price,
+                    quantity, filled_quantity, reserved_cash,
+                    created_at, updated_at
+                ) values (
+                    'lp-without-strategy-origin', 101, 'LIQUIDITY_PROVIDER', 'LP:ONE',
+                    'DEMO001', 'ORDER_BOOK', 'BUY', 'LIMIT', 'PENDING', 119,
+                    10, 0, 1190, ?, ?
+                )
+                """,
+                NOW,
+                NOW
+        );
+
+        LiquidityProviderMandateResponse mandate = service.getMandates().getFirst();
+
+        assertThat(mandate.roleEligible()).isFalse();
+        assertThat(mandate.roleEligibilityIssue())
+                .isEqualTo("NON_LP_OPEN_ORDER_ON_DEDICATED_ACCOUNT");
+        assertThat(mandate.account().nonLiquidityOpenOrderCount()).isEqualTo(1L);
+    }
+
+    @Test
+    void getMandates_lpOrderWithMatchingStrategyOrigin_remainsEligible() {
+        jdbcTemplate.update(
+                """
+                insert into stock_order(
+                    client_order_id, account_id, origin_type, self_trade_group_id,
+                    symbol, market_type, side, order_type, status, limit_price,
+                    quantity, filled_quantity, reserved_cash,
+                    created_at, updated_at
+                ) values (
+                    'lp-with-strategy-origin', 101, 'LIQUIDITY_PROVIDER', 'LP:ONE',
+                    'DEMO001', 'ORDER_BOOK', 'BUY', 'LIMIT', 'PENDING', 119,
+                    10, 0, 1190, ?, ?
+                )
+                """,
+                NOW,
+                NOW
+        );
+        Long orderId = jdbcTemplate.queryForObject(
+                "select id from stock_order where client_order_id = 'lp-with-strategy-origin'",
+                Long.class
+        );
+        jdbcTemplate.update(
+                """
+                insert into stock_order_strategy_origin(
+                    order_id, origin_type, participant_id,
+                    liquidity_mandate_id, policy_version, created_at
+                ) values (?, 'LIQUIDITY_PROVIDER', 11, 1, 3, ?)
+                """,
+                orderId,
+                NOW
+        );
+
+        LiquidityProviderMandateResponse mandate = service.getMandates().getFirst();
+
+        assertThat(mandate.roleEligible()).isTrue();
+        assertThat(mandate.roleEligibilityIssue()).isNull();
+        assertThat(mandate.account().nonLiquidityOpenOrderCount()).isZero();
+    }
+
     private void seedLiquidityMandate() {
         jdbcTemplate.update(
                 """

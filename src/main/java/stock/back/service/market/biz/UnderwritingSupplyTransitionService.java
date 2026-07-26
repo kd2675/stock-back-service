@@ -186,6 +186,9 @@ public class UnderwritingSupplyTransitionService {
     ) {
         requirePositiveContractId(contractId);
         SimulationClockSnapshot clock = simulationClockService.currentSnapshot();
+        LocalDate businessDate = marketLedgerFreezeGuard.acquireJdbcMutationPermit(
+                "issue-underwriter supply emergency suspension"
+        );
         ContractTarget target = lockContract(contractId);
         if ("ALLOCATED".equals(target.status())) {
             return;
@@ -195,7 +198,7 @@ public class UnderwritingSupplyTransitionService {
                     "Only an active issue-underwriter supply contract can be suspended"
             );
         }
-        RoleSnapshot role = lockRoleSnapshot(target, clock.simulationDate());
+        RoleSnapshot role = lockRoleSnapshot(target, businessDate);
         validateDedicatedRole(role);
 
         LocalDateTime now = clock.simulationDateTime();
@@ -224,7 +227,7 @@ public class UnderwritingSupplyTransitionService {
         );
         markDailyStateSuspended(
                 contractId,
-                clock.simulationDate(),
+                businessDate,
                 cancelledOrderCount,
                 nextPolicyVersion,
                 now
@@ -232,7 +235,7 @@ public class UnderwritingSupplyTransitionService {
         insertPolicyVersion(
                 target,
                 nextPolicyVersion,
-                clock.simulationDate(),
+                businessDate,
                 "ALLOCATED",
                 null,
                 null,

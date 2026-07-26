@@ -81,6 +81,7 @@ public class LiquidityProviderMandateQueryService {
                                account.self_trade_group_id as account_self_trade_group_id,
                                account.cash_balance,
                                role_mapping.account_role,
+                               role_mapping.desk_code as role_desk_code,
                                role_mapping.status as role_mapping_status,
                                role_mapping.effective_from as role_effective_from,
                                role_mapping.effective_to as role_effective_to,
@@ -100,6 +101,19 @@ public class LiquidityProviderMandateQueryService {
                                           or open_order.symbol <> mandate.symbol
                                           or open_order.market_type <> 'ORDER_BOOK'
                                           or open_order.order_type <> 'LIMIT'
+                                          or not exists (
+                                              select 1
+                                                from stock_order_strategy_origin strategy_origin
+                                               where strategy_origin.order_id = open_order.id
+                                                 and strategy_origin.origin_type =
+                                                     'LIQUIDITY_PROVIDER'
+                                                 and strategy_origin.participant_id =
+                                                     mandate.participant_id
+                                                 and strategy_origin.liquidity_mandate_id =
+                                                     mandate.id
+                                                 and strategy_origin.policy_version =
+                                                     mandate.policy_version
+                                          )
                                       )
                                ) as non_liquidity_open_order_count,
                                (
@@ -405,6 +419,9 @@ public class LiquidityProviderMandateQueryService {
                 || tradeDate.isBefore(effectiveFrom)
                 || (effectiveTo != null && tradeDate.isAfter(effectiveTo))) {
             return "ROLE_MAPPING_NOT_EFFECTIVE";
+        }
+        if (!rs.getString("symbol").equals(rs.getString("role_desk_code"))) {
+            return "ROLE_DESK_SYMBOL_MISMATCH";
         }
         String accountGroup = rs.getString("account_self_trade_group_id");
         String participantGroup = rs.getString("participant_self_trade_group_id");

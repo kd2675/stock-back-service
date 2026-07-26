@@ -174,6 +174,9 @@ public class LiquidityProviderControlService {
     ) {
         String normalizedSymbol = requireSymbol(symbol);
         SimulationClockSnapshot clock = simulationClockService.currentSnapshot();
+        LocalDate businessDate = marketLedgerFreezeGuard.acquireJdbcMutationPermit(
+                "liquidity-provider emergency suspension"
+        );
         MandateTarget target = lockMandate(normalizedSymbol);
         if ("SUSPENDED".equals(target.status())) {
             marketRoleOrderCleanupService.cancelOpenOrderBookOrders(
@@ -220,7 +223,7 @@ public class LiquidityProviderControlService {
         );
         markDailyStateSuspended(
                 target.mandateId(),
-                clock.simulationDate(),
+                businessDate,
                 openQuantity,
                 nextPolicyVersion,
                 now
@@ -236,7 +239,7 @@ public class LiquidityProviderControlService {
                 target,
                 target.policy(),
                 nextPolicyVersion,
-                clock.simulationDate(),
+                businessDate,
                 "SUSPENDED",
                 normalizeReason(
                         request == null ? null : request.changeReason(),
@@ -488,6 +491,7 @@ public class LiquidityProviderControlService {
                                and participant.self_trade_group_id = ?
                                and mapping.status = 'ACTIVE'
                                and mapping.account_role = 'LIQUIDITY_PROVIDER'
+                               and mapping.desk_code = mandate.symbol
                                and mapping.effective_from <= ?
                                and (
                                    mapping.effective_to is null

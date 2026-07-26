@@ -70,6 +70,17 @@ public class MarketLedgerFreezeGuard {
             transactionManager = "pubJdbcTransactionManager",
             propagation = Propagation.MANDATORY
     )
+    public LocalDate acquireJdbcMutationPermit(String operation) {
+        MarketBusinessState businessState = lockBusinessState();
+        LocalDate activeBusinessDate = businessState.activeBusinessDate();
+        requireFreezeCompleted(activeBusinessDate, operation);
+        return activeBusinessDate;
+    }
+
+    @Transactional(
+            transactionManager = "pubJdbcTransactionManager",
+            propagation = Propagation.MANDATORY
+    )
     public LocalDate acquireJdbcPreOpenMutationPermit(String operation) {
         MarketBusinessState businessState = lockBusinessState();
         requireFreezeCompleted(businessState.activeBusinessDate(), operation);

@@ -26,6 +26,7 @@ public class InstitutionEmergencyStopService {
     private final JdbcClient jdbcClient;
     private final ObjectMapper objectMapper;
     private final SimulationClockService simulationClockService;
+    private final MarketLedgerFreezeGuard marketLedgerFreezeGuard;
     private final MarketRoleOrderCleanupService marketRoleOrderCleanupService;
     private final TransactionTemplate transactionTemplate;
 
@@ -33,6 +34,7 @@ public class InstitutionEmergencyStopService {
             JdbcTemplate jdbcTemplate,
             ObjectMapper objectMapper,
             SimulationClockService simulationClockService,
+            MarketLedgerFreezeGuard marketLedgerFreezeGuard,
             MarketRoleOrderCleanupService marketRoleOrderCleanupService,
             @Qualifier("pubJdbcTransactionManager")
             PlatformTransactionManager transactionManager
@@ -41,6 +43,7 @@ public class InstitutionEmergencyStopService {
         this.jdbcClient = JdbcClient.create(jdbcTemplate);
         this.objectMapper = objectMapper;
         this.simulationClockService = simulationClockService;
+        this.marketLedgerFreezeGuard = marketLedgerFreezeGuard;
         this.marketRoleOrderCleanupService = marketRoleOrderCleanupService;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
     }
@@ -57,12 +60,15 @@ public class InstitutionEmergencyStopService {
         String reason = normalizeReason(request);
         String actor = normalizeChangedBy(changedBy);
         transactionTemplate.executeWithoutResult(status -> {
+            LocalDate businessDate = marketLedgerFreezeGuard.acquireJdbcMutationPermit(
+                    "institution portfolio emergency suspension"
+            );
             // The batch execution path locks intent rows before joining the portfolio/account.
             // Keep the emergency path in the same order to avoid an intent <-> portfolio deadlock.
             rejectPendingIntents(portfolioId, reason, clock.simulationDateTime());
             SuspensionTarget target = suspendPortfolio(
                     portfolioId,
-                    clock.simulationDate(),
+                    businessDate,
                     clock.simulationDateTime(),
                     reason,
                     actor

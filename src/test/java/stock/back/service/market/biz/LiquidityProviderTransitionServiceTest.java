@@ -245,6 +245,43 @@ class LiquidityProviderTransitionServiceTest {
     }
 
     @Test
+    void recommendation_inactiveIssueAccount_doesNotOfferUnusableSource() {
+        jdbcTemplate.update(
+                "update stock_account set status = 'CLOSED' where id = 100"
+        );
+
+        var recommendation = recommendationService.getRecommendation();
+
+        assertThat(recommendation.symbols()).singleElement().satisfies(symbol -> {
+            assertThat(symbol.recommendedSourceAccountId()).isNull();
+            assertThat(symbol.sourceAvailableQuantity()).isZero();
+            assertThat(symbol.creationEligible()).isFalse();
+            assertThat(symbol.eligibilityReason())
+                    .isEqualTo("SOURCE_ACCOUNT_REQUIRED");
+        });
+    }
+
+    @Test
+    void recommendation_wrongSourceRole_doesNotOfferUnusableSource() {
+        jdbcTemplate.update(
+                """
+                update stock_account
+                   set participant_category = 'MANUAL_PARTICIPANT'
+                 where id = 100
+                """
+        );
+
+        var recommendation = recommendationService.getRecommendation();
+
+        assertThat(recommendation.symbols()).singleElement().satisfies(symbol -> {
+            assertThat(symbol.recommendedSourceAccountId()).isNull();
+            assertThat(symbol.creationEligible()).isFalse();
+            assertThat(symbol.eligibilityReason())
+                    .isEqualTo("SOURCE_ACCOUNT_REQUIRED");
+        });
+    }
+
+    @Test
     void provisionLive_participantSelfTradeGroupMismatch_rollsBackProvisioning() {
         jdbcTemplate.update(
                 """
