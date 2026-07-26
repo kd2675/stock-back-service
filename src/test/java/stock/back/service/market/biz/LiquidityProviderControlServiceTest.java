@@ -39,6 +39,7 @@ class LiquidityProviderControlServiceTest {
     private JdbcTemplate jdbcTemplate;
     private TransactionTemplate transactionTemplate;
     private MarketLedgerFreezeGuard freezeGuard;
+    private SimulationClockService simulationClockService;
     private LiquidityProviderControlService service;
 
     @BeforeEach
@@ -56,7 +57,7 @@ class LiquidityProviderControlServiceTest {
                 new DataSourceTransactionManager(dataSource)
         );
 
-        SimulationClockService simulationClockService = mock(SimulationClockService.class);
+        simulationClockService = mock(SimulationClockService.class);
         when(simulationClockService.currentSnapshot()).thenReturn(clockSnapshot(PRE_OPEN));
         SimulationMarketSessionService marketSessionService =
                 new SimulationMarketSessionService(simulationClockService, "06:00", "18:00");
@@ -64,8 +65,8 @@ class LiquidityProviderControlServiceTest {
         when(freezeGuard.acquireJdbcMutationPermit(
                 "liquidity-provider emergency suspension"
         )).thenReturn(BUSINESS_DATE);
-        when(freezeGuard.acquireJdbcPreOpenMutationPermit(
-                "liquidity-provider policy update"
+        when(freezeGuard.acquireJdbcMutationPermit(
+                "liquidity-provider policy scheduling"
         )).thenReturn(BUSINESS_DATE);
         when(freezeGuard.acquireJdbcPreOpenMutationPermit(
                 "liquidity-provider resume"
@@ -263,14 +264,20 @@ class LiquidityProviderControlServiceTest {
     }
 
     @Test
-    void updatePolicy_suspendedUnusedPreOpen_updatesInventoryAndRiskControls() {
-        jdbcTemplate.update("""
-                update stock_liquidity_mandate
-                   set status = 'SUSPENDED',
-                       next_quote_at = null
-                 where id = 1
-                """);
-
+    void updatePolicy_activeUsedRegularSession_schedulesNextPolicyWithoutChangingCurrentState() {
+        when(simulationClockService.currentSnapshot()).thenReturn(
+                clockSnapshot(BUSINESS_DATE.atTime(12, 0), true)
+        );
+        jdbcTemplate.update(
+                """
+                update stock_liquidity_daily_state
+                   set submitted_buy_quantity = 100,
+                       executed_buy_quantity = 50
+                 where simulation_trade_date = ?
+                   and mandate_id = 1
+                """,
+                BUSINESS_DATE
+        );
         LiquidityProviderPolicyUpdateRequest request =
                 new LiquidityProviderPolicyUpdateRequest(
                         3,
@@ -310,27 +317,215 @@ class LiquidityProviderControlServiceTest {
                   from stock_liquidity_mandate
                  where id = 1
                 """
-        )).containsEntry("status", "SUSPENDED")
-                .containsEntry("target_spread_ticks", 3)
-                .containsEntry("max_spread_ticks", 10)
-                .containsEntry("max_order_quantity", 150L)
-                .containsEntry("reference_daily_volume", 30_000L)
-                .containsEntry("target_inventory_quantity", 1_200L)
-                .containsEntry("inventory_band_quantity", 300L)
-                .containsEntry("daily_loss_limit_amount", new BigDecimal("5000.00"))
+        )).containsEntry("status", "ACTIVE")
+                .containsEntry("target_spread_ticks", 4)
+                .containsEntry("max_spread_ticks", 12)
+                .containsEntry("max_order_quantity", 100L)
+                .containsEntry("reference_daily_volume", 20_000L)
+                .containsEntry("target_inventory_quantity", 1_000L)
+                .containsEntry("inventory_band_quantity", 200L)
+                .containsEntry("daily_loss_limit_amount", new BigDecimal("10000.00"))
                 .containsEntry("passive_only", true)
-                .containsEntry("policy_version", 4L);
+                .containsEntry("policy_version", 3L);
         assertThat(jdbcTemplate.queryForMap(
                 """
-                select state_status, gate_reason, policy_version
+                select version_no, effective_business_date, status,
+                       change_reason, changed_by
+                  from stock_market_policy_version
+                 where policy_scope = 'LIQUIDITY_MANDATE'
+                   and scope_key = 'DEMO001'
+                   and status = 'SCHEDULED'
+                """
+        )).containsEntry("version_no", 4L)
+                .containsEntry(
+                        "effective_business_date",
+                        java.sql.Date.valueOf(BUSINESS_DATE.plusDays(1))
+                )
+                .containsEntry("status", "SCHEDULED")
+                .containsEntry("change_reason", "재고 밴드 조정")
+                .containsEntry("changed_by", "stock-admin");
+        assertThat(jdbcTemplate.queryForObject(
+                """
+                select config_json
+                  from stock_market_policy_version
+                 where policy_scope = 'LIQUIDITY_MANDATE'
+                   and scope_key = 'DEMO001'
+                   and status = 'SCHEDULED'
+                """,
+                String.class
+        )).contains("\"referenceDailyVolume\":30000");
+        assertThat(jdbcTemplate.queryForMap(
+                """
+                select submitted_buy_quantity, executed_buy_quantity,
+                       state_status, gate_reason, policy_version
                   from stock_liquidity_daily_state
                  where simulation_trade_date = ?
                    and mandate_id = 1
                 """,
                 BUSINESS_DATE
-        )).containsEntry("state_status", "EXEMPT")
-                .containsEntry("gate_reason", "POLICY_UPDATED_PREOPEN")
-                .containsEntry("policy_version", 4L);
+        )).containsEntry("submitted_buy_quantity", 100L)
+                .containsEntry("executed_buy_quantity", 50L)
+                .containsEntry("state_status", "QUOTING")
+                .containsEntry("gate_reason", "WITHIN_LIMITS")
+                .containsEntry("policy_version", 3L);
+        verify(freezeGuard).acquireJdbcMutationPermit(
+                "liquidity-provider policy scheduling"
+        );
+    }
+
+    @Test
+    void updatePolicy_existingSchedule_replacesDraftWithoutAddingAnotherVersion() {
+        LiquidityProviderPolicyUpdateRequest request =
+                new LiquidityProviderPolicyUpdateRequest(
+                        3, 10, 150L, 30_000L,
+                        new BigDecimal("0.040000"),
+                        new BigDecimal("0.070000"),
+                        new BigDecimal("0.005000"),
+                        5,
+                        new BigDecimal("0.080000"),
+                        new BigDecimal("0.080000"),
+                        new BigDecimal("2.0000"),
+                        1_200L, 300L, 4, 5, 1,
+                        60, 3, 600, 30,
+                        new BigDecimal("5000.00"),
+                        "첫 예약"
+                );
+        transactionTemplate.executeWithoutResult(ignored ->
+                service.updatePolicy("DEMO001", request, "stock-admin")
+        );
+        LiquidityProviderPolicyUpdateRequest replacement =
+                new LiquidityProviderPolicyUpdateRequest(
+                        5, 12, 100L, 25_000L,
+                        new BigDecimal("0.030000"),
+                        new BigDecimal("0.060000"),
+                        new BigDecimal("0.004000"),
+                        4,
+                        new BigDecimal("0.070000"),
+                        new BigDecimal("0.070000"),
+                        new BigDecimal("1.5000"),
+                        900L, 250L, 3, 4, 1,
+                        90, 4, 900, 45,
+                        new BigDecimal("4000.00"),
+                        "예약 교체"
+                );
+
+        transactionTemplate.executeWithoutResult(ignored ->
+                service.updatePolicy("DEMO001", replacement, "stock-admin-2")
+        );
+
+        assertThat(jdbcTemplate.queryForObject(
+                """
+                select count(*)
+                  from stock_market_policy_version
+                 where policy_scope = 'LIQUIDITY_MANDATE'
+                   and scope_key = 'DEMO001'
+                   and status = 'SCHEDULED'
+                """,
+                Long.class
+        )).isOne();
+        assertThat(jdbcTemplate.queryForMap(
+                """
+                select version_no, change_reason, changed_by, config_json
+                  from stock_market_policy_version
+                 where policy_scope = 'LIQUIDITY_MANDATE'
+                   and scope_key = 'DEMO001'
+                   and status = 'SCHEDULED'
+                """
+        )).containsEntry("version_no", 4L)
+                .containsEntry("change_reason", "예약 교체")
+                .containsEntry("changed_by", "stock-admin-2");
+        assertThat(jdbcTemplate.queryForObject(
+                """
+                select config_json
+                  from stock_market_policy_version
+                 where policy_scope = 'LIQUIDITY_MANDATE'
+                   and scope_key = 'DEMO001'
+                   and status = 'SCHEDULED'
+                """,
+                String.class
+        )).contains("\"referenceDailyVolume\":25000");
+    }
+
+    @Test
+    void scheduledPolicy_suspendAndResume_rebasesPendingVersionWithoutLosingDraft() {
+        LiquidityProviderPolicyUpdateRequest request =
+                new LiquidityProviderPolicyUpdateRequest(
+                        3, 10, 150L, 30_000L,
+                        new BigDecimal("0.040000"),
+                        new BigDecimal("0.070000"),
+                        new BigDecimal("0.005000"),
+                        5,
+                        new BigDecimal("0.080000"),
+                        new BigDecimal("0.080000"),
+                        new BigDecimal("2.0000"),
+                        1_200L, 300L, 4, 5, 1,
+                        60, 3, 600, 30,
+                        new BigDecimal("5000.00"),
+                        "다음 장 정책"
+                );
+        transactionTemplate.executeWithoutResult(ignored ->
+                service.updatePolicy("DEMO001", request, "stock-admin")
+        );
+
+        transactionTemplate.executeWithoutResult(ignored ->
+                service.suspend(
+                        "DEMO001",
+                        new LiquidityProviderStatusChangeRequest("일시 중단"),
+                        "stock-admin"
+                )
+        );
+        transactionTemplate.executeWithoutResult(ignored ->
+                service.resume(
+                        "DEMO001",
+                        new LiquidityProviderStatusChangeRequest("장전 재개"),
+                        "stock-admin"
+                )
+        );
+
+        assertThat(jdbcTemplate.queryForMap(
+                """
+                select status, policy_version
+                  from stock_liquidity_mandate
+                 where id = 1
+                """
+        )).containsEntry("status", "ACTIVE")
+                .containsEntry("policy_version", 5L);
+        assertThat(jdbcTemplate.queryForMap(
+                """
+                select version_no, effective_business_date,
+                       change_reason, changed_by, config_json
+                  from stock_market_policy_version
+                 where policy_scope = 'LIQUIDITY_MANDATE'
+                   and scope_key = 'DEMO001'
+                   and status = 'SCHEDULED'
+                """
+        )).containsEntry("version_no", 6L)
+                .containsEntry(
+                        "effective_business_date",
+                        java.sql.Date.valueOf(BUSINESS_DATE)
+                )
+                .containsEntry("change_reason", "다음 장 정책")
+                .containsEntry("changed_by", "stock-admin");
+        assertThat(jdbcTemplate.queryForObject(
+                """
+                select config_json
+                  from stock_market_policy_version
+                 where policy_scope = 'LIQUIDITY_MANDATE'
+                   and scope_key = 'DEMO001'
+                   and status = 'SCHEDULED'
+                """,
+                String.class
+        )).contains("\"referenceDailyVolume\":30000");
+        assertThat(jdbcTemplate.queryForObject(
+                """
+                select count(*)
+                  from stock_market_policy_version
+                 where policy_scope = 'LIQUIDITY_MANDATE'
+                   and scope_key = 'DEMO001'
+                   and status = 'ACTIVE'
+                """,
+                Long.class
+        )).isOne();
     }
 
     private void seedMandate() {
@@ -526,6 +721,13 @@ class LiquidityProviderControlServiceTest {
     }
 
     private SimulationClockSnapshot clockSnapshot(LocalDateTime dateTime) {
+        return clockSnapshot(dateTime, false);
+    }
+
+    private SimulationClockSnapshot clockSnapshot(
+            LocalDateTime dateTime,
+            boolean running
+    ) {
         return new SimulationClockSnapshot(
                 BUSINESS_DATE,
                 dateTime,
@@ -533,7 +735,7 @@ class LiquidityProviderControlServiceTest {
                 dateTime,
                 BUSINESS_DATE.atStartOfDay(),
                 7_200,
-                false,
+                running,
                 false,
                 0L,
                 null,

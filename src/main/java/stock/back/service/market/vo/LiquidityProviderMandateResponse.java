@@ -19,6 +19,7 @@ public record LiquidityProviderMandateResponse(
         String roleEligibilityIssue,
         Account account,
         Policy policy,
+        ScheduledPolicy scheduledPolicy,
         DailyState dailyState,
         Transition transition
 ) {
@@ -75,6 +76,16 @@ public record LiquidityProviderMandateResponse(
             int orderTtlSeconds,
             int quoteIntervalSeconds,
             BigDecimal dailyLossLimitAmount
+    ) {
+    }
+
+    public record ScheduledPolicy(
+            long policyVersion,
+            LocalDate effectiveBusinessDate,
+            Policy policy,
+            String changeReason,
+            String changedBy,
+            LocalDateTime updatedAt
     ) {
     }
 

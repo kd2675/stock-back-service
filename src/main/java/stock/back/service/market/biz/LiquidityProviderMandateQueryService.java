@@ -1,5 +1,9 @@
 package stock.back.service.market.biz;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.sql.ResultSet;
@@ -22,13 +26,16 @@ public class LiquidityProviderMandateQueryService {
 
     private final JdbcClient jdbcClient;
     private final SimulationClockService simulationClockService;
+    private final ObjectMapper objectMapper;
 
     public LiquidityProviderMandateQueryService(
             JdbcClient jdbcClient,
-            SimulationClockService simulationClockService
+            SimulationClockService simulationClockService,
+            ObjectMapper objectMapper
     ) {
         this.jdbcClient = jdbcClient;
         this.simulationClockService = simulationClockService;
+        this.objectMapper = objectMapper;
     }
 
     @Transactional(readOnly = true)
@@ -69,6 +76,13 @@ public class LiquidityProviderMandateQueryService {
                                mandate.order_ttl_seconds,
                                mandate.quote_interval_seconds,
                                mandate.daily_loss_limit_amount,
+                               scheduled_policy.version_no as scheduled_policy_version,
+                               scheduled_policy.effective_business_date
+                                   as scheduled_effective_business_date,
+                               scheduled_policy.config_json as scheduled_config_json,
+                               scheduled_policy.change_reason as scheduled_change_reason,
+                               scheduled_policy.changed_by as scheduled_changed_by,
+                               scheduled_policy.updated_at as scheduled_updated_at,
                                participant.id as participant_id,
                                participant.participant_code,
                                participant.participant_type,
@@ -204,6 +218,10 @@ public class LiquidityProviderMandateQueryService {
                            and daily_state.simulation_trade_date = :simulationTradeDate
                           left join stock_liquidity_transition transition
                             on transition.mandate_id = mandate.id
+                          left join stock_market_policy_version scheduled_policy
+                            on scheduled_policy.policy_scope = 'LIQUIDITY_MANDATE'
+                           and scheduled_policy.scope_key = mandate.symbol
+                           and scheduled_policy.status = 'SCHEDULED'
                          order by mandate.symbol asc, mandate.id asc
                         """
                 )
@@ -312,9 +330,81 @@ public class LiquidityProviderMandateQueryService {
                 roleEligibilityIssue,
                 account,
                 policy,
+                mapScheduledPolicy(rs),
                 mapDailyState(rs),
                 mapTransition(rs)
         );
+    }
+
+    private LiquidityProviderMandateResponse.ScheduledPolicy mapScheduledPolicy(
+            ResultSet rs
+    ) throws SQLException {
+        Long policyVersion = nullableLong(rs, "scheduled_policy_version");
+        if (policyVersion == null) {
+            return null;
+        }
+        String configJson = rs.getString("scheduled_config_json");
+        return new LiquidityProviderMandateResponse.ScheduledPolicy(
+                policyVersion,
+                localDate(rs, "scheduled_effective_business_date"),
+                parsePolicyConfig(configJson),
+                rs.getString("scheduled_change_reason"),
+                rs.getString("scheduled_changed_by"),
+                localDateTime(rs, "scheduled_updated_at")
+        );
+    }
+
+    private LiquidityProviderMandateResponse.Policy parsePolicyConfig(String configJson) {
+        JsonNode root;
+        try {
+            root = objectMapper.readTree(configJson);
+            if (root != null && root.isTextual()) {
+                root = objectMapper.readTree(root.textValue());
+            }
+        } catch (JsonProcessingException ex) {
+            throw new IllegalStateException("Scheduled LP policy JSON is invalid", ex);
+        }
+        if (root == null || !root.isObject()) {
+            throw new IllegalStateException("Scheduled LP policy JSON must be an object");
+        }
+        return new LiquidityProviderMandateResponse.Policy(
+                requiredNode(root, "targetSpreadTicks").intValue(),
+                requiredNode(root, "maxSpreadTicks").intValue(),
+                requiredNode(root, "maxOrderQuantity").longValue(),
+                requiredNode(root, "referenceDailyVolume").longValue(),
+                rate(requiredNode(root, "targetOpenParticipationRate").decimalValue()),
+                rate(requiredNode(root, "maxOpenParticipationRate").decimalValue()),
+                rate(requiredNode(root, "maxSingleOrderParticipationRate").decimalValue()),
+                requiredNode(root, "externalDepthLevels").intValue(),
+                rate(requiredNode(root, "maxExternalDepthParticipationRate").decimalValue()),
+                rate(requiredNode(root, "dailyExecutionParticipationRate").decimalValue()),
+                requiredNode(root, "dailySubmissionMultiplier")
+                        .decimalValue()
+                        .setScale(4, RoundingMode.HALF_UP),
+                requiredNode(root, "targetInventoryQuantity").longValue(),
+                requiredNode(root, "inventoryBandQuantity").longValue(),
+                requiredNode(root, "inventorySkewTicks").intValue(),
+                rate(requiredNode(root, "primaryRegimeWeight").decimalValue()),
+                rate(requiredNode(root, "liquiditySizeSensitivity").decimalValue()),
+                requiredNode(root, "volatilitySpreadMaxTicks").intValue(),
+                requiredNode(root, "priceRegimeMaxSkewTicks").intValue(),
+                requiredNode(root, "passiveOnly").booleanValue(),
+                requiredNode(root, "minimumQuoteLifetimeSeconds").intValue(),
+                requiredNode(root, "repriceThresholdTicks").intValue(),
+                requiredNode(root, "orderTtlSeconds").intValue(),
+                requiredNode(root, "quoteIntervalSeconds").intValue(),
+                money(requiredNode(root, "dailyLossLimitAmount").decimalValue())
+        );
+    }
+
+    private JsonNode requiredNode(JsonNode root, String fieldName) {
+        JsonNode value = root.get(fieldName);
+        if (value == null || value.isNull()) {
+            throw new IllegalStateException(
+                    "Scheduled LP policy field is missing: " + fieldName
+            );
+        }
+        return value;
     }
 
     private LiquidityProviderMandateResponse.Transition mapTransition(ResultSet rs)

@@ -37,7 +37,7 @@
 - `GET /api/stock/v1/markets/liquidity-mandates` (`ADMIN`, 전용 LP 계약·계정 역할·자기체결 그룹·거래일 위험 상태 감사)
 - `GET /api/stock/v1/markets/liquidity-mandates/recommendations` (`ADMIN`, 종목별 권장 기준 거래량·시드 수량·초기 현금과 생성 가능 사유)
 - `POST /api/stock/v1/markets/liquidity-mandates/{symbol}` (`ADMIN`, 일시정지 장전에서 유통 대기·인수 계정의 시드 자산을 이전하고 종목 전용 LP를 LIVE로 생성하며, 역할 분리형 신규 상장은 다음 장 개장 대상으로 활성화)
-- `PATCH /api/stock/v1/markets/liquidity-mandates/{symbol}/policy` (`ADMIN`, 일시정지 장전·LP 중단·당일 미사용 상태에서 호가·재고·일일한도 정책 변경)
+- `PATCH /api/stock/v1/markets/liquidity-mandates/{symbol}/policy` (`ADMIN`, 활성·중단 LP의 호가·재고·일일한도 정책을 다음 거래일 적용으로 예약하며 당일 정책과 누적 상태는 변경하지 않음)
 - `POST /api/stock/v1/markets/liquidity-mandates/{symbol}/suspend` (`ADMIN`, 즉시 LP 중단과 해당 LP 미체결 주문·예약 취소)
 - `POST /api/stock/v1/markets/liquidity-mandates/{symbol}/resume` (`ADMIN`, 일시정지 장전·당일 미사용 상태에서 LP LIVE 재개)
 - `GET /api/stock/v1/markets/underwriting-contracts` (`ADMIN`, 인수계정·최초 유통/잠금 배정원장·발행량 수량 대사)

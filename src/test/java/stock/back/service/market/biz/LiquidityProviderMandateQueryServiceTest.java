@@ -1,5 +1,7 @@
 package stock.back.service.market.biz;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+
 import java.math.BigDecimal;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -48,7 +50,8 @@ class LiquidityProviderMandateQueryServiceTest {
         when(simulationClockService.currentSnapshot()).thenReturn(clockSnapshot());
         service = new LiquidityProviderMandateQueryService(
                 JdbcClient.create(dataSource),
-                simulationClockService
+                simulationClockService,
+                new ObjectMapper()
         );
         seedLiquidityMandate();
     }
@@ -73,6 +76,7 @@ class LiquidityProviderMandateQueryServiceTest {
             assertThat(mandate.policy().referenceDailyVolume()).isEqualTo(20_000L);
             assertThat(mandate.policy().targetOpenParticipationRate())
                     .isEqualByComparingTo("0.050000");
+            assertThat(mandate.scheduledPolicy()).isNull();
             assertThat(mandate.transition()).isNotNull();
             assertThat(mandate.transition().transitionKey())
                     .isEqualTo("LIQUIDITY-TRANSITION:DEMO001");
@@ -101,6 +105,70 @@ class LiquidityProviderMandateQueryServiceTest {
             assertThat(mandate.dailyState().riskProfit())
                     .isEqualByComparingTo("5000.00");
         });
+    }
+
+    @Test
+    void getMandates_scheduledPolicy_exposesCurrentAndNextPolicySeparately() {
+        jdbcTemplate.update(
+                """
+                insert into stock_market_policy_version(
+                    policy_scope, scope_key, version_no,
+                    effective_business_date, status, config_json,
+                    change_reason, changed_by, created_at, updated_at
+                ) values (
+                    'LIQUIDITY_MANDATE', 'DEMO001', 4, ?,
+                    'SCHEDULED', ?,
+                    '다음 거래일 호가 축소', 'stock-admin', ?, ?
+                )
+                """,
+                BUSINESS_DATE.plusDays(1),
+                """
+                {
+                  "symbol":"DEMO001",
+                  "executionMode":"LIVE",
+                  "targetSpreadTicks":5,
+                  "maxSpreadTicks":14,
+                  "maxOrderQuantity":80,
+                  "referenceDailyVolume":15000,
+                  "targetOpenParticipationRate":0.04,
+                  "maxOpenParticipationRate":0.07,
+                  "maxSingleOrderParticipationRate":0.005,
+                  "externalDepthLevels":5,
+                  "maxExternalDepthParticipationRate":0.08,
+                  "dailyExecutionParticipationRate":0.08,
+                  "dailySubmissionMultiplier":2.0,
+                  "targetInventoryQuantity":900,
+                  "inventoryBandQuantity":150,
+                  "inventorySkewTicks":4,
+                  "primaryRegimeWeight":0.7,
+                  "liquiditySizeSensitivity":0.25,
+                  "volatilitySpreadMaxTicks":5,
+                  "priceRegimeMaxSkewTicks":1,
+                  "passiveOnly":true,
+                  "minimumQuoteLifetimeSeconds":60,
+                  "repriceThresholdTicks":3,
+                  "orderTtlSeconds":600,
+                  "quoteIntervalSeconds":30,
+                  "dailyLossLimitAmount":5000
+                }
+                """,
+                NOW,
+                NOW
+        );
+
+        LiquidityProviderMandateResponse mandate = service.getMandates().getFirst();
+
+        assertThat(mandate.policyVersion()).isEqualTo(3L);
+        assertThat(mandate.policy().referenceDailyVolume()).isEqualTo(20_000L);
+        assertThat(mandate.scheduledPolicy()).isNotNull();
+        assertThat(mandate.scheduledPolicy().policyVersion()).isEqualTo(4L);
+        assertThat(mandate.scheduledPolicy().effectiveBusinessDate())
+                .isEqualTo(BUSINESS_DATE.plusDays(1));
+        assertThat(mandate.scheduledPolicy().policy().referenceDailyVolume())
+                .isEqualTo(15_000L);
+        assertThat(mandate.scheduledPolicy().changeReason())
+                .isEqualTo("다음 거래일 호가 축소");
+        assertThat(mandate.scheduledPolicy().changedBy()).isEqualTo("stock-admin");
     }
 
     @Test
