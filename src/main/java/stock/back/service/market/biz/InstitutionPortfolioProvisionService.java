@@ -27,7 +27,6 @@ import org.springframework.transaction.annotation.Transactional;
 import stock.back.service.common.exception.StockException;
 import stock.back.service.market.vo.InstitutionPortfolioCreateRequest;
 import web.common.core.simulation.SimulationClockSnapshot;
-import web.common.core.simulation.SimulationMarketSession;
 
 @Service
 public class InstitutionPortfolioProvisionService {
@@ -76,15 +75,16 @@ public class InstitutionPortfolioProvisionService {
         String normalizedChangedBy = normalizeChangedBy(changedBy);
         requirePortfolioCodeAvailable(portfolioCode);
 
-        SimulationClockSnapshot clock = requirePausedPreOpen();
-        LocalDate activeBusinessDate = marketLedgerFreezeGuard.acquireJdbcPreOpenMutationPermit(
-                "institution portfolio creation"
+        SimulationClockSnapshot clock = simulationClockService.currentSnapshot();
+        LocalDate permittedBusinessDate =
+                marketLedgerFreezeGuard.acquireJdbcPreOpenMutationPermit(
+                        "institution portfolio creation"
+                );
+        LocalDateTime firstDecisionAt = resolveNextMarketOpen(
+                clock,
+                permittedBusinessDate
         );
-        if (!activeBusinessDate.equals(clock.simulationDate())) {
-            throw StockException.conflict(
-                    "Simulation date and active market business date must match"
-            );
-        }
+        LocalDate firstDecisionDate = firstDecisionAt.toLocalDate();
         List<MarketSymbol> activeMarketSymbols = findActiveMarketSymbols();
         List<MarketSymbol> symbols = selectMarketSymbols(
                 activeMarketSymbols,
@@ -107,8 +107,6 @@ public class InstitutionPortfolioProvisionService {
             throw StockException.badRequest("Institution initial AUM must be positive");
         }
         LocalDateTime now = clock.simulationDateTime();
-        LocalDate firstDecisionDate = activeBusinessDate;
-        LocalDateTime firstDecisionAt = firstDecisionDate.atTime(marketSessionService.openTime());
         Map<String, BigDecimal> marketWeights = marketWeights(
                 symbols,
                 selectedMarketCapitalization
@@ -140,7 +138,7 @@ public class InstitutionPortfolioProvisionService {
         insertOpeningGrant(
                 accountId,
                 initialCash,
-                activeBusinessDate,
+                firstDecisionDate,
                 normalizedChangedBy,
                 now
         );
@@ -156,19 +154,25 @@ public class InstitutionPortfolioProvisionService {
         return portfolioId;
     }
 
-    private SimulationClockSnapshot requirePausedPreOpen() {
-        SimulationClockSnapshot clock = simulationClockService.currentSnapshot();
-        if (clock.running()) {
+    private LocalDateTime resolveNextMarketOpen(
+            SimulationClockSnapshot clock,
+            LocalDate permittedBusinessDate
+    ) {
+        LocalDateTime currentDateOpen =
+                clock.simulationDate().atTime(marketSessionService.openTime());
+        LocalDateTime nextMarketOpen = clock.simulationDateTime().isBefore(currentDateOpen)
+                ? currentDateOpen
+                : currentDateOpen.plusDays(1);
+        LocalDate activationBusinessDate = nextMarketOpen.toLocalDate();
+        if (activationBusinessDate.isBefore(permittedBusinessDate)
+                || activationBusinessDate.isAfter(permittedBusinessDate.plusDays(1))) {
             throw StockException.conflict(
-                    "Pause the simulation clock before creating institution opening capital"
+                    "Institution activation date is inconsistent with the market business state: "
+                            + "permitted=" + permittedBusinessDate
+                            + ", activation=" + activationBusinessDate
             );
         }
-        if (marketSessionService.currentSession() != SimulationMarketSession.PRE_OPEN) {
-            throw StockException.conflict(
-                    "Institution portfolios can only be created during a paused pre-open"
-            );
-        }
-        return clock;
+        return nextMarketOpen;
     }
 
     private BigDecimal normalizeAumRate(InstitutionPortfolioCreateRequest request) {

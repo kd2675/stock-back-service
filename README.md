@@ -35,7 +35,7 @@
 - `GET /api/stock/v1/markets/auto-market`
 - `GET /api/stock/v1/markets/institution-portfolios` (`ADMIN`, 기관 계정·목표 비중·최근 LIVE 결정·주문 감사)
 - `GET /api/stock/v1/markets/institution-portfolios/recommendations` (`ADMIN`, 활성 종목 수 기준 권장 기관 개수·기관당 AUM·운용 유형 수치)
-- `POST /api/stock/v1/markets/institution-portfolios` (`ADMIN`, 일시정지 장전에서 기관 포트폴리오 1개를 제한된 다종목 LIVE로 생성)
+- `POST /api/stock/v1/markets/institution-portfolios` (`ADMIN`, 실행 중에도 기관 포트폴리오 1개를 생성하고 다음 개장부터 제한된 다종목 LIVE 운용 시작)
 - `POST /api/stock/v1/markets/institution-portfolios/{portfolioId}/suspend` (`ADMIN`, 실행 중 비상 중단. 정책 버전을 즉시 동결하고 대기 주문 의도·전용 계좌 미체결 주문과 예약을 정리)
 - `GET /api/stock/v1/markets/liquidity-mandates` (`ADMIN`, 전용 LP 계약·계정/STP·거래일 위험 상태 감사)
 - `GET /api/stock/v1/markets/liquidity-mandates/recommendations` (`ADMIN`, 종목별 권장 기준 거래량·시드 수량·초기 현금과 생성 가능 상태)

@@ -33,7 +33,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -69,7 +68,7 @@ class InstitutionPortfolioProvisionServiceTest {
 
         simulationClockService = mock(SimulationClockService.class);
         when(simulationClockService.currentMarketDateTime()).thenReturn(NOW);
-        when(simulationClockService.currentSnapshot()).thenReturn(clockSnapshot());
+        when(simulationClockService.currentSnapshot()).thenReturn(clockSnapshot(true));
         SimulationMarketSessionService marketSessionService =
                 new SimulationMarketSessionService(simulationClockService, "06:00", "18:00");
         freezeGuard = mock(MarketLedgerFreezeGuard.class);
@@ -105,7 +104,7 @@ class InstitutionPortfolioProvisionServiceTest {
     }
 
     @Test
-    void createPortfolio_threeSymbolMarket_createsOneLivePortfolioWithoutImmediateOrders() {
+    void createPortfolio_runningPreOpen_createsOneLivePortfolioForCurrentOpening() {
         createDefaultPortfolio();
 
         assertThat(jdbcTemplate.queryForObject(
@@ -138,14 +137,7 @@ class InstitutionPortfolioProvisionServiceTest {
                 "select distinct reference_daily_volume from stock_institution_symbol_mandate",
                 Long.class
         )).containsExactly(30_000L);
-        assertThat(jdbcTemplate.queryForList(
-                "select distinct next_decision_at from stock_institution_portfolio",
-                LocalDateTime.class
-        )).containsExactly(LocalDateTime.of(2027, 1, 27, 6, 0));
-        assertThat(jdbcTemplate.queryForList(
-                "select distinct effective_business_date from stock_market_policy_version",
-                LocalDate.class
-        )).containsExactly(LocalDate.of(2027, 1, 27));
+        assertInstitutionActivationScheduledFor(BUSINESS_DATE);
     }
 
     @Test
@@ -216,16 +208,63 @@ class InstitutionPortfolioProvisionServiceTest {
     }
 
     @Test
-    void createPortfolio_runningClock_rejectsBeforeOpeningCapitalMutation() {
-        when(simulationClockService.currentSnapshot()).thenReturn(clockSnapshot(true));
+    void createPortfolio_runningRegularSession_schedulesNextOpeningAcrossAllEffectiveDates() {
+        when(simulationClockService.currentSnapshot())
+                .thenReturn(clockSnapshot(BUSINESS_DATE.atTime(10, 0), true));
+
+        createDefaultPortfolio();
+
+        assertInstitutionActivationScheduledFor(BUSINESS_DATE.plusDays(1));
+    }
+
+    @Test
+    void createPortfolio_atOpeningBoundary_schedulesFollowingOpening() {
+        when(simulationClockService.currentSnapshot())
+                .thenReturn(clockSnapshot(BUSINESS_DATE.atTime(6, 0), true));
+
+        createDefaultPortfolio();
+
+        assertInstitutionActivationScheduledFor(BUSINESS_DATE.plusDays(1));
+    }
+
+    @Test
+    void createPortfolio_runningAfterClose_schedulesNextOpeningAcrossAllEffectiveDates() {
+        when(simulationClockService.currentSnapshot())
+                .thenReturn(clockSnapshot(BUSINESS_DATE.atTime(21, 0), true));
+
+        createDefaultPortfolio();
+
+        assertInstitutionActivationScheduledFor(BUSINESS_DATE.plusDays(1));
+    }
+
+    @Test
+    void createPortfolio_businessDateLagBeyondOneDay_rejectsBeforeOpeningCapitalMutation() {
+        when(simulationClockService.currentSnapshot())
+                .thenReturn(clockSnapshot(BUSINESS_DATE.plusDays(2).atTime(10, 0), true));
 
         assertThatThrownBy(() -> transactionTemplate.executeWithoutResult(status ->
                 provisionService.createPortfolio(defaultCreateRequest(), "stock-admin")
         )).isInstanceOf(StockException.class)
-                .hasMessageContaining("Pause the simulation clock");
+                .hasMessageContaining("inconsistent with the market business state");
 
-        verify(freezeGuard, never())
-                .acquireJdbcPreOpenMutationPermit("institution portfolio creation");
+        assertThat(jdbcTemplate.queryForObject(
+                "select count(*) from stock_account "
+                        + "where participant_category = 'INSTITUTIONAL_INVESTOR'",
+                Integer.class
+        )).isZero();
+    }
+
+    @Test
+    void createPortfolio_eodFreezeInProgress_rejectsBeforeOpeningCapitalMutation() {
+        when(freezeGuard.acquireJdbcPreOpenMutationPermit(
+                "institution portfolio creation"
+        )).thenThrow(StockException.conflict("ledger freeze is in progress"));
+
+        assertThatThrownBy(() -> transactionTemplate.executeWithoutResult(status ->
+                provisionService.createPortfolio(defaultCreateRequest(), "stock-admin")
+        )).isInstanceOf(StockException.class)
+                .hasMessageContaining("ledger freeze is in progress");
+
         assertThat(jdbcTemplate.queryForObject(
                 "select count(*) from stock_account "
                         + "where participant_category = 'INSTITUTIONAL_INVESTOR'",
@@ -530,6 +569,59 @@ class InstitutionPortfolioProvisionServiceTest {
         );
     }
 
+    private void assertInstitutionActivationScheduledFor(LocalDate businessDate) {
+        LocalDateTime nextMarketOpen = businessDate.atTime(6, 0);
+        assertThat(List.of(
+                jdbcTemplate.queryForObject(
+                        "select next_decision_at from stock_institution_portfolio "
+                                + "where portfolio_code = 'INST_PENSION'",
+                        LocalDateTime.class
+                ),
+                jdbcTemplate.queryForObject(
+                        """
+                        select mapping.effective_from
+                          from stock_market_participant_account mapping
+                          join stock_institution_portfolio portfolio
+                            on portfolio.participant_id = mapping.participant_id
+                           and portfolio.account_id = mapping.account_id
+                         where portfolio.portfolio_code = 'INST_PENSION'
+                        """,
+                        LocalDate.class
+                ),
+                jdbcTemplate.queryForObject(
+                        """
+                        select cash_flow.effective_business_date
+                          from stock_account_cash_flow cash_flow
+                          join stock_institution_portfolio portfolio
+                            on portfolio.account_id = cash_flow.account_id
+                         where portfolio.portfolio_code = 'INST_PENSION'
+                           and cash_flow.reason = 'OPENING_GRANT'
+                        """,
+                        LocalDate.class
+                ),
+                jdbcTemplate.queryForObject(
+                        """
+                        select effective_business_date
+                          from stock_market_policy_version
+                         where policy_scope = 'INSTITUTIONAL_PORTFOLIO'
+                           and scope_key = 'INST_PENSION'
+                           and version_no = 1
+                        """,
+                        LocalDate.class
+                ),
+                jdbcTemplate.queryForObject(
+                        "select count(*) from stock_order",
+                        Integer.class
+                )
+        )).containsExactly(
+                nextMarketOpen,
+                businessDate,
+                businessDate,
+                businessDate,
+                0
+        );
+    }
+
     private InstitutionPortfolioCreateRequest defaultCreateRequest() {
         return new InstitutionPortfolioCreateRequest(
                 "INST_PENSION",
@@ -700,10 +792,6 @@ class InstitutionPortfolioProvisionServiceTest {
                     NOW
             );
         }
-    }
-
-    private SimulationClockSnapshot clockSnapshot() {
-        return clockSnapshot(false);
     }
 
     private SimulationClockSnapshot clockSnapshot(boolean running) {

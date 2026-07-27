@@ -32,7 +32,7 @@
 - `GET /api/stock/v1/markets/admin/investor-flow-history` (`ADMIN`, 오늘은 비동기 요약, 과거 거래일은 권위 있는 full-market cycle의 역할 동결 스냅샷과 집계 상태를 반환)
 - `GET /api/stock/v1/markets/institution-portfolios` (`ADMIN`, 축소시장용 기관 계정·목표 비중·최근 LIVE 결정·주문 감사)
 - `GET /api/stock/v1/markets/institution-portfolios/recommendations` (`ADMIN`, 활성 종목 수에 따른 권장 기관 개수·기관당 AUM·운용 유형별 수치)
-- `POST /api/stock/v1/markets/institution-portfolios` (`ADMIN`, 일시정지 장전에서 선택한 기관 1개를 제한된 다종목 LIVE로 생성)
+- `POST /api/stock/v1/markets/institution-portfolios` (`ADMIN`, 실행 중에도 선택한 기관 1개를 생성하고 다음 개장부터 제한된 다종목 LIVE 운용 시작)
 - `POST /api/stock/v1/markets/institution-portfolios/{portfolioId}/suspend` (`ADMIN`, 실행 중에도 허용되는 비상 중단. 포트폴리오를 먼저 SUSPENDED로 고정한 뒤 대기 의도와 전용 계좌 미체결 주문을 취소하고 예약을 반환)
 - `GET /api/stock/v1/markets/liquidity-mandates` (`ADMIN`, 전용 LP 계약·계정 역할·자기체결 그룹·거래일 위험 상태 감사)
 - `GET /api/stock/v1/markets/liquidity-mandates/recommendations` (`ADMIN`, 종목별 권장 기준 거래량·시드 수량·초기 현금과 생성 가능 사유)
