@@ -21,7 +21,6 @@ CREATE TABLE IF NOT EXISTS stock_auto_participant_withdrawal (
 CREATE TABLE IF NOT EXISTS stock_auto_participant_share_return (
   withdrawal_id BIGINT NOT NULL,
   symbol VARCHAR(20) NOT NULL,
-  underwriter_account_id BIGINT NOT NULL,
   receiver_account_id BIGINT NOT NULL,
   receiver_role VARCHAR(40) NOT NULL,
   transfer_reason VARCHAR(50) NOT NULL,
@@ -29,20 +28,19 @@ CREATE TABLE IF NOT EXISTS stock_auto_participant_share_return (
   source_average_price DECIMAL(19,2) NOT NULL,
   created_at DATETIME NOT NULL,
   PRIMARY KEY (withdrawal_id, symbol),
-  KEY idx_stock_auto_share_return_underwriter (underwriter_account_id, symbol, withdrawal_id),
   KEY idx_stock_auto_share_return_receiver (receiver_account_id, symbol, withdrawal_id),
   CONSTRAINT chk_stock_auto_share_return_quantity CHECK (quantity > 0),
   CONSTRAINT chk_stock_auto_share_return_average_price CHECK (source_average_price >= 0),
   CONSTRAINT chk_stock_auto_share_return_receiver_role CHECK (
     CASE `receiver_role`
-      WHEN 'LISTING_UNDERWRITER' THEN 1
+      WHEN 'ISSUE_UNDERWRITER' THEN 1
       WHEN 'SYSTEM_CUSTODY' THEN 1
       ELSE 0
     END = 1
   ),
   CONSTRAINT chk_stock_auto_share_return_reason CHECK (
     CASE `transfer_reason`
-      WHEN 'LEGACY_UNDERWRITER_RETURN' THEN 1
+      WHEN 'ISSUE_UNDERWRITER_RETURN' THEN 1
       WHEN 'AUTO_PARTICIPANT_WITHDRAWAL_CUSTODY' THEN 1
       ELSE 0
     END = 1

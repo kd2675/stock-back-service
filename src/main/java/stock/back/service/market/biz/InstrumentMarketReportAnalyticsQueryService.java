@@ -40,7 +40,6 @@ public class InstrumentMarketReportAnalyticsQueryService {
             "INSTITUTIONAL_INVESTOR",
             "LIQUIDITY_PROVIDER",
             "ISSUE_UNDERWRITER",
-            "LISTING_UNDERWRITER",
             "SYSTEM_CUSTODY"
     );
     private final JdbcClient jdbcClient;

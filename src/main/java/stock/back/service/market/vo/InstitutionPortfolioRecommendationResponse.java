@@ -25,6 +25,10 @@ public record InstitutionPortfolioRecommendationResponse(
     public record Style(
             String investmentStyle,
             String label,
+            String description,
+            boolean recommended,
+            BigDecimal recommendedAumRateOfMarketCap,
+            BigDecimal recommendedAumAmountPerPortfolio,
             BigDecimal baseStockAllocationRate,
             BigDecimal minStockAllocationRate,
             BigDecimal maxStockAllocationRate,
@@ -38,6 +42,7 @@ public record InstitutionPortfolioRecommendationResponse(
 
     public record Symbol(
             String symbol,
+            String name,
             long tradableShares,
             BigDecimal currentPrice,
             BigDecimal marketWeight,

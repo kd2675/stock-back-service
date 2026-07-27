@@ -715,7 +715,6 @@ class StockMysqlDdlContractTest {
                 "CREATE TABLE IF NOT EXISTS stock_auto_participant_withdrawal",
                 "CREATE TABLE IF NOT EXISTS stock_auto_participant_share_return",
                 "uk_stock_auto_participant_withdrawal_user",
-                "idx_stock_auto_share_return_underwriter",
                 "idx_stock_auto_share_return_receiver",
                 "returned_cash_amount",
                 "returned_share_quantity",
@@ -723,7 +722,7 @@ class StockMysqlDdlContractTest {
                 "receiver_account_id",
                 "receiver_role",
                 "transfer_reason"
-        );
+        ).doesNotContain("underwriter_account_id", "idx_stock_auto_share_return_underwriter");
         assertThat(canonicalDdl).contains(
                 "CREATE TABLE IF NOT EXISTS stock_auto_participant_withdrawal",
                 "CREATE TABLE IF NOT EXISTS stock_auto_participant_share_return"
@@ -739,7 +738,7 @@ class StockMysqlDdlContractTest {
     }
 
     @Test
-    void systemCustodyWithdrawalAlter_matchesBatchCopyAndPreservesLegacyReceiver() throws IOException {
+    void systemCustodyWithdrawalAlter_matchesBatchCopyAndPreservesReceiverAudit() throws IOException {
         String backDdl = Files.readString(
                 Path.of("src/main/resources/db/ddl/stock_system_custody_withdrawal_alter.sql"),
                 StandardCharsets.UTF_8
@@ -755,7 +754,7 @@ class StockMysqlDdlContractTest {
                 "receiver_account_id",
                 "receiver_role",
                 "transfer_reason",
-                "LEGACY_UNDERWRITER_RETURN",
+                "ISSUE_UNDERWRITER_RETURN",
                 "AUTO_PARTICIPANT_WITHDRAWAL_CUSTODY",
                 "stock-system-custody",
                 "SYSTEM_CUSTODY:DEFAULT",
@@ -764,6 +763,41 @@ class StockMysqlDdlContractTest {
         assertThat(backDdl).doesNotContain(
                 "DELETE FROM stock_auto_participant_share_return",
                 "TRUNCATE TABLE stock_auto_participant_share_return"
+        );
+    }
+
+    @Test
+    void obsoleteParticipantRoleCleanup_migratesAuditRolesAndRemovesCompatibilityColumn() throws IOException {
+        Path backPath = Path.of(
+                "src/main/resources/db/ddl/stock_obsolete_participant_role_cleanup_alter.sql"
+        );
+        Path batchPath = Path.of(
+                "../stock-batch-service/src/main/resources/db/ddl/"
+                        + "stock_obsolete_participant_role_cleanup_alter.sql"
+        );
+        String ddl = Files.readString(backPath, StandardCharsets.UTF_8);
+
+        assertThat(firstExecutableSqlLine(ddl)).isEqualTo("USE STOCK_SERVICE;");
+        assertThat(batchPath).doesNotExist();
+        assertThat(ddl).contains(
+                "Pause the simulation clock before participant-role cleanup",
+                "transition.legacy_account_id = account.id",
+                "snapshot.participant_category = 'ISSUE_UNDERWRITER'",
+                "order_row.origin_type = 'LIQUIDITY_PROVIDER'",
+                "share_return.receiver_role = 'ISSUE_UNDERWRITER'",
+                "share_return.transfer_reason = 'ISSUE_UNDERWRITER_RETURN'",
+                "COUNT(*) > 0",
+                "DROP INDEX idx_stock_auto_share_return_underwriter",
+                "DROP COLUMN underwriter_account_id",
+                "ADD CONSTRAINT chk_stock_account_participant_category",
+                "ADD CONSTRAINT chk_stock_order_origin_type",
+                "ADD CONSTRAINT chk_stock_close_account_snapshot_participant_category",
+                "ADD CONSTRAINT chk_stock_execution_daily_account_category",
+                "ADD CONSTRAINT chk_stock_auto_share_return_receiver_role"
+        ).doesNotContain(
+                "DELETE FROM stock_order",
+                "DELETE FROM stock_execution",
+                "UPDATE stock_execution SET"
         );
     }
 

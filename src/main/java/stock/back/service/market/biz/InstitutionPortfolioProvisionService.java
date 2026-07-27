@@ -31,7 +31,6 @@ import web.common.core.simulation.SimulationClockSnapshot;
 @Service
 public class InstitutionPortfolioProvisionService {
 
-    private static final BigDecimal DEFAULT_AUM_RATE = new BigDecimal("0.010000");
     private static final BigDecimal MIN_AUM_RATE = new BigDecimal("0.001000");
     private static final BigDecimal MAX_AUM_RATE = new BigDecimal("0.020000");
     private static final BigDecimal REFERENCE_VOLUME_RATE = new BigDecimal("0.030000");
@@ -70,7 +69,7 @@ public class InstitutionPortfolioProvisionService {
         InstitutionPortfolioPolicyCatalog.Policy style =
                 InstitutionPortfolioPolicyCatalog.require(request.investmentStyle());
         PresetPolicy policy = provisioningPolicy(portfolioCode, displayName, style);
-        BigDecimal aumRate = normalizeAumRate(request);
+        BigDecimal aumRate = normalizeAumRate(request, style);
         String changeReason = normalizeChangeReason(request);
         String normalizedChangedBy = normalizeChangedBy(changedBy);
         requirePortfolioCodeAvailable(portfolioCode);
@@ -95,13 +94,10 @@ public class InstitutionPortfolioProvisionService {
                     "At least one active order-book symbol with a positive price is required"
             );
         }
-        BigDecimal totalMarketCapitalization = activeMarketSymbols.stream()
-                .map(MarketSymbol::marketCapitalization)
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
         BigDecimal selectedMarketCapitalization = symbols.stream()
                 .map(MarketSymbol::marketCapitalization)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
-        BigDecimal initialCash = totalMarketCapitalization.multiply(aumRate)
+        BigDecimal initialCash = selectedMarketCapitalization.multiply(aumRate)
                 .setScale(2, RoundingMode.DOWN);
         if (initialCash.signum() <= 0) {
             throw StockException.badRequest("Institution initial AUM must be positive");
@@ -146,6 +142,8 @@ public class InstitutionPortfolioProvisionService {
                 policy,
                 aumRate,
                 initialCash,
+                selectedMarketCapitalization,
+                symbols,
                 firstDecisionDate,
                 changeReason,
                 normalizedChangedBy,
@@ -175,9 +173,12 @@ public class InstitutionPortfolioProvisionService {
         return nextMarketOpen;
     }
 
-    private BigDecimal normalizeAumRate(InstitutionPortfolioCreateRequest request) {
+    private BigDecimal normalizeAumRate(
+            InstitutionPortfolioCreateRequest request,
+            InstitutionPortfolioPolicyCatalog.Policy style
+    ) {
         BigDecimal rate = request.institutionAumRateOfMarketCap() == null
-                ? DEFAULT_AUM_RATE
+                ? style.recommendedAumRateOfMarketCap()
                 : request.institutionAumRateOfMarketCap();
         if (rate.compareTo(MIN_AUM_RATE) < 0 || rate.compareTo(MAX_AUM_RATE) > 0) {
             throw StockException.badRequest(
@@ -527,6 +528,8 @@ public class InstitutionPortfolioProvisionService {
             PresetPolicy preset,
             BigDecimal aumRate,
             BigDecimal initialCash,
+            BigDecimal selectedMarketCapitalization,
+            List<MarketSymbol> symbols,
             LocalDate effectiveBusinessDate,
             String changeReason,
             String changedBy,
@@ -538,6 +541,11 @@ public class InstitutionPortfolioProvisionService {
         config.put("executionMode", "LIVE");
         config.put("institutionAumRateOfMarketCap", aumRate);
         config.put("initialCash", initialCash);
+        config.put("selectedMarketCapitalization", selectedMarketCapitalization);
+        config.put(
+                "symbols",
+                symbols.stream().map(MarketSymbol::symbol).toList()
+        );
         config.put("referenceDailyVolumeRate", REFERENCE_VOLUME_RATE);
         config.put("dailyParticipationRate", preset.dailyParticipationRate());
         String configJson;

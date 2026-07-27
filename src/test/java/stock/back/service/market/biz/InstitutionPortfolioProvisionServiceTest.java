@@ -156,7 +156,7 @@ class InstitutionPortfolioProvisionServiceTest {
     }
 
     @Test
-    void createPortfolio_selectedSymbol_keepsAumBasedOnWholeActiveMarket() {
+    void createPortfolio_selectedSymbol_sizesAumFromSelectedMarketCapitalization() {
         transactionTemplate.executeWithoutResult(status ->
                 provisionService.createPortfolio(
                         new InstitutionPortfolioCreateRequest(
@@ -179,7 +179,7 @@ class InstitutionPortfolioProvisionServiceTest {
                  where portfolio.portfolio_code = 'INST_ONE'
                 """,
                 BigDecimal.class
-        )).isEqualByComparingTo("6000000.00");
+        )).isEqualByComparingTo("1000000.00");
         assertThat(jdbcTemplate.queryForObject(
                 """
                 select count(*)
@@ -193,18 +193,101 @@ class InstitutionPortfolioProvisionServiceTest {
     }
 
     @Test
-    void getRecommendation_threeSymbols_reportsThreePortfoliosAndExactAum() {
+    void createPortfolio_omittedAum_usesStyleRecommendationForSelectedSymbols() {
+        transactionTemplate.executeWithoutResult(status ->
+                provisionService.createPortfolio(
+                        new InstitutionPortfolioCreateRequest(
+                                "INST_ACTIVE",
+                                "단기 적극 기관",
+                                "ACTIVE_SHORT_TERM",
+                                null,
+                                List.of("DEMO003"),
+                                "style default"
+                        ),
+                        "stock-admin"
+                )
+        );
+
+        assertThat(jdbcTemplate.queryForObject(
+                """
+                select account.cash_balance
+                  from stock_institution_portfolio portfolio
+                  join stock_account account on account.id = portfolio.account_id
+                 where portfolio.portfolio_code = 'INST_ACTIVE'
+                """,
+                BigDecimal.class
+        )).isEqualByComparingTo("750000.00");
+    }
+
+    @Test
+    void getRecommendation_threeSymbols_reportsStyleSpecificAumAndSelectableSymbols() {
         var recommendation = recommendationService.getRecommendation();
 
-        assertThat(recommendation.activeSymbolCount()).isEqualTo(3);
-        assertThat(recommendation.recommendedPortfolioCount()).isEqualTo(3);
-        assertThat(recommendation.recommendedRemainingCount()).isEqualTo(3);
-        assertThat(recommendation.recommendedAumAmountPerPortfolio())
-                .isEqualByComparingTo("6000000.00");
-        assertThat(recommendation.styles()).hasSize(4);
+        assertThat(List.of(
+                recommendation.activeSymbolCount(),
+                recommendation.recommendedPortfolioCount(),
+                recommendation.recommendedRemainingCount(),
+                recommendation.recommendedAumAmountPerPortfolio()
+        )).containsExactly(3, 3, 3L, new BigDecimal("6000000.00"));
+        assertThat(recommendation.styles())
+                .extracting(style -> List.of(
+                        style.investmentStyle(),
+                        style.recommended(),
+                        style.recommendedAumRateOfMarketCap(),
+                        style.recommendedAumAmountPerPortfolio()
+                ))
+                .containsExactly(
+                        List.of(
+                                "BALANCED_LONG_TERM",
+                                true,
+                                new BigDecimal("0.010000"),
+                                new BigDecimal("6000000.00")
+                        ),
+                        List.of(
+                                "VALUE_CONTRARIAN",
+                                false,
+                                new BigDecimal("0.005000"),
+                                new BigDecimal("3000000.00")
+                        ),
+                        List.of(
+                                "MOMENTUM",
+                                false,
+                                new BigDecimal("0.003500"),
+                                new BigDecimal("2100000.00")
+                        ),
+                        List.of(
+                                "ACTIVE_SHORT_TERM",
+                                false,
+                                new BigDecimal("0.002500"),
+                                new BigDecimal("1500000.00")
+                        )
+                );
         assertThat(recommendation.symbols())
-                .extracting(symbol -> symbol.recommendedReferenceDailyVolume())
-                .containsOnly(30_000L);
+                .extracting(symbol -> List.of(
+                        symbol.symbol(),
+                        symbol.name(),
+                        symbol.recommendedReferenceDailyVolume()
+                ))
+                .containsExactly(
+                        List.of("DEMO001", "테스트 종목 1", 30_000L),
+                        List.of("DEMO002", "테스트 종목 2", 30_000L),
+                        List.of("DEMO003", "테스트 종목 3", 30_000L)
+                );
+    }
+
+    @Test
+    void getRecommendation_suspendedPortfolio_doesNotReduceActiveRecommendation() {
+        createDefaultPortfolio();
+        jdbcTemplate.update(
+                "update stock_institution_portfolio set status = 'SUSPENDED'"
+        );
+
+        var recommendation = recommendationService.getRecommendation();
+
+        assertThat(List.of(
+                recommendation.currentPortfolioCount(),
+                recommendation.recommendedRemainingCount()
+        )).containsExactly(0L, 3L);
     }
 
     @Test

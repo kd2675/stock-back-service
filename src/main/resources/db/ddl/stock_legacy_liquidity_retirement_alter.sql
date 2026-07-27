@@ -311,7 +311,7 @@ main: BEGIN
       ON legacy_account.id = transition.legacy_account_id
      AND legacy_account.user_key = legacy_config.user_key
      AND legacy_account.status = 'ACTIVE'
-     AND legacy_account.participant_category = 'LISTING_UNDERWRITER'
+     AND legacy_account.participant_category = 'ISSUE_UNDERWRITER'
     JOIN stock_holding legacy_holding
       ON legacy_holding.account_id = legacy_account.id
      AND legacy_holding.symbol = transition.symbol

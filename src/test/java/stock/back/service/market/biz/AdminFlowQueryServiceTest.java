@@ -39,14 +39,13 @@ class AdminFlowQueryServiceTest {
                         "INSTITUTIONAL_INVESTOR",
                         "LIQUIDITY_PROVIDER",
                         "ISSUE_UNDERWRITER",
-                        "LISTING_UNDERWRITER",
                         "SYSTEM_CUSTODY"
                 );
         assertThat(breakdown.total().activeAccountCount()).isEqualTo(3L);
         assertThat(breakdown.total().totalAsset()).isEqualByComparingTo(new BigDecimal("2083328.00"));
         assertThat(breakdown.categories().get(1).summary().activeAccountCount()).isZero();
         assertThat(breakdown.categories().get(1).summary().totalAsset()).isZero();
-        assertThat(breakdown.categories().get(5).summary().activeAccountCount()).isEqualTo(1L);
+        assertThat(breakdown.categories().get(4).summary().activeAccountCount()).isEqualTo(1L);
         assertThat(summary.activeAccountCount()).isEqualTo(2L);
         assertThat(summary.totalCashBalance()).isEqualByComparingTo(new BigDecimal("2880.00"));
         assertThat(summary.totalReservedBuyCash()).isEqualByComparingTo(new BigDecimal("270.00"));
@@ -236,7 +235,7 @@ class AdminFlowQueryServiceTest {
             insertPostCloseCycle(jdbcTemplate, cycleId, snapshotDate, "PORTFOLIO_SETTLED");
             insertCloseAccountSnapshot(jdbcTemplate, dayOffset * 3L + 1L, cycleId, 1L, "manual-user", "MANUAL_PARTICIPANT", String.valueOf(500 - dayOffset * 5L), "0", String.valueOf(500 - dayOffset * 5L), 10L, 2L, 1L);
             insertCloseAccountSnapshot(jdbcTemplate, dayOffset * 3L + 2L, cycleId, 2L, "auto-user", "AUTO_PARTICIPANT", String.valueOf(1000 - dayOffset * 10L), "0", String.valueOf(1000 - dayOffset * 10L), 20L, 3L, 2L);
-            insertCloseAccountSnapshot(jdbcTemplate, dayOffset * 3L + 3L, cycleId, 3L, "stock-listing-HISTORY", "LISTING_UNDERWRITER", String.valueOf(1500 - dayOffset * 15L), "0", String.valueOf(1500 - dayOffset * 15L), 30L, 4L, 3L);
+            insertCloseAccountSnapshot(jdbcTemplate, dayOffset * 3L + 3L, cycleId, 3L, "stock-underwriter-HISTORY", "ISSUE_UNDERWRITER", String.valueOf(1500 - dayOffset * 15L), "0", String.valueOf(1500 - dayOffset * 15L), 30L, 4L, 3L);
         }
 
         var firstPage = service.getAdminTotalAssetHistory(0);
@@ -366,7 +365,7 @@ class AdminFlowQueryServiceTest {
         AdminFlowQueryService service = createService(jdbcTemplate);
         insertAccount(jdbcTemplate, 1L, "manual-user", "ACTIVE", "1000.00");
         insertAccount(jdbcTemplate, 2L, "auto-user", "ACTIVE", "1000.00", "AUTO_PARTICIPANT");
-        insertAccount(jdbcTemplate, 3L, "stock-listing-STOCK001", "ACTIVE", "1000.00", "LISTING_UNDERWRITER");
+        insertAccount(jdbcTemplate, 3L, "stock-underwriter-STOCK001", "ACTIVE", "1000.00", "ISSUE_UNDERWRITER");
         jdbcTemplate.update("insert into stock_auto_participant(user_key) values ('auto-user')");
         insertExecutionDaySummary(jdbcTemplate, 1L, 100L, 20L, "10000.00", "2000.00", SIMULATION_NOW.minusSeconds(7));
         insertExecutionDaySummary(jdbcTemplate, 2L, 30L, 60L, "3000.00", "6000.00", SIMULATION_NOW.minusSeconds(5));
@@ -388,8 +387,7 @@ class AdminFlowQueryServiceTest {
                         org.assertj.core.groups.Tuple.tuple("AUTO_PARTICIPANT", 30L, 60L, -30L, 90L),
                         org.assertj.core.groups.Tuple.tuple("INSTITUTIONAL_INVESTOR", 0L, 0L, 0L, 0L),
                         org.assertj.core.groups.Tuple.tuple("LIQUIDITY_PROVIDER", 0L, 0L, 0L, 0L),
-                        org.assertj.core.groups.Tuple.tuple("ISSUE_UNDERWRITER", 0L, 0L, 0L, 0L),
-                        org.assertj.core.groups.Tuple.tuple("LISTING_UNDERWRITER", 10L, 40L, -30L, 50L),
+                        org.assertj.core.groups.Tuple.tuple("ISSUE_UNDERWRITER", 10L, 40L, -30L, 50L),
                         org.assertj.core.groups.Tuple.tuple("SYSTEM_CUSTODY", 0L, 0L, 0L, 0L)
                 );
         assertThat(investorFlow.categories().getFirst().buyShareRate()).isEqualByComparingTo("71.4286");
@@ -414,7 +412,6 @@ class AdminFlowQueryServiceTest {
                         org.assertj.core.groups.Tuple.tuple("INSTITUTIONAL_INVESTOR", new BigDecimal("0.0000")),
                         org.assertj.core.groups.Tuple.tuple("LIQUIDITY_PROVIDER", new BigDecimal("0.0000")),
                         org.assertj.core.groups.Tuple.tuple("ISSUE_UNDERWRITER", new BigDecimal("0.0000")),
-                        org.assertj.core.groups.Tuple.tuple("LISTING_UNDERWRITER", new BigDecimal("0.0000")),
                         org.assertj.core.groups.Tuple.tuple("SYSTEM_CUSTODY", new BigDecimal("0.0000"))
                 );
     }
@@ -424,7 +421,7 @@ class AdminFlowQueryServiceTest {
         JdbcTemplate jdbcTemplate = createJdbcTemplate("admin_investor_flow_history_test");
         AdminFlowQueryService service = createService(jdbcTemplate);
         insertAccount(jdbcTemplate, 1L, "auto-user", "ACTIVE", "1000.00", "AUTO_PARTICIPANT");
-        insertAccount(jdbcTemplate, 2L, "stock-listing-STOCK001", "ACTIVE", "1000.00", "LISTING_UNDERWRITER");
+        insertAccount(jdbcTemplate, 2L, "stock-underwriter-STOCK001", "ACTIVE", "1000.00", "ISSUE_UNDERWRITER");
         jdbcTemplate.update("insert into stock_auto_participant(user_key) values ('auto-user')");
         insertExecutionDaySummary(
                 jdbcTemplate,
@@ -450,7 +447,7 @@ class AdminFlowQueryServiceTest {
         insertInvestorFlowCycle(jdbcTemplate, 100L, closedDate, "TRADING", "REPORTS_AGGREGATED", "PENDING", "COMPLETED");
         insertInvestorFlowSnapshot(jdbcTemplate, 1L, 100L, "STOCK001", closedDate, 1L, "AUTO_PARTICIPANT", 40L, 30L, "4000.00", "3000.00", "-997.00");
         insertInvestorFlowSnapshot(jdbcTemplate, 2L, 100L, "STOCK002", closedDate, 1L, "AUTO_PARTICIPANT", 30L, 20L, "3000.00", "2000.00", "-998.00");
-        insertInvestorFlowSnapshot(jdbcTemplate, 3L, 100L, "STOCK001", closedDate, 2L, "LISTING_UNDERWRITER", 0L, 20L, "0.00", "2000.00", "1998.00");
+        insertInvestorFlowSnapshot(jdbcTemplate, 3L, 100L, "STOCK001", closedDate, 2L, "ISSUE_UNDERWRITER", 0L, 20L, "0.00", "2000.00", "1998.00");
 
         var history = service.getAdminInvestorFlowHistory(7);
 
@@ -477,8 +474,7 @@ class AdminFlowQueryServiceTest {
                         org.assertj.core.groups.Tuple.tuple("AUTO_PARTICIPANT", -20L),
                         org.assertj.core.groups.Tuple.tuple("INSTITUTIONAL_INVESTOR", 0L),
                         org.assertj.core.groups.Tuple.tuple("LIQUIDITY_PROVIDER", 0L),
-                        org.assertj.core.groups.Tuple.tuple("ISSUE_UNDERWRITER", 0L),
-                        org.assertj.core.groups.Tuple.tuple("LISTING_UNDERWRITER", 20L),
+                        org.assertj.core.groups.Tuple.tuple("ISSUE_UNDERWRITER", 20L),
                         org.assertj.core.groups.Tuple.tuple("SYSTEM_CUSTODY", 0L)
                 );
         var closedFlow = history.dailyFlows().get(1);
@@ -793,7 +789,7 @@ class AdminFlowQueryServiceTest {
         insertAccount(jdbcTemplate, 1L, "active-user-1", "ACTIVE", "880.00");
         insertAccount(jdbcTemplate, 2L, "active-user-2", "ACTIVE", "2000.00");
         insertAccount(jdbcTemplate, 3L, "closed-user", "CLOSED", "9999.00");
-        insertAccount(jdbcTemplate, 4L, "stock-listing-STOCK001", "ACTIVE", "999999.00", "LISTING_UNDERWRITER");
+        insertAccount(jdbcTemplate, 4L, "stock-underwriter-STOCK001", "ACTIVE", "999999.00", "ISSUE_UNDERWRITER");
         insertOrder(jdbcTemplate, 1L, 1L, "BUY", "PENDING", "100.00");
         insertOrder(jdbcTemplate, 2L, 2L, "BUY", "PARTIALLY_FILLED", "50.00");
         insertOrder(jdbcTemplate, 3L, 1L, "SELL", "PENDING", "0.00");

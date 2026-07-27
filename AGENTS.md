@@ -18,7 +18,7 @@
 - `/api/stock/v1/system/status`
 - `/api/stock/v1/markets/**`
 - `/api/stock/v1/markets/admin/total-asset-history`
-- `GET /api/stock/v1/markets/admin/fund-flow-breakdown` (`ADMIN`, 전체·유저·자동 참여자·상장주관사를 한 번의 역할별 집계로 반환)
+- `GET /api/stock/v1/markets/admin/fund-flow-breakdown` (`ADMIN`, 전체와 현재 참여자 역할별 자산·자금 집계를 한 번에 반환)
 - `/api/stock/v1/markets/prices/{symbol}/ticks`
 - `/api/stock/v1/markets/order-books/{symbol}`
 - `/api/stock/v1/markets/order-book-instruments/{symbol}/market-report`
@@ -28,11 +28,11 @@
 - `GET /api/stock/v1/markets/auto-market/participants?lifecycleScope=CURRENT|WITHDRAWN` (`ADMIN`)
 - `GET /api/stock/v1/markets/auto-market/participants/overviews?lifecycleScope=CURRENT|WITHDRAWN` (`ADMIN`, 계좌·보유·주문·체결 요약)
 - `GET /api/stock/v1/markets/auto-market/participants/symbol-configs?lifecycleScope=CURRENT|WITHDRAWN` (`ADMIN`, 저장된 종목별 전략)
-- `GET /api/stock/v1/markets/admin/investor-flow-summary` (`ADMIN`, 유저·자동 참여자·상장주관사 기준 현재 거래일 비동기 요약)
+- `GET /api/stock/v1/markets/admin/investor-flow-summary` (`ADMIN`, 현재 계좌 역할 기준 거래일 비동기 요약)
 - `GET /api/stock/v1/markets/admin/investor-flow-history` (`ADMIN`, 오늘은 비동기 요약, 과거 거래일은 권위 있는 full-market cycle의 역할 동결 스냅샷과 집계 상태를 반환)
 - `GET /api/stock/v1/markets/institution-portfolios` (`ADMIN`, 축소시장용 기관 계정·목표 비중·최근 LIVE 결정·주문 감사)
-- `GET /api/stock/v1/markets/institution-portfolios/recommendations` (`ADMIN`, 활성 종목 수에 따른 권장 기관 개수·기관당 AUM·운용 유형별 수치)
-- `POST /api/stock/v1/markets/institution-portfolios` (`ADMIN`, 실행 중에도 선택한 기관 1개를 생성하고 다음 개장부터 제한된 다종목 LIVE 운용 시작)
+- `GET /api/stock/v1/markets/institution-portfolios/recommendations` (`ADMIN`, 활성 종목 수에 따른 권장 기관 개수·운용 유형별 생성 프리셋·AUM과 위험 수치·선택 가능한 종목)
+- `POST /api/stock/v1/markets/institution-portfolios` (`ADMIN`, 실행 중에도 운용 유형과 선택 종목 기준 AUM으로 기관 1개를 생성하고 다음 개장부터 LIVE 운용 시작)
 - `POST /api/stock/v1/markets/institution-portfolios/{portfolioId}/suspend` (`ADMIN`, 실행 중에도 허용되는 비상 중단. 포트폴리오를 먼저 SUSPENDED로 고정한 뒤 대기 의도와 전용 계좌 미체결 주문을 취소하고 예약을 반환)
 - `GET /api/stock/v1/markets/liquidity-mandates` (`ADMIN`, 전용 LP 계약·계정 역할·자기체결 그룹·거래일 위험 상태 감사)
 - `GET /api/stock/v1/markets/liquidity-mandates/recommendations` (`ADMIN`, 종목별 권장 기준 거래량·시드 수량·초기 현금과 생성 가능 사유)

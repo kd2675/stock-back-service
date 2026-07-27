@@ -60,7 +60,7 @@ stock 원장은 주문, 체결, 계좌, 보유, 가격, 주문장 종목, 시장
 - 기존 DB 적용 시 안전한 `ANNOUNCED`/`LISTED` legacy 유상증자만 subscription 일정으로 보정한다. 이미 진행된 상태나 일정 간격이 부족한 row, 배정수량보다 청약수량이 큰 row는 의도적인 `stock_migration_required_*` missing-table marker 조회로 alter를 중단해 수동 migration을 요구한다.
 - `stock-back-service/src/main/resources/db/ddl/stock_all.sql`만 MySQL business schema를 소유하며, batch에는 중복 MySQL full DDL을 두지 않는다.
 - batch H2 test DDL의 공유 원장 컬럼/제약은 canonical MySQL DDL과 맞춘다.
-- 모의시장 수급 분류는 `MANUAL_PARTICIPANT`, `AUTO_PARTICIPANT`, `LISTING_UNDERWRITER` 계정 역할을 사용한다. 실제시장형 개인·외국인·기관·기타법인 분류를 계좌나 체결 요약에 저장하지 않는다.
+- 모의시장 수급 분류는 일반·자동·기관·유동성 공급·발행 인수·시스템 보관 계정 역할을 사용한다. 실제시장형 개인·외국인·기관·기타법인 분류를 계좌나 체결 요약에 저장하지 않는다.
 - `portfolio_snapshot`의 `holding_quantity`, `reserved_sell_quantity`, `holding_position_count`는 세 컬럼이 모두 NULL이거나 모두 0 이상이어야 하고, 예약 매도수량은 총 보유수량을 초과할 수 없다. 기존 row를 0으로 backfill하지 않아 “과거 기록 없음”과 실제 0주를 구분한다.
 - 기존 DB와 canonical DDL의 기본값·CHECK 표현 차이는 `stock_schema_contract_alignment_alter.sql`로 정렬한다. 이 alter는 스냅샷 음수 값, 잘못된 레짐 값, 발행 필수값 누락이 있으면 `stock_migration_required_schema_contract_alignment` marker로 중단한다.
 - `stock_price_tick`의 시점별 최신가 조회는 전체 이력 윈도우 정렬 대신 `(symbol, price_time, id)` 인덱스 역방향 탐색을 사용한다.

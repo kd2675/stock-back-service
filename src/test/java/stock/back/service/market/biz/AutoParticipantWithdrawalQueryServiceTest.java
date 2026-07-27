@@ -83,12 +83,12 @@ class AutoParticipantWithdrawalQueryServiceTest {
         jdbcTemplate.update(
                 """
                 insert into stock_auto_participant_share_return(
-                    withdrawal_id, symbol, underwriter_account_id,
-                    receiver_account_id, receiver_role, transfer_reason,
+                    withdrawal_id, symbol, receiver_account_id,
+                    receiver_role, transfer_reason,
                     quantity, source_average_price, created_at
                 )
                 values (
-                    1, 'DEMO001', 201, 201, 'SYSTEM_CUSTODY',
+                    1, 'DEMO001', 201, 'SYSTEM_CUSTODY',
                     'AUTO_PARTICIPANT_WITHDRAWAL_CUSTODY', 10, 100.00, ?
                 )
                 """,
@@ -185,7 +185,6 @@ class AutoParticipantWithdrawalQueryServiceTest {
                 create table stock_auto_participant_share_return(
                     withdrawal_id bigint not null,
                     symbol varchar(20) not null,
-                    underwriter_account_id bigint not null,
                     receiver_account_id bigint not null,
                     receiver_role varchar(40) not null,
                     transfer_reason varchar(50) not null,

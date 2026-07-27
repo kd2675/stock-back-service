@@ -45,7 +45,6 @@ public class AdminFlowQueryService {
             "INSTITUTIONAL_INVESTOR",
             "LIQUIDITY_PROVIDER",
             "ISSUE_UNDERWRITER",
-            "LISTING_UNDERWRITER",
             "SYSTEM_CUSTODY"
     );
     private static final Set<String> REPORT_READY_PHASES = Set.of(
@@ -138,7 +137,6 @@ public class AdminFlowQueryService {
             with category_catalog(participant_category) as (
                 select 'MANUAL_PARTICIPANT'
                 union all select 'AUTO_PARTICIPANT'
-                union all select 'LISTING_UNDERWRITER'
                 union all select 'INSTITUTIONAL_INVESTOR'
                 union all select 'LIQUIDITY_PROVIDER'
                 union all select 'ISSUE_UNDERWRITER'
@@ -239,8 +237,7 @@ public class AdminFlowQueryService {
                         when 'INSTITUTIONAL_INVESTOR' then 3
                         when 'LIQUIDITY_PROVIDER' then 4
                         when 'ISSUE_UNDERWRITER' then 5
-                        when 'LISTING_UNDERWRITER' then 6
-                        else 7
+                        else 6
                       end
             """.formatted(cashFlowDatePredicate, executionDatePredicate);
     }

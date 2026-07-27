@@ -154,7 +154,6 @@ class TradingServiceTest {
             value = StockAccountParticipantCategory.class,
             names = {
                     "AUTO_PARTICIPANT",
-                    "LISTING_UNDERWRITER",
                     "INSTITUTIONAL_INVESTOR",
                     "LIQUIDITY_PROVIDER",
                     "ISSUE_UNDERWRITER",

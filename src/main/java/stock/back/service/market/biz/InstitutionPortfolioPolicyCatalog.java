@@ -8,9 +8,14 @@ import stock.back.service.common.exception.StockException;
 
 final class InstitutionPortfolioPolicyCatalog {
 
+    // Keep each style's recommended daily turnover envelope near 0.005% of
+    // the selected investable market while preserving its intended cadence.
     private static final List<Policy> POLICIES = List.of(
             new Policy(
                     "BALANCED_LONG_TERM", "연기금·저회전 균형형",
+                    "큰 자금을 낮은 회전율로 분산 운용",
+                    true,
+                    decimal("0.010000"),
                     decimal("0.600000"), decimal("0.500000"), decimal("0.700000"),
                     decimal("0.800000"), decimal("0.015000"), decimal("0.020000"),
                     decimal("0.005000"), decimal("0.002000"),
@@ -20,6 +25,9 @@ final class InstitutionPortfolioPolicyCatalog {
             ),
             new Policy(
                     "VALUE_CONTRARIAN", "가치·역추세형",
+                    "중간 자금을 역추세 신호에 따라 분할 운용",
+                    false,
+                    decimal("0.005000"),
                     decimal("0.650000"), decimal("0.450000"), decimal("0.800000"),
                     decimal("0.750000"), decimal("0.020000"), decimal("0.020000"),
                     decimal("0.005000"), decimal("0.002000"),
@@ -29,6 +37,9 @@ final class InstitutionPortfolioPolicyCatalog {
             ),
             new Policy(
                     "MOMENTUM", "모멘텀형",
+                    "작은 자금을 추세 변화에 맞춰 자주 재배분",
+                    false,
+                    decimal("0.003500"),
                     decimal("0.600000"), decimal("0.350000"), decimal("0.850000"),
                     decimal("0.600000"), decimal("0.025000"), decimal("0.025000"),
                     decimal("0.006000"), decimal("0.002500"),
@@ -38,6 +49,9 @@ final class InstitutionPortfolioPolicyCatalog {
             ),
             new Policy(
                     "ACTIVE_SHORT_TERM", "단기 적극운용형",
+                    "가장 작은 자금을 짧은 주기로 적극 운용",
+                    false,
+                    decimal("0.002500"),
                     decimal("0.550000"), decimal("0.250000"), decimal("0.850000"),
                     decimal("0.400000"), decimal("0.030000"), decimal("0.030000"),
                     decimal("0.008000"), decimal("0.003000"),
@@ -52,6 +66,18 @@ final class InstitutionPortfolioPolicyCatalog {
 
     static List<Policy> policies() {
         return POLICIES;
+    }
+
+    static Policy recommendedPolicy() {
+        List<Policy> recommendedPolicies = POLICIES.stream()
+                .filter(Policy::recommended)
+                .toList();
+        if (recommendedPolicies.size() != 1) {
+            throw new IllegalStateException(
+                    "Institution policy catalog must define exactly one recommended preset"
+            );
+        }
+        return recommendedPolicies.getFirst();
     }
 
     static Policy require(String investmentStyle) {
@@ -73,6 +99,9 @@ final class InstitutionPortfolioPolicyCatalog {
     record Policy(
             String investmentStyle,
             String recommendationLabel,
+            String recommendationDescription,
+            boolean recommended,
+            BigDecimal recommendedAumRateOfMarketCap,
             BigDecimal baseStockAllocationRate,
             BigDecimal minStockAllocationRate,
             BigDecimal maxStockAllocationRate,

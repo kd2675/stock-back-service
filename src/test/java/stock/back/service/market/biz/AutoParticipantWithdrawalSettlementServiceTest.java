@@ -143,7 +143,7 @@ class AutoParticipantWithdrawalSettlementServiceTest {
     }
 
     @Test
-    void settle_withoutListingUnderwriter_transfersSharesToSystemCustody() {
+    void settle_withoutExistingReceiverHolding_transfersSharesToSystemCustody() {
         jdbcTemplate.update(
                 """
                 insert into stock_holding(account_id, symbol, quantity, reserved_quantity, average_price, updated_at)
@@ -478,7 +478,6 @@ class AutoParticipantWithdrawalSettlementServiceTest {
                 create table stock_auto_participant_share_return(
                     withdrawal_id bigint not null,
                     symbol varchar(20) not null,
-                    underwriter_account_id bigint not null,
                     receiver_account_id bigint not null,
                     receiver_role varchar(40) not null,
                     transfer_reason varchar(50) not null,

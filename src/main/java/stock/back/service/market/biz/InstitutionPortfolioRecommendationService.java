@@ -15,7 +15,6 @@ import stock.back.service.market.vo.InstitutionPortfolioRecommendationResponse;
 @Service
 public class InstitutionPortfolioRecommendationService {
 
-    private static final BigDecimal RECOMMENDED_AUM_RATE = new BigDecimal("0.010000");
     private static final BigDecimal MIN_AUM_RATE = new BigDecimal("0.001000");
     private static final BigDecimal MAX_AUM_RATE = new BigDecimal("0.020000");
     private static final BigDecimal REFERENCE_VOLUME_RATE = new BigDecimal("0.030000");
@@ -31,6 +30,7 @@ public class InstitutionPortfolioRecommendationService {
         List<MarketSymbol> marketSymbols = jdbcClient.sql(
                         """
                         select instrument.symbol,
+                               instrument.name,
                                instrument.tradable_shares,
                                price.current_price
                           from stock_order_book_instrument instrument
@@ -48,12 +48,18 @@ public class InstitutionPortfolioRecommendationService {
                 )
                 .query((rs, rowNum) -> new MarketSymbol(
                         rs.getString("symbol"),
+                        rs.getString("name"),
                         rs.getLong("tradable_shares"),
                         rs.getBigDecimal("current_price")
                 ))
                 .list();
         long currentPortfolioCount = jdbcClient.sql(
-                        "select count(*) from stock_institution_portfolio"
+                        """
+                        select count(*)
+                          from stock_institution_portfolio
+                         where status = 'ACTIVE'
+                           and execution_mode = 'LIVE'
+                        """
                 )
                 .query(Long.class)
                 .single();
@@ -69,6 +75,7 @@ public class InstitutionPortfolioRecommendationService {
                 marketSymbols.stream()
                         .map(symbol -> new InstitutionPortfolioRecommendationResponse.Symbol(
                                 symbol.symbol(),
+                                symbol.name(),
                                 symbol.tradableShares(),
                                 symbol.currentPrice(),
                                 weights.getOrDefault(symbol.symbol(), BigDecimal.ZERO),
@@ -80,6 +87,13 @@ public class InstitutionPortfolioRecommendationService {
                         .map(policy -> new InstitutionPortfolioRecommendationResponse.Style(
                                 policy.investmentStyle(),
                                 policy.recommendationLabel(),
+                                policy.recommendationDescription(),
+                                policy.recommended(),
+                                policy.recommendedAumRateOfMarketCap(),
+                                recommendedAumAmount(
+                                        totalMarketCapitalization,
+                                        policy.recommendedAumRateOfMarketCap()
+                                ),
                                 policy.baseStockAllocationRate(),
                                 policy.minStockAllocationRate(),
                                 policy.maxStockAllocationRate(),
@@ -90,20 +104,29 @@ public class InstitutionPortfolioRecommendationService {
                                 policy.dailyParticipationRate()
                         ))
                         .toList();
+        BigDecimal defaultAumRate = InstitutionPortfolioPolicyCatalog.recommendedPolicy()
+                .recommendedAumRateOfMarketCap();
         return new InstitutionPortfolioRecommendationResponse(
                 marketSymbols.size(),
                 currentPortfolioCount,
                 recommendedPortfolioCount,
                 Math.max(0L, recommendedPortfolioCount - currentPortfolioCount),
                 totalMarketCapitalization.setScale(2, RoundingMode.HALF_UP),
-                RECOMMENDED_AUM_RATE,
+                defaultAumRate,
                 MIN_AUM_RATE,
                 MAX_AUM_RATE,
-                totalMarketCapitalization.multiply(RECOMMENDED_AUM_RATE)
-                        .setScale(2, RoundingMode.DOWN),
+                recommendedAumAmount(totalMarketCapitalization, defaultAumRate),
                 styles,
                 symbols
         );
+    }
+
+    private BigDecimal recommendedAumAmount(
+            BigDecimal marketCapitalization,
+            BigDecimal aumRate
+    ) {
+        return marketCapitalization.multiply(aumRate)
+                .setScale(2, RoundingMode.DOWN);
     }
 
     private int recommendedPortfolioCount(int activeSymbolCount) {
@@ -155,6 +178,7 @@ public class InstitutionPortfolioRecommendationService {
 
     private record MarketSymbol(
             String symbol,
+            String name,
             long tradableShares,
             BigDecimal currentPrice
     ) {

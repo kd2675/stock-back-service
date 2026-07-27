@@ -135,10 +135,7 @@ main: BEGIN
     JOIN stock_account legacy_account
       ON legacy_account.id = candidate.legacy_account_id
    WHERE legacy_account.status <> 'CLOSED'
-      OR legacy_account.participant_category NOT IN (
-          'LISTING_UNDERWRITER',
-          'ISSUE_UNDERWRITER'
-      )
+      OR legacy_account.participant_category <> 'ISSUE_UNDERWRITER'
       OR legacy_account.cash_balance <> 0
       OR (
           legacy_account.account_code IS NOT NULL

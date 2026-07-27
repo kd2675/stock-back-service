@@ -82,7 +82,7 @@ CREATE TABLE IF NOT EXISTS stock_execution_daily_account_snapshot (
   KEY idx_stock_execution_daily_account_account_date (account_id, simulation_trade_date, close_run_id),
   CONSTRAINT chk_stock_execution_daily_account_category CHECK (
     participant_category IN (
-      'LISTING_UNDERWRITER', 'AUTO_PARTICIPANT', 'MANUAL_PARTICIPANT',
+      'AUTO_PARTICIPANT', 'MANUAL_PARTICIPANT',
       'INSTITUTIONAL_INVESTOR', 'LIQUIDITY_PROVIDER',
       'ISSUE_UNDERWRITER', 'SYSTEM_CUSTODY'
     )

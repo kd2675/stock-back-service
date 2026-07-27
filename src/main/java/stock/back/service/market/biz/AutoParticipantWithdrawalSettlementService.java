@@ -556,20 +556,19 @@ class AutoParticipantWithdrawalSettlementService {
             int inserted = jdbcClient.sql(
                             """
                             insert into stock_auto_participant_share_return(
-                                withdrawal_id, symbol, underwriter_account_id,
-                                receiver_account_id, receiver_role, transfer_reason,
+                                withdrawal_id, symbol, receiver_account_id,
+                                receiver_role, transfer_reason,
                                 quantity, source_average_price, created_at
                             )
                             values (
-                                :withdrawalId, :symbol, :underwriterAccountId,
-                                :receiverAccountId, :receiverRole, :transferReason,
+                                :withdrawalId, :symbol, :receiverAccountId,
+                                :receiverRole, :transferReason,
                                 :quantity, :sourceAveragePrice, :createdAt
                             )
                             """
                     )
                     .param("withdrawalId", withdrawalId)
                     .param("symbol", completedReturn.symbol())
-                    .param("underwriterAccountId", completedReturn.receiverAccountId())
                     .param("receiverAccountId", completedReturn.receiverAccountId())
                     .param("receiverRole", completedReturn.receiverRole())
                     .param("transferReason", completedReturn.transferReason())

@@ -2,7 +2,7 @@ USE STOCK_SERVICE;
 
 -- Removes the obsolete real-market investor classification that was briefly added
 -- to simulation accounts and compact flow snapshots. Role-based flow is derived as
--- USER / AUTO_PARTICIPANT / LISTING_UNDERWRITER without touching hot ledgers.
+-- USER / AUTO_PARTICIPANT / ISSUE_UNDERWRITER without touching hot ledgers.
 SET SESSION lock_wait_timeout = 15;
 
 DROP PROCEDURE IF EXISTS stock_drop_obsolete_investor_type;

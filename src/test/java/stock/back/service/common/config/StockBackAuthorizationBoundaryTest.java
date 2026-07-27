@@ -143,7 +143,9 @@ class StockBackAuthorizationBoundaryTest {
                 create table if not exists stock_auto_participant_share_return (
                     withdrawal_id bigint not null,
                     symbol varchar(20) not null,
-                    underwriter_account_id bigint not null,
+                    receiver_account_id bigint not null,
+                    receiver_role varchar(40) not null,
+                    transfer_reason varchar(50) not null,
                     quantity bigint not null,
                     source_average_price decimal(19, 2) not null,
                     created_at timestamp not null,
