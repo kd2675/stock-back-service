@@ -39,6 +39,8 @@ TRUNCATE TABLE stock_account_cash_flow;
 TRUNCATE TABLE stock_auto_participant_cash_flow_run;
 TRUNCATE TABLE stock_auto_participant_order_budget;
 TRUNCATE TABLE stock_auto_participant_funding_budget;
+TRUNCATE TABLE stock_auto_participant_liquidation_plan;
+TRUNCATE TABLE stock_auto_participant_daily_behavior_state;
 TRUNCATE TABLE stock_liquidity_daily_state;
 TRUNCATE TABLE stock_underwriting_daily_supply_state;
 TRUNCATE TABLE stock_institution_order_intent;

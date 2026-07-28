@@ -28,6 +28,7 @@ import stock.back.service.market.biz.AutoParticipantProfileConfigService;
 import stock.back.service.market.biz.AutoParticipantSymbolConfigQueryService;
 import stock.back.service.market.biz.AutoParticipantSymbolConfigService;
 import stock.back.service.market.biz.AutoParticipantWithdrawalQueryService;
+import stock.back.service.market.biz.AutoParticipantV3OperationsService;
 import stock.back.service.market.biz.InstitutionEmergencyStopService;
 import stock.back.service.market.biz.InstitutionPortfolioCashAdjustmentService;
 import stock.back.service.market.biz.InstitutionPortfolioPolicyControlService;
@@ -63,6 +64,8 @@ import stock.back.service.market.vo.AutoParticipantResponse;
 import stock.back.service.market.vo.AutoParticipantSymbolConfigRequest;
 import stock.back.service.market.vo.AutoParticipantSymbolConfigResponse;
 import stock.back.service.market.vo.AutoParticipantWithdrawalAuditResponse;
+import stock.back.service.market.vo.AutoParticipantV3OperationsResponse;
+import stock.back.service.market.vo.AutoParticipantV3RuntimeRequest;
 import stock.back.service.market.vo.InstitutionPortfolioCashAdjustmentRequest;
 import stock.back.service.market.vo.InstitutionPortfolioResponse;
 import stock.back.service.market.vo.InstitutionPortfolioCreateRequest;
@@ -99,6 +102,7 @@ public class AutoMarketAdminController {
     private final AutoParticipantSymbolConfigQueryService autoParticipantSymbolConfigQueryService;
     private final AutoParticipantPerformanceSummaryQueryService autoParticipantPerformanceSummaryQueryService;
     private final AutoParticipantWithdrawalQueryService autoParticipantWithdrawalQueryService;
+    private final AutoParticipantV3OperationsService autoParticipantV3OperationsService;
     private final InstitutionPortfolioQueryService institutionPortfolioQueryService;
     private final InstitutionPortfolioProvisionService institutionPortfolioProvisionService;
     private final InstitutionPortfolioCashAdjustmentService
@@ -388,6 +392,25 @@ public class AutoMarketAdminController {
             @RequestBody AutoParticipantProfileConfigRequest request
     ) {
         return ResponseDataDTO.of(autoParticipantProfileConfigService.updateAutoParticipantProfileConfig(profileType, request));
+    }
+
+    @GetMapping("/auto-market/v3/operations")
+    public ResponseDataDTO<AutoParticipantV3OperationsResponse>
+    getAutoParticipantV3Operations() {
+        return ResponseDataDTO.of(autoParticipantV3OperationsService.getOperations());
+    }
+
+    @PatchMapping("/auto-market/v3/runtime")
+    public ResponseDataDTO<AutoParticipantV3OperationsResponse>
+    updateAutoParticipantV3Runtime(
+            @RequestBody AutoParticipantV3RuntimeRequest request,
+            UserContext userContext
+    ) {
+        autoParticipantV3OperationsService.updateRuntime(
+                request,
+                userContext.getUserKey()
+        );
+        return ResponseDataDTO.of(autoParticipantV3OperationsService.getOperations());
     }
 
     @PatchMapping("/auto-market/configs/{symbol}")

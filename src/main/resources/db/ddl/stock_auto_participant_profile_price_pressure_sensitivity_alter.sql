@@ -47,7 +47,7 @@ SET @profile_price_sensitivity_backfill_sql := IF(
           WHEN ''LIQUIDITY_AVOIDANT'' THEN 0.4500
           WHEN ''CASH_DEFENSIVE'' THEN 0.4500
           WHEN ''LIMIT_DOWN_TRAPPED'' THEN 0.4000
-          WHEN ''MARKET_MAKER'' THEN 0.3000
+          WHEN ''PASSIVE_LIMIT_TRADER'' THEN 0.3000
           WHEN ''OBSERVER'' THEN 0.3000
           ELSE 1.0000
         END'

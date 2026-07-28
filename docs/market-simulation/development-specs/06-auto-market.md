@@ -25,10 +25,11 @@
 6. 각 압력은 가격·자산 선호·변동성·유동성·체결 공격성 -100~100이며, 관리자 편향을 최빈값으로 쓰는 삼각분포에서 추출한다.
 7. 주 압력 70%와 보조 압력 30%를 항목별로 합성한다.
 8. 참여자별-종목별 주문 활동 강도와 최신 활성 평가 보고서 점수, 프로필 정책을 함께 읽는다. 명시 강도가 없으면 5를 쓰며 보고서 점수는 활동 강도를 바꾸지 않는다.
-9. 자동 참여자 `profile_type`에 맞는 `AutoProfileBehavior` 구현체가 주문 수, 매수/매도 방향, 수량 상한, TTL을 결정한다.
-10. 현재가, 전일종가, 최우선 매수/매도, 호가 잔량, 평균단가, 시장·가격대별 호가단위 기준으로 자동 주문 방향과 가격을 만든다. 일반 자동 참여자의 방향 가격은 가격 압력을 현재가 비율로 반영하고 기본 0.6%, 변동성 반영 후 최대 0.8%로 제한한다. 중립 압력에서는 매수를 중심가 아래, 매도를 중심가 위에 두고 압력이 강해질수록 우세 방향 호가가 중심가에 접근한다. 별도 교차 추첨은 상승 압력에서 매수를 높이고 매도를 낮추며 하락 압력에서는 반대로 적용한다. 생성 단계에서는 상대 또는 자기 반대 호가를 피해 한 틱 밖으로 재가격하지 않는다. V2 시장조성은 명시적 시장조성 가격 모드와 목표 재고 모드가 모두 설정된 경우에만 동작하며, 종목별 재고 목표를 기준으로 양방향 수동 호가를 만든다. 일일 가격 제한으로 수동 호가를 만들 수 없으면 상대 호가를 교차시키지 않고 해당 주문을 생략한다.
-11. 자동 주문을 `stock_order`에 넣고 ready-symbol 큐에 종목을 등록한다.
-12. 상시 체결 worker가 큐를 받아 주문장 매칭을 시도한다.
+9. 거래일별 V3 잠재 상태와 `next_attention_at`·`next_guard_at` 중 먼저 도래한 시계를 확인한다. 자발적 관심은 확률적으로 한 종목만 고르고, 리스크 가드는 보유 종목 전체를 검사한다.
+10. `profile_type`에 맞는 `AutoProfileBehavior`가 BUY/SELL/HOLD와 긴급도를 결정한다. 자발적 주문만 조건부 실행 확률을 통과해야 하며 강제 위험축소·마감청산은 관심 확률을 우회한다.
+11. 현금·보유·미체결·자산배분·호가잔량·ADV·비상 회전율 상한을 먼저 합쳐 `safeMaxQuantity`를 계산한 뒤, 그 범위에서 소액 편향 분포로 수량을 한 번 추첨한다. 일반 관심 이벤트는 최대 한 주문만 만든다.
+12. 현재가, 전일종가, 최우선 호가와 시장별 동적 호가단위로 방향성 지정가를 만들고 `stock_order`에 V3 정책·결정 스냅샷을 저장한 뒤 ready-symbol 큐에 등록한다. 공식 LP의 양방향 호가와 재고 관리는 별도 LP 엔진이 담당한다.
+13. 상시 체결 worker가 큐를 받아 주문장 매칭을 시도한다.
 
 ## 현재 설정
 
@@ -41,7 +42,7 @@
 - 자동 참여자 입금/회수 이력: `stock_account_cash_flow`
 - 배치 자동 실행 중지/재개 상태는 yml 런타임 토글 설정이 아니라 `stock_batch_job_control.runtime_enabled` DB 행만 기준으로 한다. 행이 없으면 batch 서버가 최초 조회 시 `runtime_enabled=true`로 생성한다.
 - 자동 참여자 주기 입금은 주문 생성 job과 분리된 `auto-participant-cash-flow` job에서 처리한다. 어드민은 stock-back 프록시 API를 통해 batch의 `auto-participant-cash-flow/status`를 조회/변경하고, `auto-participant-cash-flow/run`을 수동 실행한다. `runtime_enabled=false`는 스케줄러 자동 실행을 건너뛰게 하는 운영 제어값이며, 수동 run API는 관리자 명시 실행으로 별도 허용한다.
-- `behavior_model_version`은 `stock_auto_participant_profile_config`에만 저장하며 `V1` 또는 `V2`를 가진다. 같은 프로필의 모든 자동 참여자는 동일 모델을 사용하고 참여자 행에는 개인별 모델 선택 컬럼을 두지 않는다. 현재 프로필 설정은 모두 V2로 전환하며, 운영 지표가 기준을 벗어날 때만 해당 프로필 전체를 V1으로 되돌린다. 이미 생성된 주문은 `stock_order.auto_behavior_model_version` 스냅샷을 유지해 설정 변경 중에도 실행 의미가 바뀌지 않는다. 판단 비교 전용 저장 테이블이나 주문 hot path의 추가 DB 쓰기는 두지 않는다.
+- `behavior_model_version`은 `stock_auto_participant_profile_config`에만 저장하며 값은 `V3`만 허용한다. 참여자별 모델 선택과 구형 모델 폴백은 없다. 이미 생성된 주문은 `stock_order.auto_behavior_model_version` 스냅샷으로 생성 당시 의미를 보존한다.
 - stock-batch job 중복 실행 방지는 JVM 메모리 락이 아니라 `stock_batch_job_lock` DB 테이블 기준으로 처리한다. 배치 서버가 여러 대 떠도 같은 job은 하나만 실행되어야 한다.
 - 자동 참여자 심리 프로필: `stock_auto_participant.profile_type`
 - 참여자별-종목별 가동/주문 활동 강도: `stock_auto_participant_symbol_config`
@@ -61,7 +62,7 @@
 | `LOSS_AVERSE` | 손실 구간에서 강제 물타기나 매도 대신 주문을 쉬어 손실 확정을 미룬다. |
 | `OVERCONFIDENT` | 미실현 이익 또는 최근 5거래일 실현 성과와 1시간·1거래일 상승이 함께 확인되면 위험을 늘린다. |
 | `HERD_FOLLOWER` | 호가 깊이, 5분 모멘텀, 최근 5분 실제 체결량·참여 계좌가 같은 방향을 확인할 때만 따라간다. |
-| `MARKET_MAKER` | 전체 주식 목표 50%를 해당 계좌의 활성 자동장 종목 수로 나눈 종목별 목표와 ±20% 밴드 안에서는 수동 양방향 호가를 쌍으로 공급하고, 밴드 밖에서는 재고를 목표로 되돌리는 방향만 유지한다. |
+| `PASSIVE_LIMIT_TRADER` | 호가 의무가 없는 일반 참여자로, 공격성이 낮은 단방향 지정가를 오래 유지한다. 양방향 호가·재고 의무·자동 재호가는 공식 LP 엔진만 수행한다. |
 | `NOISE_TRADER` | 랜덤 노이즈가 크지만 현금이 없으면 매수하지 않고 보유가 없으면 매도하지 않는다. |
 | `VALUE_ANCHOR` | 펀더멘털 적정가가 아니라 20거래일 수익률 괴리를 천천히 되돌리는 중기 기준가 회귀형이다. |
 | `SCALPER` | 5분 신호, 3~5분 최대 보유시간, 작은 익절·손절과 장 마감 청산을 사용한다. |
@@ -92,8 +93,8 @@
 - 자동 참여자 성향은 항상 주된 기준이다. 평가 보고서는 종목별 최신 관리 신호로만 섞이며, 보고서가 없어도 자동장은 동작한다.
 - 자동 참여자 profile type은 실제 회원 식별 구조를 바꾸지 않고, 같은 `user_key` 기반 자동참여자에 심리/행동 정책만 부여한다.
 - `AutoParticipantProfileType` 값 하나에는 반드시 같은 타입을 반환하는 `*Behavior` 클래스 하나가 있어야 하며, `AutoProfileBehaviorRegistry.createDefault()`에 등록해야 한다.
-- `order_multiplier`는 V1 재현과 기존 설정 마이그레이션용 호환 필드다. V2에서는 `decision_frequency_multiplier`, `orders_per_decision_multiplier`, `order_ttl_multiplier`, `quantity_multiplier`가 각각 의사결정 빈도·결정당 주문 수·TTL·수량만 제어한다. 구형 API가 V2 필드를 생략해도 변경된 `order_multiplier`나 행동 가중치에서 새 실행 정책을 다시 추론하지 않고 프로필별 명시 기본값을 사용한다. 빈도 또는 결정당 주문 수가 0이면 주문 결정을 중지한다.
-- V2의 `pricing_mode`, `exit_mode`, `inventory_mode` 기본값은 프로필 유형별 명시 정책이다. 연속 행동 가중치의 0.8/0.85/0.9 경계로 모드를 바꾸는 계산은 V1 재현과 1회성 마이그레이션에만 남긴다.
+- `decision_frequency_multiplier`와 `orders_per_decision_multiplier`는 저장/API 호환 필드일 뿐 V3 주문 빈도나 주문 수를 바꾸지 않는다. V3의 빈도는 정책 리비전·일일 잠재 상태·위험률 시계가, 일반 이벤트의 주문 수는 최대 1건 불변식이 결정한다.
+- V3의 가격·재고 모드는 각각 `DIRECTIONAL`, `SIGNAL_DRIVEN`만 허용한다. 프로필별 차이는 행동 신호와 `exit_mode`, 위험·수량 정책으로 표현하며 공식 시장조성 기능을 일반 자동 참여자 모드로 재도입하지 않는다.
 - 프로필 설정의 핵심 행동 가중치가 저장되어 있지 않으면 해당 프로필의 기본 심리 성향을 유지한다. 기존 커스텀 설정 행이 있어도 새 행동 가중치가 비어 있으면 기본 성향을 0으로 덮어쓰지 않는다.
 - `PAYDAY_ACCUMULATOR`의 거래 행동과 정기 자금 공급은 별도 계약이다. API는 프로필 행동 가중치와 독립된 `fundingPolicy`의 `recurringDepositAmount`, `recurringDepositIntervalValue`, `recurringDepositIntervalUnit`를 사용한다. 배치는 이 자금 정책으로 `AUTO_PROFILE_RECURRING_DEPOSIT` 현금 유입과 같은 금액의 전용 funding budget을 만들고, 아직 예약·체결되지 않은 가용 예산 안에서만 매수한다. 저장 컬럼 `recurring_deposit_amount`, `recurring_deposit_interval_value`, `recurring_deposit_interval_unit`는 호환을 위해 기존 프로필 설정 테이블에 유지하지만 `ProfilePolicy`의 행동 가중치에는 포함하지 않는다. `recurring_deposit_interval_days`는 기존 일 단위 설정 호환용으로만 유지한다.
 - `DIVIDEND_REINVESTOR`는 `AUTO_PROFILE_RECURRING_DEPOSIT` 월급/정기 현금 유입을 쓰지 않는다. `DIVIDEND_PAYMENT`가 만든 배당 원천 종목별 전용 예산을 주문 예약·체결·취소와 대사하며 남은 금액 안에서만 매수한다.
@@ -108,10 +109,10 @@
 - `CASH_DEFENSIVE`는 관망형처럼 쉬는 구간이 있고, 강한 신호에서도 낮은 주문 빈도와 작은 수량으로 현금 여력을 남긴다.
 - 자동 주문 TTL은 종목별 `stock_auto_market_config.order_ttl_seconds`에 프로필 설정의 `order_ttl_multiplier`를 곱해 계산한다. `SCALPER`, `DAY_TRADER`, `PANIC_SELLER`는 짧게, `LONG_TERM_HOLDER`, `LIMIT_DOWN_TRAPPED`, `OBSERVER`는 길게 유지한다.
 - 자동 주문은 open order로 남을 수 있고 TTL로 취소된다.
-- V2 시장조성형의 기존 수동 호가는 최소 30시뮬레이션 초를 유지하고 동일 방향 최우선 호가에서 기본 2틱보다 멀어진 경우에만 TTL 전에 교체 대상으로 삼는다. TTL 만료를 포함한 취소·재등록은 방향별 한 실행 10건으로 제한하고 후보도 종목별 bounded 조회한다.
+- 공식 LP의 호가 유지·교체·재고 밴드·일일 체결/제출 한도는 `LiquidityProviderQuoteProcessor` 경로에서만 처리한다. 일반 자동 참여자 만료 worker는 주문별 `expires_at`과 기관 주문 TTL을 처리한다.
 - LP와 기관의 `reference_daily_volume`은 완료된 종목별 최근 20거래일 `buy_quantity` 평균을 사용한다. 이력이 없는 신규 종목만 유통주식 3%를 사용하며, 이상치로 위험 용량이 무한히 커지지 않도록 0.5~200% 유통주식 범위로 제한한다. 이 값은 체결 목표가 아니라 일일·주문별 위험 상한의 분모다.
 - LP 기본 균형형은 최근 ADV의 체결 18%, 제출 90%까지 수용할 수 있지만 체결을 강제하지 않는다. 안정형/균형형/적극형 프리셋은 같은 ADV 분모를 유지한 채 체결 참여·호가 크기·TTL·손실 한도만 달리한다.
-- 기관 권장 AUM은 균형형 5%, 가치형 3%, 모멘텀형 2%, 단기형 1%로 두고, 각 정책의 일일 AUM 회전율과 종목 ADV 참여율을 독립 상한으로 적용한다. 여러 기관의 합산 용량은 의미 있게 확보하되 비활성일 0주와 가격 불리 시 미체결·이월을 허용한다.
+- 기관 권장 AUM은 균형형 5%, 가치형 3%, 모멘텀형 2%, 단기형 1%로 두고, 일일 AUM 회전율 5/10/15/20%와 종목 ADV 참여율 5/8/12/18%를 다시 독립 상한으로 적용한다. 여러 기관의 합산 용량은 의미 있게 확보하되 비활성일 0주와 가격 불리 시 미체결·이월을 허용한다.
 - 소액분산형의 종목 노출 선택은 profile shard마다 due 계좌·활성 후보 종목을 한 번에 조회한다. 보유수량과 열린 매수 잔량을 현재가로 평가해 미보유·저비중 종목을 우선하되 주문 수·주기·수량 상한은 바꾸지 않는다. 계좌별 또는 주문별 추가 조회는 금지하며 실제 MySQL에서 기존 계좌·종목/주문 인덱스 선택과 p95를 별도로 확인한다.
 - 한 실행에서 여러 주문을 계획할 때 계좌 가용 현금·보유 수량과 미체결 잔량은 이미 계획한 주문을 메모리에서 반영해 다음 판단에 사용한다. 가격 기준 최우선 호가는 실행 시작 시점의 주문장으로 고정해 아직 저장되지 않은 자기 계획 주문이 다음 가격을 틱 단위로 연쇄 이동시키지 않는다. 이를 위해 주문마다 DB를 다시 조회하지 않는다.
 - 자동 주문 생성 단계에는 상대·자기 반대 호가 교차 방지 재가격이 없다. 합법적인 가격대와 호가단위 안의 시장성 지정가는 그대로 주문 원장에 들어간다. 실제 동일 계좌 또는 동일 `self_trade_group_id` 자기체결은 후보 조회와 주문 잠금 후 재검증에서 차단하며, 상위 후보가 같은 계좌·기관 주문으로 가득 차도 최우선 외부 후보를 bounded 보강 조회해 뒤쪽의 정상 체결을 놓치지 않는다.
@@ -121,7 +122,7 @@
 
 - 발행자/시장공급자 매도 주문 정책 고도화.
 - 자동 주문이 사용자 주문에 미치는 영향을 모니터링하는 지표.
-- 프로필별 행동 성과 지표 중 결정·HOLD·V1/V2 행동 일치율, 주문 수, 체결률, 매수/매도 비율, 현재 보유일은 검증 보고서에서 확인한다. 평가손익과 완결 포지션 기준 평균 보유 시간은 후속 성과 원장 범위다.
+- 프로필별 관심·HOLD·조건부 실행 탈락, 주문 수, 체결률, 피로도, 매수/매도 비율, 청산 미완료를 정책 버전별로 관측한다. 평가손익과 완결 포지션 기준 평균 보유 시간은 후속 성과 원장 범위다.
 - 시장 심리 확장: 뉴스 이벤트, 급등락, 유동성 부족, 연속 손실/연속 수익에 따른 프로필별 민감도 추가.
 
 ## 바꿀 때 순서
@@ -135,7 +136,7 @@
 
 ## 검증
 
-- `node scripts/verify-stock-auto-profiles.mjs`: 27개 enum/Behavior/DDL/UI 계약뿐 아니라 배치 `ProfileExecutionPolicy.v2Default()`와 백엔드의 프로필별 `pricing/exit/inventory` 명시 기본값을 직접 읽어 비교한다. 과거 가중치 임계값으로 V2 모드를 재추론해 일치로 오판하지 않는다.
-- `./gradlew :stock-batch-service:test --tests '*AutoMarketServiceTest*'`
+- `node scripts/verify-stock-auto-profiles.mjs`: 27개 enum/Behavior/DDL/UI, V3 전체 프로필 등록·결정 범위·동일 시드 재현성, 백엔드/배치 기본 정책을 직접 비교한다.
+- `./gradlew :stock-batch-service:test --tests '*AutoMarketService*' --tests '*AutoProfileV3ContractTest*'`
 - `./gradlew :stock-batch-service:test --tests '*InternalOrderBookExecutionServiceTest*'`
 - `cd stock-front-service && npm run build`

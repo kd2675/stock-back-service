@@ -54,7 +54,7 @@ public class AutoMarketStatusDataLoader {
                        p.display_name,
                        p.enabled,
                        p.profile_type,
-                       coalesce(pc.behavior_model_version, 'V2') as behavior_model_version,
+                       coalesce(pc.behavior_model_version, 'V3') as behavior_model_version,
                        p.behavior_seed,
                        p.recurring_cash_amount,
                        p.recurring_cash_interval_value,

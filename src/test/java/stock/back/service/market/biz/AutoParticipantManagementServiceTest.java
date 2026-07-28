@@ -252,16 +252,16 @@ class AutoParticipantManagementServiceTest {
     }
 
     @Test
-    void upsertAutoParticipant_newParticipant_usesProfileModelAndPreservesSeed() {
-        when(stockAutoParticipantRepository.findById("stock-auto-v2")).thenReturn(Optional.empty());
+    void upsertAutoParticipant_newParticipant_usesV3ProfileModelAndPreservesSeed() {
+        when(stockAutoParticipantRepository.findById("stock-auto-v3")).thenReturn(Optional.empty());
         when(stockAutoParticipantRepository.save(any(StockAutoParticipant.class)))
                 .thenAnswer(invocation -> invocation.getArgument(0));
-        when(stockAccountRepository.findByUserKey("stock-auto-v2")).thenReturn(Optional.empty());
+        when(stockAccountRepository.findByUserKey("stock-auto-v3")).thenReturn(Optional.empty());
 
         var response = service.upsertAutoParticipant(
-                "stock-auto-v2",
+                "stock-auto-v3",
                 new AutoParticipantRequest(
-                        "V2 참여자",
+                        "V3 참여자",
                         true,
                         "NOISE_TRADER",
                         null,
@@ -273,7 +273,7 @@ class AutoParticipantManagementServiceTest {
                 )
         );
 
-        assertThat(response.behaviorModelVersion()).isEqualTo("V2");
+        assertThat(response.behaviorModelVersion()).isEqualTo("V3");
         assertThat(response.behaviorSeed()).isEqualTo("987654321");
     }
 

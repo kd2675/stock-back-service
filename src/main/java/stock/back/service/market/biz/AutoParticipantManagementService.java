@@ -263,9 +263,9 @@ public class AutoParticipantManagementService {
                         : participant.getProfileType().name(),
                 stockAutoParticipantProfileConfigRepository.findById(participant.getProfileType())
                         .map(config -> config.getBehaviorModelVersion() == null
-                                ? "V2"
+                                ? "V3"
                                 : config.getBehaviorModelVersion().name())
-                        .orElse("V2"),
+                        .orElse("V3"),
                 participant.getBehaviorSeed() == null ? null : participant.getBehaviorSeed().toString(),
                 participant.getRecurringCashAmount(),
                 participant.getRecurringCashIntervalValue(),

@@ -25,9 +25,7 @@ final class AutoParticipantProfileConfigDefaults {
     }
 
     static AutoParticipantProfilePricingMode pricingModeFor(AutoParticipantProfileType profileType) {
-        return profileType == AutoParticipantProfileType.MARKET_MAKER
-                ? AutoParticipantProfilePricingMode.MARKET_MAKING
-                : AutoParticipantProfilePricingMode.DIRECTIONAL;
+        return AutoParticipantProfilePricingMode.DIRECTIONAL;
     }
 
     static AutoParticipantProfileExitMode exitModeFor(AutoParticipantProfileType profileType) {
@@ -40,9 +38,7 @@ final class AutoParticipantProfileConfigDefaults {
     }
 
     static AutoParticipantProfileInventoryMode inventoryModeFor(AutoParticipantProfileType profileType) {
-        return profileType == AutoParticipantProfileType.MARKET_MAKER
-                ? AutoParticipantProfileInventoryMode.TARGET_ALLOCATION
-                : AutoParticipantProfileInventoryMode.SIGNAL_DRIVEN;
+        return AutoParticipantProfileInventoryMode.SIGNAL_DRIVEN;
     }
 
     private static Map<AutoParticipantProfileType, ProfileConfigDefaults> createDefaults() {
@@ -53,7 +49,7 @@ final class AutoParticipantProfileConfigDefaults {
         defaults.put(AutoParticipantProfileType.LOSS_AVERSE, profileDefaults(0.25, 0.10, 0.00, 0.95, 0.10, 0.00, 0.05, 0.08, 0.05, 0.00, 0.85, 0.80, 1.80, 0.80, 0.75, 0.60, 0.05));
         defaults.put(AutoParticipantProfileType.OVERCONFIDENT, profileDefaults(0.35, 0.45, 0.00, 0.20, 0.25, 0.00, 0.95, 0.15, 0.05, 0.05, 1.25, 1.15, 0.90, 1.25, 0.10, 0.05, 0.10));
         defaults.put(AutoParticipantProfileType.HERD_FOLLOWER, profileDefaults(0.25, 0.25, 0.00, 0.15, 0.90, 0.00, 0.15, 0.12, 0.15, 0.00, 1.05, 1.05, 1.00, 1.00, 0.05, 0.00, 0.20));
-        defaults.put(AutoParticipantProfileType.MARKET_MAKER, profileDefaults(0.15, 0.05, 0.00, 0.10, 0.10, 0.95, 0.00, 0.08, 0.00, 0.00, 1.25, 0.65, 0.60, 1.00, 0.00, 0.00, 0.45));
+        defaults.put(AutoParticipantProfileType.PASSIVE_LIMIT_TRADER, profileDefaults(0.15, 0.05, 0.10, 0.15, 0.05, 0.45, 0.05, 0.10, 0.00, 0.10, 0.70, 0.25, 1.40, 0.65, 0.45, 0.20, 0.15));
         defaults.put(AutoParticipantProfileType.NOISE_TRADER, profileDefaults(0.35, 0.20, 0.10, 0.20, 0.15, 0.00, 0.10, 0.45, 0.05, 0.05, 1.00, 1.00, 1.00, 1.00, 0.10, 0.05, 0.20));
         defaults.put(AutoParticipantProfileType.VALUE_ANCHOR, profileDefaults(0.20, 0.00, 0.45, 0.55, 0.00, 0.10, 0.00, 0.08, 0.00, 0.25, 0.80, 0.75, 1.60, 0.80, 0.50, 0.35, 0.15));
         defaults.put(AutoParticipantProfileType.SCALPER, profileDefaults(0.25, 0.55, 0.00, 0.10, 0.35, 0.00, 0.20, 0.22, 0.10, 0.00, 1.15, 1.15, 0.65, 0.65, 0.00, 0.00, 0.85));
@@ -97,7 +93,7 @@ final class AutoParticipantProfileConfigDefaults {
             case LONG_TERM_HOLDER -> 0.55;
             case LIQUIDITY_AVOIDANT, CASH_DEFENSIVE -> 0.45;
             case LIMIT_DOWN_TRAPPED -> 0.40;
-            case MARKET_MAKER, OBSERVER -> 0.30;
+            case PASSIVE_LIMIT_TRADER, OBSERVER -> 0.30;
         };
     }
 

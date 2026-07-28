@@ -77,7 +77,7 @@ public record AutoParticipantResponse(
     ) {
         this(
                 userKey, displayName, enabled, profileType,
-                "V1", null,
+                "V3", null,
                 recurringCashAmount, recurringCashIntervalValue, recurringCashIntervalUnit,
                 accountId, accountStatus, cashBalance, createdAt, updatedAt, withdrawnAt,
                 BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO,

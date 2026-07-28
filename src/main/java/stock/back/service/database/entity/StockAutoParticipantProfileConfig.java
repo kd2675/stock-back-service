@@ -152,7 +152,7 @@ public class StockAutoParticipantProfileConfig {
                 panicSellWeight,
                 dipBuyWeight,
                 orderMultiplier,
-                legacyDecisionFrequency(orderMultiplier, orderTtlMultiplier),
+                defaultDecisionFrequency(orderMultiplier, orderTtlMultiplier),
                 orderMultiplier,
                 aggressionMultiplier,
                 pricePressureSensitivity,
@@ -161,9 +161,9 @@ public class StockAutoParticipantProfileConfig {
                 holdingPatienceWeight,
                 deepLossHoldWeight,
                 profitTakingWeight,
-                legacyPricingMode(marketMakingWeight),
-                legacyExitMode(profitTakingWeight, holdingPatienceWeight),
-                legacyInventoryMode(marketMakingWeight),
+                defaultPricingMode(marketMakingWeight),
+                defaultExitMode(profitTakingWeight, holdingPatienceWeight),
+                defaultInventoryMode(marketMakingWeight),
                 recurringDepositAmount,
                 BigDecimal.valueOf(recurringDepositIntervalDays == null ? 30 : recurringDepositIntervalDays),
                 RecurringCashIntervalUnit.DAY
@@ -207,7 +207,7 @@ public class StockAutoParticipantProfileConfig {
                 panicSellWeight,
                 dipBuyWeight,
                 orderMultiplier,
-                legacyDecisionFrequency(orderMultiplier, orderTtlMultiplier),
+                defaultDecisionFrequency(orderMultiplier, orderTtlMultiplier),
                 orderMultiplier,
                 aggressionMultiplier,
                 pricePressureSensitivity,
@@ -216,9 +216,9 @@ public class StockAutoParticipantProfileConfig {
                 holdingPatienceWeight,
                 deepLossHoldWeight,
                 profitTakingWeight,
-                legacyPricingMode(marketMakingWeight),
-                legacyExitMode(profitTakingWeight, holdingPatienceWeight),
-                legacyInventoryMode(marketMakingWeight),
+                defaultPricingMode(marketMakingWeight),
+                defaultExitMode(profitTakingWeight, holdingPatienceWeight),
+                defaultInventoryMode(marketMakingWeight),
                 recurringDepositAmount,
                 recurringDepositIntervalValue,
                 recurringDepositIntervalUnit
@@ -256,7 +256,7 @@ public class StockAutoParticipantProfileConfig {
     ) {
         StockAutoParticipantProfileConfig config = new StockAutoParticipantProfileConfig();
         config.profileType = profileType;
-        config.behaviorModelVersion = AutoParticipantBehaviorModelVersion.V2;
+        config.behaviorModelVersion = AutoParticipantBehaviorModelVersion.V3;
         config.update(
                 newsWeight,
                 momentumWeight,
@@ -322,7 +322,7 @@ public class StockAutoParticipantProfileConfig {
                 panicSellWeight,
                 dipBuyWeight,
                 orderMultiplier,
-                legacyDecisionFrequency(orderMultiplier, orderTtlMultiplier),
+                defaultDecisionFrequency(orderMultiplier, orderTtlMultiplier),
                 orderMultiplier,
                 aggressionMultiplier,
                 pricePressureSensitivity,
@@ -331,9 +331,9 @@ public class StockAutoParticipantProfileConfig {
                 holdingPatienceWeight,
                 deepLossHoldWeight,
                 profitTakingWeight,
-                legacyPricingMode(marketMakingWeight),
-                legacyExitMode(profitTakingWeight, holdingPatienceWeight),
-                legacyInventoryMode(marketMakingWeight),
+                defaultPricingMode(marketMakingWeight),
+                defaultExitMode(profitTakingWeight, holdingPatienceWeight),
+                defaultInventoryMode(marketMakingWeight),
                 recurringDepositAmount,
                 BigDecimal.valueOf(recurringDepositIntervalDays == null ? 30 : recurringDepositIntervalDays),
                 RecurringCashIntervalUnit.DAY
@@ -375,7 +375,7 @@ public class StockAutoParticipantProfileConfig {
                 panicSellWeight,
                 dipBuyWeight,
                 orderMultiplier,
-                legacyDecisionFrequency(orderMultiplier, orderTtlMultiplier),
+                defaultDecisionFrequency(orderMultiplier, orderTtlMultiplier),
                 orderMultiplier,
                 aggressionMultiplier,
                 pricePressureSensitivity,
@@ -384,9 +384,9 @@ public class StockAutoParticipantProfileConfig {
                 holdingPatienceWeight,
                 deepLossHoldWeight,
                 profitTakingWeight,
-                legacyPricingMode(marketMakingWeight),
-                legacyExitMode(profitTakingWeight, holdingPatienceWeight),
-                legacyInventoryMode(marketMakingWeight),
+                defaultPricingMode(marketMakingWeight),
+                defaultExitMode(profitTakingWeight, holdingPatienceWeight),
+                defaultInventoryMode(marketMakingWeight),
                 recurringDepositAmount,
                 recurringDepositIntervalValue,
                 recurringDepositIntervalUnit
@@ -461,7 +461,7 @@ public class StockAutoParticipantProfileConfig {
         this.updatedAt = LocalDateTime.now();
     }
 
-    private static BigDecimal legacyDecisionFrequency(
+    private static BigDecimal defaultDecisionFrequency(
             BigDecimal orderMultiplier,
             BigDecimal orderTtlMultiplier
     ) {
@@ -478,13 +478,11 @@ public class StockAutoParticipantProfileConfig {
                 .min(new BigDecimal("20.0000"));
     }
 
-    private static AutoParticipantProfilePricingMode legacyPricingMode(BigDecimal marketMakingWeight) {
-        return marketMakingWeight != null && marketMakingWeight.compareTo(new BigDecimal("0.8")) >= 0
-                ? AutoParticipantProfilePricingMode.MARKET_MAKING
-                : AutoParticipantProfilePricingMode.DIRECTIONAL;
+    private static AutoParticipantProfilePricingMode defaultPricingMode(BigDecimal marketMakingWeight) {
+        return AutoParticipantProfilePricingMode.DIRECTIONAL;
     }
 
-    private static AutoParticipantProfileExitMode legacyExitMode(
+    private static AutoParticipantProfileExitMode defaultExitMode(
             BigDecimal profitTakingWeight,
             BigDecimal holdingPatienceWeight
     ) {
@@ -497,9 +495,7 @@ public class StockAutoParticipantProfileConfig {
         return AutoParticipantProfileExitMode.SIGNAL_DRIVEN;
     }
 
-    private static AutoParticipantProfileInventoryMode legacyInventoryMode(BigDecimal marketMakingWeight) {
-        return legacyPricingMode(marketMakingWeight) == AutoParticipantProfilePricingMode.MARKET_MAKING
-                ? AutoParticipantProfileInventoryMode.TARGET_ALLOCATION
-                : AutoParticipantProfileInventoryMode.SIGNAL_DRIVEN;
+    private static AutoParticipantProfileInventoryMode defaultInventoryMode(BigDecimal marketMakingWeight) {
+        return AutoParticipantProfileInventoryMode.SIGNAL_DRIVEN;
     }
 }

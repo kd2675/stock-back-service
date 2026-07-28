@@ -69,7 +69,7 @@
 
 - `NEWS_REACTIVE`는 보고서 방향을 첫 주문에 직접 반영하고 가격 압력 민감도도 높다.
 - `NOISE_TRADER`, `SCALPER`, `HERD_FOLLOWER` 등은 뉴스 민감도와 프로필 가격 민감도에 따라 보고서 방향을 일부 반영한다.
-- `OBSERVER`, `MARKET_MAKER`, `VALUE_ANCHOR` 등은 낮은 가격 압력 민감도로 시장·보고서 방향에 덜 휩쓸린다.
+- `OBSERVER`, `PASSIVE_LIMIT_TRADER`, `VALUE_ANCHOR` 등은 낮은 가격 압력 민감도로 시장·보고서 방향에 덜 휩쓸린다.
 
 이 방식을 둔 이유:
 

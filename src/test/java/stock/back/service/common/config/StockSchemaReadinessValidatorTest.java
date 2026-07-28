@@ -111,7 +111,7 @@ class StockSchemaReadinessValidatorTest {
         StockSchemaReadinessValidator validator = new StockSchemaReadinessValidator(
                 dataSource,
                 buildPropertiesProvider,
-                "2026-07-23-auto-profile-v2-direct"
+                "2026-07-27-auto-participant-v3-probabilistic"
         );
 
         assertThatThrownBy(() -> validator.run(null))
@@ -134,7 +134,7 @@ class StockSchemaReadinessValidatorTest {
                 """
                 alter table stock_order
                   add constraint chk_stock_order_auto_profile_type check (
-                    auto_profile_type is null or auto_profile_type in ('MARKET_MAKER', 'OBSERVER')
+                    auto_profile_type is null or auto_profile_type in ('PASSIVE_LIMIT_TRADER', 'OBSERVER')
                   )
                 """
         );
@@ -143,7 +143,7 @@ class StockSchemaReadinessValidatorTest {
         StockSchemaReadinessValidator validator = new StockSchemaReadinessValidator(
                 dataSource,
                 buildPropertiesProvider,
-                "2026-07-23-auto-profile-v2-direct"
+                "2026-07-27-auto-participant-v3-probabilistic"
         );
 
         assertThatThrownBy(() -> validator.run(null))
@@ -166,7 +166,7 @@ class StockSchemaReadinessValidatorTest {
         StockSchemaReadinessValidator validator = new StockSchemaReadinessValidator(
                 dataSource,
                 buildPropertiesProvider,
-                "2026-07-23-auto-profile-v2-direct"
+                "2026-07-27-auto-participant-v3-probabilistic"
         );
 
         assertThatThrownBy(() -> validator.run(null))
@@ -202,7 +202,7 @@ class StockSchemaReadinessValidatorTest {
         StockSchemaReadinessValidator validator = new StockSchemaReadinessValidator(
                 dataSource,
                 buildPropertiesProvider,
-                "2026-07-23-auto-profile-v2-direct"
+                "2026-07-27-auto-participant-v3-probabilistic"
         );
 
         assertThatThrownBy(() -> validator.run(null))
@@ -246,7 +246,7 @@ class StockSchemaReadinessValidatorTest {
         StockSchemaReadinessValidator validator = new StockSchemaReadinessValidator(
                 dataSource,
                 buildPropertiesProvider,
-                "2026-07-23-auto-profile-v2-direct"
+                "2026-07-27-auto-participant-v3-probabilistic"
         );
 
         assertThatThrownBy(() -> validator.run(null))

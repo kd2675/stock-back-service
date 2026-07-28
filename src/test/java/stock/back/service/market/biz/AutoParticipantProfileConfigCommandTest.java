@@ -19,23 +19,23 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class AutoParticipantProfileConfigCommandTest {
 
     @Test
-    void from_missingBehaviorModelVersion_defaultsProfileToV2() {
+    void from_missingBehaviorModelVersion_defaultsProfileToV3() {
         AutoParticipantProfileConfigCommand command = AutoParticipantProfileConfigCommand.from(
                 AutoParticipantProfileType.NOISE_TRADER,
                 validRequest()
         );
 
-        assertThat(command.behaviorModelVersion()).isEqualTo(AutoParticipantBehaviorModelVersion.V2);
+        assertThat(command.behaviorModelVersion()).isEqualTo(AutoParticipantBehaviorModelVersion.V3);
     }
 
     @Test
-    void from_explicitV1_keepsProfileLevelRollbackOption() {
-        AutoParticipantProfileConfigCommand command = AutoParticipantProfileConfigCommand.from(
-                AutoParticipantProfileType.NOISE_TRADER,
-                withBehaviorModelVersion(validRequest(), "V1")
-        );
-
-        assertThat(command.behaviorModelVersion()).isEqualTo(AutoParticipantBehaviorModelVersion.V1);
+    void from_removedBehaviorModelVersion_rejectsRequest() {
+        assertThatThrownBy(() -> AutoParticipantProfileConfigCommand.from(
+                        AutoParticipantProfileType.NOISE_TRADER,
+                        withBehaviorModelVersion(validRequest(), "V2")
+                ))
+                .isInstanceOf(StockException.class)
+                .hasMessageContaining("Behavior model version is invalid");
     }
 
     @Test

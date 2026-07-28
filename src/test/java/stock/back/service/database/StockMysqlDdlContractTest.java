@@ -62,7 +62,7 @@ class StockMysqlDdlContractTest {
 
     private static final List<String> AUTO_PARTICIPANT_PROFILE_TYPES = List.of(
             "NEWS_REACTIVE", "MOMENTUM_FOLLOWER", "CONTRARIAN", "LOSS_AVERSE",
-            "OVERCONFIDENT", "HERD_FOLLOWER", "MARKET_MAKER", "NOISE_TRADER",
+            "OVERCONFIDENT", "HERD_FOLLOWER", "PASSIVE_LIMIT_TRADER", "NOISE_TRADER",
             "VALUE_ANCHOR", "SCALPER", "DAY_TRADER", "SWING_TRADER",
             "LONG_TERM_HOLDER", "PAYDAY_ACCUMULATOR", "DIVIDEND_REINVESTOR",
             "LIMIT_DOWN_TRAPPED", "AVERAGE_DOWN_BUYER", "STOP_LOSS_TRADER",
@@ -78,7 +78,7 @@ class StockMysqlDdlContractTest {
             "INSERT INTO stock_instrument",
             "INSERT INTO stock_price",
             "INSERT INTO stock_virtual_market_config",
-            "INSERT INTO stock_auto_participant",
+            "INSERT INTO stock_auto_participant(",
             "삼성전자",
             "'seed'",
             "stock-auto-001"
@@ -1333,7 +1333,7 @@ class StockMysqlDdlContractTest {
     }
 
     @Test
-    void autoParticipantBehaviorModel_isOwnedByProfileAndDefaultsToV2() throws IOException {
+    void autoParticipantBehaviorModel_isOwnedByProfileAndDefaultsToV3() throws IOException {
         String canonicalDdl = Files.readString(
                 Path.of("src/main/resources/db/ddl/stock_all.sql"),
                 StandardCharsets.UTF_8
@@ -1356,7 +1356,7 @@ class StockMysqlDdlContractTest {
                 .doesNotContain("behavior_model_version");
         assertThat(extractCreateTableBlock(canonicalDdl, "stock_auto_participant_profile_config"))
                 .contains(
-                        "behavior_model_version VARCHAR(20) NOT NULL DEFAULT 'V2'",
+                        "behavior_model_version VARCHAR(20) NOT NULL DEFAULT 'V3'",
                         "CONSTRAINT chk_stock_auto_profile_behavior_model CHECK"
                 );
         assertThat(extractCreateTableBlock(h2Ddl, "stock_auto_participant"))
@@ -1364,13 +1364,13 @@ class StockMysqlDdlContractTest {
                 .doesNotContain("behavior_model_version");
         assertThat(extractCreateTableBlock(h2Ddl, "stock_auto_participant_profile_config"))
                 .contains(
-                        "behavior_model_version VARCHAR(20) NOT NULL DEFAULT 'V2'",
+                        "behavior_model_version VARCHAR(20) NOT NULL DEFAULT 'V3'",
                         "CONSTRAINT chk_stock_auto_profile_behavior_model CHECK"
                 );
         assertThat(alterDdl).contains(
-                "ADD COLUMN behavior_model_version VARCHAR(20) NOT NULL DEFAULT ''V2''",
+                "ADD COLUMN behavior_model_version VARCHAR(20) NOT NULL DEFAULT ''V3''",
                 "UPDATE stock_auto_participant_profile_config",
-                "SET behavior_model_version = 'V2'",
+                "SET behavior_model_version = 'V3'",
                 "ALTER TABLE stock_auto_participant DROP COLUMN behavior_model_version"
         );
         assertThat(normalizeSqlBlock(alterDdl)).isEqualTo(normalizeSqlBlock(batchAlterDdl));
@@ -1883,9 +1883,9 @@ class StockMysqlDdlContractTest {
     }
 
     @Test
-    void autoParticipantV2ValidationReport_isReadOnlyAndUsesBoundedLedgerRanges() throws IOException {
+    void autoParticipantV3ValidationReport_isReadOnlyAndUsesBoundedLedgerRanges() throws IOException {
         String reportSql = Files.readString(
-                Path.of("src/main/resources/db/maintenance/stock_auto_participant_profile_v2_validation_report.sql"),
+                Path.of("src/main/resources/db/maintenance/stock_auto_participant_v3_validation_report.sql"),
                 StandardCharsets.UTF_8
         );
         String executableSql = reportSql.lines()
@@ -1900,6 +1900,9 @@ class StockMysqlDdlContractTest {
                 "stock_order.created_at <",
                 "PROFILE_CONTRACT",
                 "PARTICIPANT_MODEL_EXPORT",
+                "V3_POLICY_REVISION",
+                "V3_DAILY_BEHAVIOR",
+                "V3_LIQUIDATION_INCOMPLETE",
                 "ORDER_CANARY",
                 "FUNDING_RECONCILIATION",
                 "behavior_model_version"

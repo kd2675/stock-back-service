@@ -81,7 +81,7 @@ record AutoParticipantProfileConfigCommand(
                 enumOrDefault(
                         request.behaviorModelVersion(),
                         AutoParticipantBehaviorModelVersion.class,
-                        AutoParticipantBehaviorModelVersion.V2,
+                        AutoParticipantBehaviorModelVersion.V3,
                         "Behavior model version"
                 ),
                 NumericRangePolicy.requireBigDecimal(request.newsWeight(), "News weight", BigDecimal.ZERO, BigDecimal.ONE),

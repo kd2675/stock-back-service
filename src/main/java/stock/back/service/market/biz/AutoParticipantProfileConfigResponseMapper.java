@@ -26,7 +26,7 @@ final class AutoParticipantProfileConfigResponseMapper {
         if (savedConfig == null) {
             return new AutoParticipantProfileConfigResponse(
                     profileType.name(),
-                    "V2",
+                    "V3",
                     defaults.newsWeight(),
                     defaults.momentumWeight(),
                     defaults.contrarianWeight(),
@@ -80,7 +80,7 @@ final class AutoParticipantProfileConfigResponseMapper {
         return new AutoParticipantProfileConfigResponse(
                 profileType.name(),
                 savedConfig.getBehaviorModelVersion() == null
-                        ? "V2"
+                        ? "V3"
                         : savedConfig.getBehaviorModelVersion().name(),
                 valueOrDefault(savedConfig.getNewsWeight(), defaults.newsWeight()),
                 valueOrDefault(savedConfig.getMomentumWeight(), defaults.momentumWeight()),
