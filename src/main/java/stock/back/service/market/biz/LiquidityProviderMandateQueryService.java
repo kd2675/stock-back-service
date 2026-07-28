@@ -28,17 +28,20 @@ public class LiquidityProviderMandateQueryService {
     private final SimulationClockService simulationClockService;
     private final ObjectMapper objectMapper;
     private final LiquidityProviderPolicyPresetCatalog policyPresetCatalog;
+    private final MarketReferenceVolumeResolver referenceVolumeResolver;
 
     public LiquidityProviderMandateQueryService(
             JdbcClient jdbcClient,
             SimulationClockService simulationClockService,
             ObjectMapper objectMapper,
-            LiquidityProviderPolicyPresetCatalog policyPresetCatalog
+            LiquidityProviderPolicyPresetCatalog policyPresetCatalog,
+            MarketReferenceVolumeResolver referenceVolumeResolver
     ) {
         this.jdbcClient = jdbcClient;
         this.simulationClockService = simulationClockService;
         this.objectMapper = objectMapper;
         this.policyPresetCatalog = policyPresetCatalog;
+        this.referenceVolumeResolver = referenceVolumeResolver;
     }
 
     @Transactional(readOnly = true)
@@ -326,16 +329,24 @@ public class LiquidityProviderMandateQueryService {
                 && dailyState.currentNetAssetValue().signum() > 0
                 ? dailyState.currentNetAssetValue()
                 : account.availableCash().add(account.holdingMarketValue());
+        String symbol = rs.getString("symbol");
+        long recommendedReferenceVolume = referenceVolumeResolver.resolve(List.of(
+                new MarketReferenceVolumeResolver.SymbolFloat(
+                        symbol,
+                        rs.getLong("tradable_shares")
+                )
+        )).get(symbol).referenceDailyVolume();
         List<LiquidityProviderMandateResponse.PolicyPreset> policyPresets =
                 resolvePolicyPresets(
                         rs.getLong("tradable_shares"),
+                        recommendedReferenceVolume,
                         policy,
                         currentNetAssetValue
                 );
         return new LiquidityProviderMandateResponse(
                 rs.getLong("mandate_id"),
                 rs.getString("mandate_code"),
-                rs.getString("symbol"),
+                symbol,
                 rs.getString("execution_mode"),
                 rs.getString("mandate_status"),
                 simulationTradeDate,
@@ -356,12 +367,14 @@ public class LiquidityProviderMandateQueryService {
 
     private List<LiquidityProviderMandateResponse.PolicyPreset> resolvePolicyPresets(
             long tradableShares,
+            long recommendedReferenceVolume,
             LiquidityProviderMandateResponse.Policy policy,
             BigDecimal currentNetAssetValue
     ) {
         try {
-            return policyPresetCatalog.resolveAll(
+            return policyPresetCatalog.resolveAllForReferenceVolume(
                             tradableShares,
+                            recommendedReferenceVolume,
                             policy.targetInventoryQuantity(),
                             currentNetAssetValue,
                             policy.primaryRegimeWeight(),

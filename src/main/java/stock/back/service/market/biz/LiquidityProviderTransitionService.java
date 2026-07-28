@@ -34,9 +34,6 @@ public class LiquidityProviderTransitionService {
     private static final String SELF_TRADE_GROUP_ID = "LIQUIDITY_PROVIDER:DEFAULT";
     private static final String LIVE_ACTIVE = "LIVE_ACTIVE";
 
-    private static final BigDecimal DEFAULT_REFERENCE_VOLUME_RATE = new BigDecimal("0.030000");
-    private static final BigDecimal MIN_REFERENCE_VOLUME_RATE = new BigDecimal("0.005000");
-    private static final BigDecimal MAX_REFERENCE_VOLUME_RATE = new BigDecimal("0.080000");
     private static final BigDecimal DEFAULT_SEED_INVENTORY_RATE = new BigDecimal("0.005000");
     private static final BigDecimal MIN_SEED_INVENTORY_RATE = new BigDecimal("0.001000");
     private static final BigDecimal MAX_SEED_INVENTORY_RATE = new BigDecimal("0.020000");
@@ -51,6 +48,7 @@ public class LiquidityProviderTransitionService {
     private final SimulationMarketSessionService marketSessionService;
     private final MarketLedgerFreezeGuard marketLedgerFreezeGuard;
     private final LiquidityProviderPolicyPresetCatalog policyPresetCatalog;
+    private final MarketReferenceVolumeResolver referenceVolumeResolver;
 
     public LiquidityProviderTransitionService(
             JdbcTemplate jdbcTemplate,
@@ -58,7 +56,8 @@ public class LiquidityProviderTransitionService {
             SimulationClockService simulationClockService,
             SimulationMarketSessionService marketSessionService,
             MarketLedgerFreezeGuard marketLedgerFreezeGuard,
-            LiquidityProviderPolicyPresetCatalog policyPresetCatalog
+            LiquidityProviderPolicyPresetCatalog policyPresetCatalog,
+            MarketReferenceVolumeResolver referenceVolumeResolver
     ) {
         this.jdbcTemplate = jdbcTemplate;
         this.jdbcClient = JdbcClient.create(jdbcTemplate);
@@ -67,6 +66,7 @@ public class LiquidityProviderTransitionService {
         this.marketSessionService = marketSessionService;
         this.marketLedgerFreezeGuard = marketLedgerFreezeGuard;
         this.policyPresetCatalog = policyPresetCatalog;
+        this.referenceVolumeResolver = referenceVolumeResolver;
     }
 
     @Transactional(transactionManager = "pubJdbcTransactionManager")
@@ -115,13 +115,26 @@ public class LiquidityProviderTransitionService {
         SourceHolding source = lockSourceHolding(sourceAccountId, normalizedSymbol);
         verifyIssuedShareReconciliation(normalizedSymbol, marketSymbol.issuedShares());
 
-        BigDecimal referenceVolumeRate = normalizedRate(
-                request == null ? null : request.referenceDailyVolumeRate(),
-                DEFAULT_REFERENCE_VOLUME_RATE,
-                MIN_REFERENCE_VOLUME_RATE,
-                MAX_REFERENCE_VOLUME_RATE,
-                "Reference daily-volume rate"
-        );
+        BigDecimal requestedReferenceVolumeRate =
+                request == null ? null : request.referenceDailyVolumeRate();
+        MarketReferenceVolumeResolver.Resolution referenceVolumeResolution =
+                requestedReferenceVolumeRate == null
+                        ? referenceVolumeResolver.resolve(List.of(
+                                new MarketReferenceVolumeResolver.SymbolFloat(
+                                        normalizedSymbol,
+                                        marketSymbol.tradableShares()
+                                )
+                        )).get(normalizedSymbol)
+                        : null;
+        BigDecimal referenceVolumeRate = requestedReferenceVolumeRate == null
+                ? referenceVolumeResolution.referenceDailyVolumeRate()
+                : normalizedRate(
+                        requestedReferenceVolumeRate,
+                        MarketReferenceVolumeResolver.FALLBACK_FLOAT_RATE,
+                        MarketReferenceVolumeResolver.MIN_FLOAT_RATE,
+                        MarketReferenceVolumeResolver.MAX_FLOAT_RATE,
+                        "Reference daily-volume rate"
+                );
         BigDecimal seedInventoryRate = normalizedRate(
                 request == null ? null : request.seedInventoryRate(),
                 DEFAULT_SEED_INVENTORY_RATE,
@@ -136,10 +149,9 @@ public class LiquidityProviderTransitionService {
                 MAX_CASH_MULTIPLIER,
                 "Initial cash multiplier"
         );
-        long referenceDailyVolume = scaledQuantity(
-                marketSymbol.tradableShares(),
-                referenceVolumeRate
-        );
+        long referenceDailyVolume = referenceVolumeResolution == null
+                ? scaledQuantity(marketSymbol.tradableShares(), referenceVolumeRate)
+                : referenceVolumeResolution.referenceDailyVolume();
         long seedInventoryQuantity = scaledQuantity(
                 marketSymbol.tradableShares(),
                 seedInventoryRate

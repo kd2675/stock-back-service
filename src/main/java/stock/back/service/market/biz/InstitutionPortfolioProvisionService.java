@@ -32,21 +32,22 @@ import web.common.core.simulation.SimulationClockSnapshot;
 public class InstitutionPortfolioProvisionService {
 
     private static final BigDecimal MIN_AUM_RATE = new BigDecimal("0.001000");
-    private static final BigDecimal MAX_AUM_RATE = new BigDecimal("0.020000");
-    private static final BigDecimal REFERENCE_VOLUME_RATE = new BigDecimal("0.030000");
+    private static final BigDecimal MAX_AUM_RATE = new BigDecimal("0.100000");
     private final JdbcTemplate jdbcTemplate;
     private final JdbcClient jdbcClient;
     private final ObjectMapper objectMapper;
     private final SimulationClockService simulationClockService;
     private final SimulationMarketSessionService marketSessionService;
     private final MarketLedgerFreezeGuard marketLedgerFreezeGuard;
+    private final MarketReferenceVolumeResolver referenceVolumeResolver;
 
     public InstitutionPortfolioProvisionService(
             JdbcTemplate jdbcTemplate,
             ObjectMapper objectMapper,
             SimulationClockService simulationClockService,
             SimulationMarketSessionService marketSessionService,
-            MarketLedgerFreezeGuard marketLedgerFreezeGuard
+            MarketLedgerFreezeGuard marketLedgerFreezeGuard,
+            MarketReferenceVolumeResolver referenceVolumeResolver
     ) {
         this.jdbcTemplate = jdbcTemplate;
         this.jdbcClient = JdbcClient.create(jdbcTemplate);
@@ -54,6 +55,7 @@ public class InstitutionPortfolioProvisionService {
         this.simulationClockService = simulationClockService;
         this.marketSessionService = marketSessionService;
         this.marketLedgerFreezeGuard = marketLedgerFreezeGuard;
+        this.referenceVolumeResolver = referenceVolumeResolver;
     }
 
     @Transactional(transactionManager = "pubJdbcTransactionManager")
@@ -107,6 +109,13 @@ public class InstitutionPortfolioProvisionService {
                 symbols,
                 selectedMarketCapitalization
         );
+        Map<String, MarketReferenceVolumeResolver.Resolution> referenceVolumes =
+                referenceVolumeResolver.resolve(symbols.stream()
+                        .map(symbol -> new MarketReferenceVolumeResolver.SymbolFloat(
+                                symbol.symbol(),
+                                symbol.tradableShares()
+                        ))
+                        .toList());
 
         long participantId = insertParticipant(policy, now);
         long accountId = insertAccount(policy, initialCash, now);
@@ -129,6 +138,7 @@ public class InstitutionPortfolioProvisionService {
                 policy,
                 symbols,
                 marketWeights,
+                referenceVolumes,
                 now
         );
         insertOpeningGrant(
@@ -145,6 +155,7 @@ public class InstitutionPortfolioProvisionService {
                 selectedMarketCapitalization,
                 symbols,
                 marketWeights,
+                referenceVolumes,
                 firstDecisionDate,
                 changeReason,
                 normalizedChangedBy,
@@ -183,7 +194,7 @@ public class InstitutionPortfolioProvisionService {
                 : request.institutionAumRateOfMarketCap();
         if (rate.compareTo(MIN_AUM_RATE) < 0 || rate.compareTo(MAX_AUM_RATE) > 0) {
             throw StockException.badRequest(
-                    "Institution AUM rate must be between 0.001 and 0.020 per portfolio"
+                    "Institution AUM rate must be between 0.001 and 0.100 per portfolio"
             );
         }
         return rate.setScale(6, RoundingMode.HALF_UP);
@@ -459,6 +470,7 @@ public class InstitutionPortfolioProvisionService {
             PresetPolicy preset,
             List<MarketSymbol> symbols,
             Map<String, BigDecimal> marketWeights,
+            Map<String, MarketReferenceVolumeResolver.Resolution> referenceVolumes,
             LocalDateTime now
     ) {
         BigDecimal maximumSymbolAllocation =
@@ -485,18 +497,15 @@ public class InstitutionPortfolioProvisionService {
                     statement.setBigDecimal(6, preset.momentumSensitivity());
                     statement.setBigDecimal(7, preset.valueSensitivity());
                     statement.setBigDecimal(8, preset.reportSensitivity());
-                    statement.setLong(9, referenceDailyVolume(symbol.tradableShares()));
+                    statement.setLong(
+                            9,
+                            referenceVolumes.get(symbol.symbol()).referenceDailyVolume()
+                    );
                     statement.setBigDecimal(10, preset.dailyParticipationRate());
                     statement.setObject(11, now);
                     statement.setObject(12, now);
                 }
         );
-    }
-
-    private long referenceDailyVolume(long tradableShares) {
-        BigDecimal reference = BigDecimal.valueOf(tradableShares)
-                .multiply(REFERENCE_VOLUME_RATE);
-        return Math.max(1L, reference.setScale(0, RoundingMode.DOWN).longValueExact());
     }
 
     private void insertOpeningGrant(
@@ -529,6 +538,7 @@ public class InstitutionPortfolioProvisionService {
             BigDecimal selectedMarketCapitalization,
             List<MarketSymbol> symbols,
             Map<String, BigDecimal> marketWeights,
+            Map<String, MarketReferenceVolumeResolver.Resolution> referenceVolumes,
             LocalDate effectiveBusinessDate,
             String changeReason,
             String changedBy,
@@ -558,7 +568,7 @@ public class InstitutionPortfolioProvisionService {
                 "symbols",
                 symbols.stream().map(MarketSymbol::symbol).toList()
         );
-        config.put("referenceDailyVolumeRate", REFERENCE_VOLUME_RATE);
+        config.put("referenceDailyVolumeMethod", "COMPLETED_20_DAY_ADV_OR_FLOAT_FALLBACK");
         config.put("dailyParticipationRate", preset.dailyParticipationRate());
         BigDecimal maximumSymbolAllocation =
                 maximumSymbolAllocation(preset, symbols.size());
@@ -572,7 +582,15 @@ public class InstitutionPortfolioProvisionService {
             mandate.put("momentumSensitivity", preset.momentumSensitivity());
             mandate.put("valueSensitivity", preset.valueSensitivity());
             mandate.put("reportSensitivity", preset.reportSensitivity());
-            mandate.put("referenceDailyVolume", referenceDailyVolume(symbol.tradableShares()));
+            MarketReferenceVolumeResolver.Resolution referenceVolume =
+                    referenceVolumes.get(symbol.symbol());
+            mandate.put("referenceDailyVolume", referenceVolume.referenceDailyVolume());
+            mandate.put(
+                    "referenceDailyVolumeRate",
+                    referenceVolume.referenceDailyVolumeRate()
+            );
+            mandate.put("referenceVolumeHistoryDays", referenceVolume.completedHistoryDays());
+            mandate.put("referenceVolumeSource", referenceVolume.source());
             mandate.put("dailyParticipationRate", preset.dailyParticipationRate());
             return mandate;
         }).toList());

@@ -66,16 +66,20 @@ class LiquidityProviderTransitionServiceTest {
         freezeGuard = mock(MarketLedgerFreezeGuard.class);
         when(freezeGuard.acquireJdbcPreOpenMutationPermit("liquidity-provider live provisioning"))
                 .thenReturn(BUSINESS_DATE);
+        MarketReferenceVolumeResolver referenceVolumeResolver =
+                new MarketReferenceVolumeResolver(JdbcClient.create(dataSource));
         service = new LiquidityProviderTransitionService(
                 jdbcTemplate,
                 new ObjectMapper(),
                 simulationClockService,
                 marketSessionService,
                 freezeGuard,
-                new LiquidityProviderPolicyPresetCatalog()
+                new LiquidityProviderPolicyPresetCatalog(),
+                referenceVolumeResolver
         );
         recommendationService = new LiquidityProviderRecommendationService(
-                JdbcClient.create(dataSource)
+                JdbcClient.create(dataSource),
+                referenceVolumeResolver
         );
         seedProvisionableSymbol();
     }
@@ -414,6 +418,36 @@ class LiquidityProviderTransitionServiceTest {
         )).isOne();
     }
 
+    @Test
+    void provisionLive_completedAdv_replacesLowFloatFallbackCapacity() {
+        seedCompletedDailyVolume(1_001L, BUSINESS_DATE.minusDays(2), 800_000L);
+        seedCompletedDailyVolume(1_002L, BUSINESS_DATE.minusDays(1), 1_000_000L);
+
+        var recommendation = recommendationService.getRecommendation()
+                .symbols()
+                .getFirst();
+        assertThat(recommendation.recommendedReferenceDailyVolume())
+                .isEqualTo(900_000L);
+
+        transactionTemplate.executeWithoutResult(status ->
+                service.provisionLive("DEMO001", null, "stock-admin"));
+
+        assertThat(jdbcTemplate.queryForMap(
+                """
+                select reference_daily_volume,
+                       max_order_quantity,
+                       daily_execution_participation_rate
+                  from stock_liquidity_mandate
+                 where symbol = 'DEMO001'
+                """
+        )).containsEntry("reference_daily_volume", 900_000L)
+                .containsEntry("max_order_quantity", 5_000L)
+                .containsEntry(
+                        "daily_execution_participation_rate",
+                        new BigDecimal("0.180000")
+                );
+    }
+
     private void seedProvisionableSymbol() {
         jdbcTemplate.update(
                 """
@@ -497,6 +531,51 @@ class LiquidityProviderTransitionServiceTest {
                 participantId,
                 PRE_OPEN,
                 PRE_OPEN
+        );
+    }
+
+    private void seedCompletedDailyVolume(
+            long closeRunId,
+            LocalDate tradeDate,
+            long volume
+    ) {
+        LocalDateTime closedAt = tradeDate.atTime(18, 0);
+        jdbcTemplate.update(
+                """
+                insert into stock_market_close_run(
+                    id, symbol, business_date, closed_at, status,
+                    created_at, completed_at
+                ) values (?, null, ?, ?, 'COMPLETED', ?, ?)
+                """,
+                closeRunId,
+                tradeDate,
+                closedAt,
+                closedAt,
+                closedAt
+        );
+        jdbcTemplate.update(
+                """
+                insert into stock_order_book_daily_snapshot(
+                    close_run_id, symbol, simulation_trade_date, snapshot_at,
+                    name, market, enabled, market_enabled, market_status,
+                    issued_shares, tradable_shares, initial_price, tick_size,
+                    price_limit_rate, close_price, previous_close,
+                    buy_quantity, sell_quantity, execution_quantity, created_at
+                ) values (
+                    ?, 'DEMO001', ?, ?,
+                    '테스트 종목', 'ORDER_BOOK', true, true, 'CLOSED',
+                    1000000, 1000000, 100, 1,
+                    30, 100, 100,
+                    ?, ?, ?, ?
+                )
+                """,
+                closeRunId,
+                tradeDate,
+                closedAt,
+                volume,
+                volume,
+                volume,
+                closedAt
         );
     }
 

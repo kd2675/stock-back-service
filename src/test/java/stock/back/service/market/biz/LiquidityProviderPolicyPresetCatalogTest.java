@@ -66,4 +66,30 @@ class LiquidityProviderPolicyPresetCatalogTest {
         assertThat(balanced.policy().dailyLossLimitAmount())
                 .isEqualByComparingTo("3200000000.00");
     }
+
+    @Test
+    void resolveAllForReferenceVolume_keepsAdvDenominatorAcrossRiskStyles() {
+        var presets = catalog.resolveAllForReferenceVolume(
+                1_000_000L,
+                900_000L,
+                5_000L,
+                new BigDecimal("1000000.00"),
+                new BigDecimal("0.700000"),
+                new BigDecimal("0.250000")
+        );
+
+        assertThat(presets)
+                .allSatisfy(preset -> assertThat(
+                        preset.policy().referenceDailyVolume()
+                ).isEqualTo(900_000L));
+        assertThat(presets)
+                .extracting(preset -> BigDecimal.valueOf(
+                        preset.policy().referenceDailyVolume()
+                ).multiply(preset.policy().dailyExecutionParticipationRate()))
+                .containsExactly(
+                        new BigDecimal("72000.000000"),
+                        new BigDecimal("162000.000000"),
+                        new BigDecimal("270000.000000")
+                );
+    }
 }

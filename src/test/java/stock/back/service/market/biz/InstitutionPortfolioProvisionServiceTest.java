@@ -88,13 +88,16 @@ class InstitutionPortfolioProvisionServiceTest {
         when(freezeGuard.acquireJdbcMutationPermit(
                 "institution portfolio cash adjustment"
         )).thenReturn(BUSINESS_DATE);
+        MarketReferenceVolumeResolver referenceVolumeResolver =
+                new MarketReferenceVolumeResolver(JdbcClient.create(dataSource));
 
         provisionService = new InstitutionPortfolioProvisionService(
                 jdbcTemplate,
                 new ObjectMapper(),
                 simulationClockService,
                 marketSessionService,
-                freezeGuard
+                freezeGuard,
+                referenceVolumeResolver
         );
         policyControlService = new InstitutionPortfolioPolicyControlService(
                 jdbcTemplate,
@@ -122,7 +125,8 @@ class InstitutionPortfolioProvisionServiceTest {
                 simulationClockService
         );
         recommendationService = new InstitutionPortfolioRecommendationService(
-                JdbcClient.create(dataSource)
+                JdbcClient.create(dataSource),
+                referenceVolumeResolver
         );
         seedPreOpenSymbols();
     }
@@ -240,7 +244,7 @@ class InstitutionPortfolioProvisionServiceTest {
                  where portfolio.portfolio_code = 'INST_ACTIVE'
                 """,
                 BigDecimal.class
-        )).isEqualByComparingTo("750000.00");
+        )).isEqualByComparingTo("3000000.00");
     }
 
     @Test
@@ -468,7 +472,7 @@ class InstitutionPortfolioProvisionServiceTest {
                 recommendation.recommendedPortfolioCount(),
                 recommendation.recommendedRemainingCount(),
                 recommendation.recommendedAumAmountPerPortfolio()
-        )).containsExactly(3, 3, 3L, new BigDecimal("6000000.00"));
+        )).containsExactly(3, 3, 3L, new BigDecimal("30000000.00"));
         assertThat(recommendation.styles())
                 .extracting(style -> List.of(
                         style.investmentStyle(),
@@ -480,26 +484,26 @@ class InstitutionPortfolioProvisionServiceTest {
                         List.of(
                                 "BALANCED_LONG_TERM",
                                 true,
-                                new BigDecimal("0.010000"),
-                                new BigDecimal("6000000.00")
+                                new BigDecimal("0.050000"),
+                                new BigDecimal("30000000.00")
                         ),
                         List.of(
                                 "VALUE_CONTRARIAN",
                                 false,
-                                new BigDecimal("0.005000"),
-                                new BigDecimal("3000000.00")
+                                new BigDecimal("0.030000"),
+                                new BigDecimal("18000000.00")
                         ),
                         List.of(
                                 "MOMENTUM",
                                 false,
-                                new BigDecimal("0.003500"),
-                                new BigDecimal("2100000.00")
+                                new BigDecimal("0.020000"),
+                                new BigDecimal("12000000.00")
                         ),
                         List.of(
                                 "ACTIVE_SHORT_TERM",
                                 false,
-                                new BigDecimal("0.002500"),
-                                new BigDecimal("1500000.00")
+                                new BigDecimal("0.010000"),
+                                new BigDecimal("6000000.00")
                         )
                 );
         assertThat(recommendation.symbols())

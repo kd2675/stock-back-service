@@ -24,7 +24,8 @@ import web.common.core.simulation.SimulationMarketSession;
 @Service
 public class LiquidityProviderControlService {
 
-    private static final BigDecimal MAX_REFERENCE_FLOAT_RATE = new BigDecimal("0.150000");
+    private static final BigDecimal MAX_REFERENCE_FLOAT_RATE =
+            MarketReferenceVolumeResolver.MAX_FLOAT_RATE;
     private static final BigDecimal MAX_DAILY_LOSS_NAV_RATE = new BigDecimal("0.100000");
 
     private final JdbcTemplate jdbcTemplate;
@@ -643,7 +644,7 @@ public class LiquidityProviderControlService {
                 .longValueExact();
         if (referenceVolume <= 0L || referenceVolume > Math.max(1L, maxReferenceVolume)) {
             throw StockException.badRequest(
-                    "Reference daily volume must be positive and at most 15% of tradable shares"
+                    "Reference daily volume must be positive and at most 200% of tradable shares"
             );
         }
         requireRate(targetOpenRate, BigDecimal.ZERO, new BigDecimal("0.100000"),

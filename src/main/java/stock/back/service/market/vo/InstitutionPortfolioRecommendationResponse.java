@@ -54,7 +54,10 @@ public record InstitutionPortfolioRecommendationResponse(
             long tradableShares,
             BigDecimal currentPrice,
             BigDecimal marketWeight,
-            long recommendedReferenceDailyVolume
+            long recommendedReferenceDailyVolume,
+            BigDecimal recommendedReferenceDailyVolumeRate,
+            int referenceVolumeHistoryDays,
+            String referenceVolumeSource
     ) {
     }
 }

@@ -52,7 +52,8 @@ class LiquidityProviderMandateQueryServiceTest {
                 JdbcClient.create(dataSource),
                 simulationClockService,
                 new ObjectMapper(),
-                new LiquidityProviderPolicyPresetCatalog()
+                new LiquidityProviderPolicyPresetCatalog(),
+                new MarketReferenceVolumeResolver(JdbcClient.create(dataSource))
         );
         seedLiquidityMandate();
     }

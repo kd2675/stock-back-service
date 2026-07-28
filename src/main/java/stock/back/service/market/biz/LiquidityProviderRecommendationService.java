@@ -3,6 +3,7 @@ package stock.back.service.market.biz;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.List;
+import java.util.Map;
 
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
@@ -13,17 +14,19 @@ import stock.back.service.market.vo.LiquidityProviderRecommendationResponse;
 @Service
 public class LiquidityProviderRecommendationService {
 
-    private static final BigDecimal REFERENCE_VOLUME_RATE = new BigDecimal("0.030000");
-    private static final BigDecimal MIN_REFERENCE_VOLUME_RATE = new BigDecimal("0.005000");
-    private static final BigDecimal MAX_REFERENCE_VOLUME_RATE = new BigDecimal("0.080000");
     private static final BigDecimal SEED_INVENTORY_RATE = new BigDecimal("0.005000");
     private static final BigDecimal MIN_SEED_INVENTORY_RATE = new BigDecimal("0.001000");
     private static final BigDecimal MAX_SEED_INVENTORY_RATE = new BigDecimal("0.020000");
 
     private final JdbcClient jdbcClient;
+    private final MarketReferenceVolumeResolver referenceVolumeResolver;
 
-    public LiquidityProviderRecommendationService(JdbcClient jdbcClient) {
+    public LiquidityProviderRecommendationService(
+            JdbcClient jdbcClient,
+            MarketReferenceVolumeResolver referenceVolumeResolver
+    ) {
         this.jdbcClient = jdbcClient;
+        this.referenceVolumeResolver = referenceVolumeResolver;
     }
 
     @Transactional(readOnly = true)
@@ -106,8 +109,18 @@ public class LiquidityProviderRecommendationService {
                         rs.getBoolean("has_source")
                 ))
                 .list();
+        Map<String, MarketReferenceVolumeResolver.Resolution> referenceVolumes =
+                referenceVolumeResolver.resolve(states.stream()
+                        .map(state -> new MarketReferenceVolumeResolver.SymbolFloat(
+                                state.symbol(),
+                                state.tradableShares()
+                        ))
+                        .toList());
         List<LiquidityProviderRecommendationResponse.Symbol> symbols = states.stream()
-                .map(this::toRecommendation)
+                .map(state -> toRecommendation(
+                        state,
+                        referenceVolumes.get(state.symbol())
+                ))
                 .toList();
         int recommendedCount = Math.toIntExact(states.stream()
                 .filter(state -> isConfiguredOrPendingEligible(
@@ -123,9 +136,9 @@ public class LiquidityProviderRecommendationService {
                 recommendedCount,
                 currentCount,
                 Math.max(0L, recommendedCount - currentCount),
-                REFERENCE_VOLUME_RATE,
-                MIN_REFERENCE_VOLUME_RATE,
-                MAX_REFERENCE_VOLUME_RATE,
+                MarketReferenceVolumeResolver.FALLBACK_FLOAT_RATE,
+                MarketReferenceVolumeResolver.MIN_FLOAT_RATE,
+                MarketReferenceVolumeResolver.MAX_FLOAT_RATE,
                 SEED_INVENTORY_RATE,
                 MIN_SEED_INVENTORY_RATE,
                 MAX_SEED_INVENTORY_RATE,
@@ -135,12 +148,15 @@ public class LiquidityProviderRecommendationService {
     }
 
     private LiquidityProviderRecommendationResponse.Symbol toRecommendation(
-            SymbolState state
+            SymbolState state,
+            MarketReferenceVolumeResolver.Resolution referenceVolume
     ) {
-        long referenceDailyVolume = scaledQuantity(
-                state.tradableShares(),
-                REFERENCE_VOLUME_RATE
-        );
+        if (referenceVolume == null) {
+            throw new IllegalStateException(
+                    "Reference daily volume was not resolved for " + state.symbol()
+            );
+        }
+        long referenceDailyVolume = referenceVolume.referenceDailyVolume();
         long seedQuantity = scaledQuantity(
                 state.tradableShares(),
                 SEED_INVENTORY_RATE
@@ -175,6 +191,9 @@ public class LiquidityProviderRecommendationService {
                 state.sourceAccountId(),
                 state.sourceAvailableQuantity(),
                 referenceDailyVolume,
+                referenceVolume.referenceDailyVolumeRate(),
+                referenceVolume.completedHistoryDays(),
+                referenceVolume.source(),
                 seedQuantity,
                 initialCash,
                 "READY".equals(reason),

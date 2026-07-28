@@ -16,13 +16,16 @@ import stock.back.service.market.vo.InstitutionPortfolioRecommendationResponse;
 public class InstitutionPortfolioRecommendationService {
 
     private static final BigDecimal MIN_AUM_RATE = new BigDecimal("0.001000");
-    private static final BigDecimal MAX_AUM_RATE = new BigDecimal("0.020000");
-    private static final BigDecimal REFERENCE_VOLUME_RATE = new BigDecimal("0.030000");
-
+    private static final BigDecimal MAX_AUM_RATE = new BigDecimal("0.100000");
     private final JdbcClient jdbcClient;
+    private final MarketReferenceVolumeResolver referenceVolumeResolver;
 
-    public InstitutionPortfolioRecommendationService(JdbcClient jdbcClient) {
+    public InstitutionPortfolioRecommendationService(
+            JdbcClient jdbcClient,
+            MarketReferenceVolumeResolver referenceVolumeResolver
+    ) {
         this.jdbcClient = jdbcClient;
+        this.referenceVolumeResolver = referenceVolumeResolver;
     }
 
     @Transactional(readOnly = true)
@@ -53,6 +56,13 @@ public class InstitutionPortfolioRecommendationService {
                         rs.getBigDecimal("current_price")
                 ))
                 .list();
+        Map<String, MarketReferenceVolumeResolver.Resolution> referenceVolumes =
+                referenceVolumeResolver.resolve(marketSymbols.stream()
+                        .map(symbol -> new MarketReferenceVolumeResolver.SymbolFloat(
+                                symbol.symbol(),
+                                symbol.tradableShares()
+                        ))
+                        .toList());
         long currentPortfolioCount = jdbcClient.sql(
                         """
                         select count(*)
@@ -79,7 +89,11 @@ public class InstitutionPortfolioRecommendationService {
                                 symbol.tradableShares(),
                                 symbol.currentPrice(),
                                 weights.getOrDefault(symbol.symbol(), BigDecimal.ZERO),
-                                referenceDailyVolume(symbol.tradableShares())
+                                referenceVolumes.get(symbol.symbol()).referenceDailyVolume(),
+                                referenceVolumes.get(symbol.symbol())
+                                        .referenceDailyVolumeRate(),
+                                referenceVolumes.get(symbol.symbol()).completedHistoryDays(),
+                                referenceVolumes.get(symbol.symbol()).source()
                         ))
                         .toList();
         List<InstitutionPortfolioRecommendationResponse.Style> styles =
@@ -172,16 +186,6 @@ public class InstitutionPortfolioRecommendationService {
             assigned = assigned.add(weight);
         }
         return Map.copyOf(result);
-    }
-
-    private long referenceDailyVolume(long tradableShares) {
-        return Math.max(
-                1L,
-                BigDecimal.valueOf(tradableShares)
-                        .multiply(REFERENCE_VOLUME_RATE)
-                        .setScale(0, RoundingMode.DOWN)
-                        .longValueExact()
-        );
     }
 
     private record MarketSymbol(

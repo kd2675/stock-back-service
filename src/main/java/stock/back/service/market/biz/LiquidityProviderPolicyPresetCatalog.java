@@ -107,6 +107,27 @@ public class LiquidityProviderPolicyPresetCatalog {
                 .toList();
     }
 
+    public List<ResolvedPreset> resolveAllForReferenceVolume(
+            long tradableShares,
+            long referenceDailyVolume,
+            long targetInventoryQuantity,
+            BigDecimal currentNetAssetValue,
+            BigDecimal primaryRegimeWeight,
+            BigDecimal liquiditySizeSensitivity
+    ) {
+        return DEFINITIONS.stream()
+                .map(definition -> resolve(
+                        definition,
+                        tradableShares,
+                        referenceDailyVolume,
+                        targetInventoryQuantity,
+                        currentNetAssetValue,
+                        primaryRegimeWeight,
+                        liquiditySizeSensitivity
+                ))
+                .toList();
+    }
+
     public ResolvedPreset resolveBalancedForReferenceVolume(
             long tradableShares,
             long referenceDailyVolume,
