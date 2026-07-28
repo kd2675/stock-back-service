@@ -36,6 +36,8 @@
 - `GET /api/stock/v1/markets/institution-portfolios` (`ADMIN`, 기관 계정·목표 비중·최근 LIVE 결정·주문 감사)
 - `GET /api/stock/v1/markets/institution-portfolios/recommendations` (`ADMIN`, 활성 종목 수 기준 권장 기관 개수·운용 유형별 생성 프리셋·AUM과 위험 수치·선택 가능한 종목)
 - `POST /api/stock/v1/markets/institution-portfolios` (`ADMIN`, 실행 중에도 운용 유형과 선택 종목 기준 AUM으로 기관 1개를 생성하고 다음 개장부터 LIVE 운용 시작)
+- `POST /api/stock/v1/markets/institution-portfolios/{portfolioId}/cash-adjustments` (`ADMIN`, 기관 전용 계좌의 가용 현금을 입금·회수하고 외부 현금흐름 원장을 남김. 매수 예약금은 건드리지 않음)
+- `PATCH /api/stock/v1/markets/institution-portfolios/{portfolioId}/policy` (`ADMIN`, 표시명·운용 유형·목표 비중·위험 한도·결정 주기·종목별 위임을 다음 개장 정책으로 예약)
 - `POST /api/stock/v1/markets/institution-portfolios/{portfolioId}/suspend` (`ADMIN`, 실행 중 비상 중단. 정책 버전을 즉시 동결하고 대기 주문 의도·전용 계좌 미체결 주문과 예약을 정리)
 - `GET /api/stock/v1/markets/liquidity-mandates` (`ADMIN`, 전용 LP 계약·계정/STP·거래일 위험 상태 감사)
 - `GET /api/stock/v1/markets/liquidity-mandates/recommendations` (`ADMIN`, 종목별 권장 기준 거래량·시드 수량·초기 현금과 생성 가능 상태)
@@ -127,6 +129,8 @@ scripts/stock-smoke.sh
 - JPA datasource 구조는 다른 백엔드 JPA 서비스와 맞춰 `database.datasource.pub.master/slave1`과 `PubDataConfig`를 사용합니다.
 - `@Transactional(readOnly = true)` 트랜잭션은 `RoutingDataSource`에서 slave로 라우팅됩니다. 현재 local/dev는 master와 slave가 같은 `STOCK_SERVICE` 접속값을 봅니다.
 - 관리자 기관 LIVE 중단은 의도적으로 장전·일시정지 제약을 두지 않습니다. 포트폴리오 `SUSPENDED` 전환, 정책 버전 감사, 대기 intent 거절, 전용 계정 미체결 주문 취소와 예약 반환을 하나의 트랜잭션에 처리합니다. 주문 정리가 실패하면 상태·intent·정책 변경도 함께 롤백되므로 “중단 상태지만 기존 주문은 살아 있는” 부분 완료를 커밋하지 않습니다.
+- 기관 정책 수정은 현재 행을 즉시 덮어쓰지 않고 전체 정책 JSON을 `INSTITUTIONAL_PORTFOLIO` 다음 버전으로 예약합니다. batch는 다음 개장 전 미체결 주문·대기 intent·당일 결정/예산 미사용과 종목 활성 상태를 다시 검증한 뒤 포트폴리오와 종목 위임을 한 트랜잭션으로 전환합니다. 제외 종목에 보유 수량이 있으면 목표 0% 청산 전용 위임을 남기고, 보유·미체결이 모두 0이 된 뒤에만 자동 비활성화합니다.
+- 기관 현금 조정은 정책 수정과 분리합니다. 입금·회수는 `stock_account.cash_balance`와 `stock_account_cash_flow`를 같은 트랜잭션에서 갱신하며 회수는 매수 예약금을 제외한 가용 현금까지만 허용합니다. 현재 AUM은 가용 현금+예약 현금+보유 평가액이므로 다음 기관 결정의 목표 금액과 일일·결정당 회전 한도도 별도 기준값 수정 없이 현재 자산으로 재계산됩니다.
 - Hikari 풀은 local/dev 기본 8개이며, prod는 `STOCK_DB_MAX_POOL_SIZE`, `STOCK_DB_CONNECTION_TIMEOUT`, `STOCK_DB_MAX_LIFETIME`, `STOCK_DB_KEEPALIVE_TIME`로 조정합니다.
 - DDL은 schema와 제약만 생성합니다. 기본 종목, 최초 가격, 자동 참여자는 seed하지 않으며 관리자 API 또는 smoke/test 데이터에서 명시적으로 등록합니다.
 - 기존 DB에 축소시장 역할 재구성 스키마를 추가할 때는 서버와 스케줄러를 모두 중지하고 `stock_market_role_foundation_alter.sql` → `stock_system_custody_withdrawal_alter.sql` → `stock_institution_engine_alter.sql` → `stock_institution_live_only_alter.sql` → `stock_liquidity_provider_engine_alter.sql` → `stock_issuance_underwriting_alter.sql` → `stock_market_role_independent_provisioning_alter.sql` → `stock_underwriter_scaled_supply_alter.sql` → `stock_liquidity_transition_alter.sql` → `stock_liquidity_live_only_alter.sql` → `stock_obsolete_participant_role_cleanup_alter.sql` → `stock_legacy_liquidity_retirement_alter.sql` → `stock_legacy_underwriting_history_backfill.sql` 순서로 적용합니다. 기관 LIVE 정리 파일은 과거 비LIVE 대기 intent를 거절한 뒤 포트폴리오와 결정 실행모드를 모두 LIVE 계약으로 고정합니다. 역할 정리 파일은 유동성 전환 원장에 연결된 과거 계좌와 장마감 스냅샷을 `ISSUE_UNDERWRITER`로 통합하고 반환 감사 스키마의 호환 필드를 제거합니다. retirement 파일은 일시정지 상태와 예약·미체결·발행량 대사를 확인하고 기존 자동유동성 계좌의 현금·주식 전량을 종목별 LP 계좌로 옮긴 뒤 구계좌를 0잔고 `CLOSED` 감사 계좌로 남기고 레거시 설정 테이블을 제거합니다. 이어지는 인수 이력 백필은 이 폐쇄 계정을 종목별 과거 `ISSUE_UNDERWRITER` 계정으로 연결하고 완료 계약·최초 유통 배정·폐기된 정책 이력만 복원합니다. 역할 정리 외의 현금·보유·주문·체결 수량은 변경하지 않습니다. 각 파일은 재실행 가능하게 작성했지만 MySQL DDL 묶음 전체가 하나의 트랜잭션은 아니므로 파일별 적용 결과와 원장 대사를 남긴 뒤 다음 파일로 진행합니다. 코드 배포는 역할 스키마 readiness가 모두 통과한 뒤에만 합니다.

@@ -7,6 +7,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.util.ReflectionTestUtils;
 import stock.back.service.common.exception.StockException;
 import stock.back.service.database.entity.StockAccount;
+import stock.back.service.database.entity.StockAccountParticipantCategory;
 import stock.back.service.database.entity.StockAccountStatus;
 import stock.back.service.database.repository.StockAccountCashFlowRepository;
 import stock.back.service.database.repository.StockAccountRepository;
@@ -191,6 +192,28 @@ class AccountServiceTest {
                 "admin-1"
         )).isInstanceOf(StockException.class)
                 .hasMessageContaining("Insufficient user cash balance");
+
+        verify(stockAccountCashFlowRepository, never()).save(any());
+    }
+
+    @Test
+    void adjustUserAccountCash_institutionAccount_rejectsGenericCashWorkflow() {
+        StockAccount account = StockAccount.open("stock-institution-institution-1");
+        account.assignParticipantCategory(
+                StockAccountParticipantCategory.INSTITUTIONAL_INVESTOR,
+                SIMULATION_NOW
+        );
+        when(stockAccountRepository.findByUserKeyAndStatusForUpdate(
+                "stock-institution-institution-1",
+                StockAccountStatus.ACTIVE
+        )).thenReturn(Optional.of(account));
+
+        assertThatThrownBy(() -> accountService.adjustUserAccountCash(
+                "stock-institution-institution-1",
+                new AccountCashAdjustmentRequest("DEPOSIT", new BigDecimal("1.00")),
+                "admin-1"
+        )).isInstanceOf(StockException.class)
+                .hasMessageContaining("dedicated admin workflow");
 
         verify(stockAccountCashFlowRepository, never()).save(any());
     }

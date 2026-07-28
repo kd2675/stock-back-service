@@ -33,9 +33,17 @@ public record InstitutionPortfolioRecommendationResponse(
             BigDecimal minStockAllocationRate,
             BigDecimal maxStockAllocationRate,
             BigDecimal primaryRegimeWeight,
+            BigDecimal assetPreferenceSensitivity,
+            BigDecimal volatilitySensitivity,
+            BigDecimal entryThresholdRate,
+            BigDecimal exitThresholdRate,
             BigDecimal dailyTurnoverLimitRate,
             BigDecimal maxDecisionTurnoverRate,
             int decisionIntervalMinutes,
+            BigDecimal pricePressureSensitivity,
+            BigDecimal momentumSensitivity,
+            BigDecimal valueSensitivity,
+            BigDecimal reportSensitivity,
             BigDecimal dailyParticipationRate
     ) {
     }

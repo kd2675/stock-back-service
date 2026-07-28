@@ -84,6 +84,8 @@ class StockBackApiSurfaceContractTest {
             "GET /api/stock/v1/markets/institution-portfolios",
             "GET /api/stock/v1/markets/institution-portfolios/recommendations",
             "POST /api/stock/v1/markets/institution-portfolios",
+            "POST /api/stock/v1/markets/institution-portfolios/{portfolioId}/cash-adjustments",
+            "PATCH /api/stock/v1/markets/institution-portfolios/{portfolioId}/policy",
             "POST /api/stock/v1/markets/institution-portfolios/{portfolioId}/suspend",
             "GET /api/stock/v1/markets/liquidity-mandates",
             "GET /api/stock/v1/markets/liquidity-mandates/recommendations",

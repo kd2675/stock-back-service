@@ -9,6 +9,7 @@ import org.springframework.transaction.annotation.Transactional;
 import stock.back.service.common.exception.StockException;
 import stock.back.service.database.entity.StockAccount;
 import stock.back.service.database.entity.StockAccountCashFlow;
+import stock.back.service.database.entity.StockAccountParticipantCategory;
 import stock.back.service.database.entity.StockAccountStatus;
 import stock.back.service.database.repository.StockAccountCashFlowRepository;
 import stock.back.service.database.repository.StockAccountRepository;
@@ -163,6 +164,12 @@ public class AccountService {
         marketLedgerFreezeGuard.acquireMutationPermit("user cash adjustment");
         StockAccount account = stockAccountRepository.findByUserKeyAndStatusForUpdate(userKey, StockAccountStatus.ACTIVE)
                 .orElseThrow(() -> StockException.notFound("User account is not opened yet: " + userKey));
+        if (account.getParticipantCategory()
+                != StockAccountParticipantCategory.MANUAL_PARTICIPANT) {
+            throw StockException.conflict(
+                    "System participant cash must be adjusted from its dedicated admin workflow"
+            );
+        }
         LocalDateTime createdAt = simulationClockService.currentMarketDateTime();
         if ("DEPOSIT".equals(adjustmentType)) {
             account.depositCash(amount, createdAt);

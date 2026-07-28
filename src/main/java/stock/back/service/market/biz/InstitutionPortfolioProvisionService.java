@@ -144,6 +144,7 @@ public class InstitutionPortfolioProvisionService {
                 initialCash,
                 selectedMarketCapitalization,
                 symbols,
+                marketWeights,
                 firstDecisionDate,
                 changeReason,
                 normalizedChangedBy,
@@ -460,11 +461,8 @@ public class InstitutionPortfolioProvisionService {
             Map<String, BigDecimal> marketWeights,
             LocalDateTime now
     ) {
-        BigDecimal maximumSymbolAllocation = symbols.size() == 1
-                ? preset.maxStockAllocationRate()
-                : symbols.size() <= 3
-                        ? new BigDecimal("0.500000")
-                        : new BigDecimal("0.300000");
+        BigDecimal maximumSymbolAllocation =
+                maximumSymbolAllocation(preset, symbols.size());
         jdbcTemplate.batchUpdate(
                 """
                 insert into stock_institution_symbol_mandate(
@@ -530,15 +528,29 @@ public class InstitutionPortfolioProvisionService {
             BigDecimal initialCash,
             BigDecimal selectedMarketCapitalization,
             List<MarketSymbol> symbols,
+            Map<String, BigDecimal> marketWeights,
             LocalDate effectiveBusinessDate,
             String changeReason,
             String changedBy,
             LocalDateTime now
     ) {
         Map<String, Object> config = new LinkedHashMap<>();
-        config.put("preset", "INDEPENDENT_INSTITUTION_PORTFOLIO_V1");
+        config.put("preset", "INDEPENDENT_INSTITUTION_PORTFOLIO_V2");
         config.put("portfolioCode", preset.portfolioCode());
         config.put("executionMode", "LIVE");
+        config.put("displayName", preset.displayName());
+        config.put("investmentStyle", preset.investmentStyle());
+        config.put("baseStockAllocationRate", preset.baseStockAllocationRate());
+        config.put("minStockAllocationRate", preset.minStockAllocationRate());
+        config.put("maxStockAllocationRate", preset.maxStockAllocationRate());
+        config.put("primaryRegimeWeight", preset.primaryRegimeWeight());
+        config.put("assetPreferenceSensitivity", preset.assetPreferenceSensitivity());
+        config.put("volatilitySensitivity", preset.volatilitySensitivity());
+        config.put("entryThresholdRate", preset.entryThresholdRate());
+        config.put("exitThresholdRate", preset.exitThresholdRate());
+        config.put("dailyTurnoverLimitRate", preset.dailyTurnoverLimitRate());
+        config.put("maxDecisionTurnoverRate", preset.maxDecisionTurnoverRate());
+        config.put("decisionIntervalMinutes", preset.decisionIntervalMinutes());
         config.put("institutionAumRateOfMarketCap", aumRate);
         config.put("initialCash", initialCash);
         config.put("selectedMarketCapitalization", selectedMarketCapitalization);
@@ -548,6 +560,22 @@ public class InstitutionPortfolioProvisionService {
         );
         config.put("referenceDailyVolumeRate", REFERENCE_VOLUME_RATE);
         config.put("dailyParticipationRate", preset.dailyParticipationRate());
+        BigDecimal maximumSymbolAllocation =
+                maximumSymbolAllocation(preset, symbols.size());
+        config.put("mandates", symbols.stream().map(symbol -> {
+            Map<String, Object> mandate = new LinkedHashMap<>();
+            mandate.put("symbol", symbol.symbol());
+            mandate.put("baseSymbolWeight", marketWeights.get(symbol.symbol()));
+            mandate.put("minPortfolioAllocationRate", BigDecimal.ZERO);
+            mandate.put("maxPortfolioAllocationRate", maximumSymbolAllocation);
+            mandate.put("pricePressureSensitivity", preset.pricePressureSensitivity());
+            mandate.put("momentumSensitivity", preset.momentumSensitivity());
+            mandate.put("valueSensitivity", preset.valueSensitivity());
+            mandate.put("reportSensitivity", preset.reportSensitivity());
+            mandate.put("referenceDailyVolume", referenceDailyVolume(symbol.tradableShares()));
+            mandate.put("dailyParticipationRate", preset.dailyParticipationRate());
+            return mandate;
+        }).toList());
         String configJson;
         try {
             configJson = objectMapper.writeValueAsString(config);
@@ -573,6 +601,14 @@ public class InstitutionPortfolioProvisionService {
                 now,
                 now
         );
+    }
+
+    private BigDecimal maximumSymbolAllocation(PresetPolicy preset, int symbolCount) {
+        return symbolCount == 1
+                ? preset.maxStockAllocationRate()
+                : symbolCount <= 3
+                        ? new BigDecimal("0.500000")
+                        : new BigDecimal("0.300000");
     }
 
     private long insertWithGeneratedKey(

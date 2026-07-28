@@ -23,10 +23,13 @@ import org.springframework.jdbc.datasource.init.ResourceDatabasePopulator;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import stock.back.service.common.exception.StockException;
+import stock.back.service.market.vo.InstitutionPortfolioCashAdjustmentRequest;
 import stock.back.service.market.vo.InstitutionPortfolioCreateRequest;
+import stock.back.service.market.vo.InstitutionPortfolioPolicyUpdateRequest;
 import stock.back.service.market.vo.InstitutionPortfolioResponse;
 import stock.back.service.market.vo.InstitutionSuspensionRequest;
 import stock.back.service.market.vo.InstitutionSymbolMandateResponse;
+import stock.back.service.market.vo.InstitutionSymbolPolicyUpdateRequest;
 import web.common.core.simulation.SimulationClockSnapshot;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -45,6 +48,8 @@ class InstitutionPortfolioProvisionServiceTest {
     private JdbcTemplate jdbcTemplate;
     private TransactionTemplate transactionTemplate;
     private InstitutionPortfolioProvisionService provisionService;
+    private InstitutionPortfolioCashAdjustmentService cashAdjustmentService;
+    private InstitutionPortfolioPolicyControlService policyControlService;
     private InstitutionPortfolioRecommendationService recommendationService;
     private InstitutionEmergencyStopService emergencyStopService;
     private InstitutionPortfolioQueryService queryService;
@@ -74,8 +79,14 @@ class InstitutionPortfolioProvisionServiceTest {
         freezeGuard = mock(MarketLedgerFreezeGuard.class);
         when(freezeGuard.acquireJdbcPreOpenMutationPermit("institution portfolio creation"))
                 .thenReturn(BUSINESS_DATE);
+        when(freezeGuard.acquireJdbcPreOpenMutationPermit(
+                "institution portfolio policy scheduling"
+        )).thenReturn(BUSINESS_DATE);
         when(freezeGuard.acquireJdbcMutationPermit(
                 "institution portfolio emergency suspension"
+        )).thenReturn(BUSINESS_DATE);
+        when(freezeGuard.acquireJdbcMutationPermit(
+                "institution portfolio cash adjustment"
         )).thenReturn(BUSINESS_DATE);
 
         provisionService = new InstitutionPortfolioProvisionService(
@@ -83,6 +94,18 @@ class InstitutionPortfolioProvisionServiceTest {
                 new ObjectMapper(),
                 simulationClockService,
                 marketSessionService,
+                freezeGuard
+        );
+        policyControlService = new InstitutionPortfolioPolicyControlService(
+                jdbcTemplate,
+                new ObjectMapper(),
+                simulationClockService,
+                marketSessionService,
+                freezeGuard
+        );
+        cashAdjustmentService = new InstitutionPortfolioCashAdjustmentService(
+                jdbcTemplate,
+                simulationClockService,
                 freezeGuard
         );
         emergencyStopService = new InstitutionEmergencyStopService(
@@ -95,6 +118,7 @@ class InstitutionPortfolioProvisionServiceTest {
         );
         queryService = new InstitutionPortfolioQueryService(
                 JdbcClient.create(dataSource),
+                new ObjectMapper(),
                 simulationClockService
         );
         recommendationService = new InstitutionPortfolioRecommendationService(
@@ -217,6 +241,222 @@ class InstitutionPortfolioProvisionServiceTest {
                 """,
                 BigDecimal.class
         )).isEqualByComparingTo("750000.00");
+    }
+
+    @Test
+    void adjustCash_deposit_recalculatesCurrentAumAndWritesExternalCashLedger() {
+        long portfolioId = createDefaultPortfolio();
+
+        transactionTemplate.executeWithoutResult(status ->
+                cashAdjustmentService.adjustCash(
+                        portfolioId,
+                        new InstitutionPortfolioCashAdjustmentRequest(
+                                "DEPOSIT",
+                                new BigDecimal("1250000.00")
+                        ),
+                        "stock-admin"
+                )
+        );
+
+        InstitutionPortfolioResponse portfolio = queryService.getPortfolio(portfolioId);
+        assertThat(portfolio.cashBalance()).isEqualByComparingTo("7250000.00");
+        assertThat(portfolio.totalAsset()).isEqualByComparingTo("7250000.00");
+        assertThat(jdbcTemplate.queryForObject(
+                """
+                select count(*)
+                  from stock_account_cash_flow cash_flow
+                  join stock_institution_portfolio portfolio
+                    on portfolio.account_id = cash_flow.account_id
+                 where portfolio.id = ?
+                   and cash_flow.flow_type = 'DEPOSIT'
+                   and cash_flow.reason = 'ADMIN_DEPOSIT'
+                   and cash_flow.amount = 1250000.00
+                   and cash_flow.created_by = 'stock-admin'
+                """,
+                Integer.class,
+                portfolioId
+        )).isEqualTo(1);
+    }
+
+    @Test
+    void adjustCash_withdraw_usesOnlyAvailableCashAndPreservesReservedOrders() {
+        long portfolioId = createDefaultPortfolio();
+        long accountId = accountId(portfolioId);
+        seedOpenBuyOrder(accountId, "DEMO001", new BigDecimal("500000.00"));
+        jdbcTemplate.update(
+                "update stock_account set cash_balance = cash_balance - 500000.00 where id = ?",
+                accountId
+        );
+
+        transactionTemplate.executeWithoutResult(status ->
+                cashAdjustmentService.adjustCash(
+                        portfolioId,
+                        new InstitutionPortfolioCashAdjustmentRequest(
+                                "WITHDRAW",
+                                new BigDecimal("5500000.00")
+                        ),
+                        "stock-admin"
+                )
+        );
+
+        InstitutionPortfolioResponse portfolio = queryService.getPortfolio(portfolioId);
+        assertThat(portfolio.cashBalance()).isZero();
+        assertThat(portfolio.openBuyReservedCash()).isEqualByComparingTo("500000.00");
+        assertThat(portfolio.institutionalOpenOrderCount()).isEqualTo(1L);
+    }
+
+    @Test
+    void adjustCash_withdrawAboveAvailableCash_rollsBackWithoutLedgerEntry() {
+        long portfolioId = createDefaultPortfolio();
+
+        assertThatThrownBy(() -> transactionTemplate.executeWithoutResult(status ->
+                cashAdjustmentService.adjustCash(
+                        portfolioId,
+                        new InstitutionPortfolioCashAdjustmentRequest(
+                                "WITHDRAW",
+                                new BigDecimal("6000000.01")
+                        ),
+                        "stock-admin"
+                )
+        )).isInstanceOf(StockException.class);
+
+        assertThat(queryService.getPortfolio(portfolioId).cashBalance())
+                .isEqualByComparingTo("6000000.00");
+        assertThat(jdbcTemplate.queryForObject(
+                """
+                select count(*)
+                  from stock_account_cash_flow
+                 where reason = 'ADMIN_WITHDRAW'
+                """,
+                Integer.class
+        )).isZero();
+    }
+
+    @Test
+    void schedulePolicy_existingCreationSchedule_rebasesToNextVersionWithFullPolicy() {
+        long portfolioId = createDefaultPortfolio();
+
+        transactionTemplate.executeWithoutResult(status ->
+                policyControlService.schedulePolicy(
+                        portfolioId,
+                        momentumPolicyRequest("첫 정책 조정"),
+                        "stock-admin"
+                )
+        );
+
+        assertThat(jdbcTemplate.query(
+                """
+                select version_no, status, change_reason
+                  from stock_market_policy_version
+                 where policy_scope = 'INSTITUTIONAL_PORTFOLIO'
+                   and scope_key = 'INST_PENSION'
+                 order by version_no
+                """,
+                (rs, rowNum) -> List.of(
+                        rs.getLong("version_no"),
+                        rs.getString("status"),
+                        rs.getString("change_reason")
+                )
+        )).containsExactly(
+                List.of(1L, "RETIRED", "independent institution baseline"),
+                List.of(2L, "SCHEDULED", "첫 정책 조정")
+        );
+        InstitutionPortfolioResponse portfolio = queryService.getPortfolio(portfolioId);
+        assertThat(portfolio.scheduledPolicy()).isNotNull();
+        assertThat(portfolio.scheduledPolicy().policyVersion()).isEqualTo(2L);
+        assertThat(portfolio.scheduledPolicy().investmentStyle()).isEqualTo("MOMENTUM");
+        assertThat(portfolio.scheduledPolicy().mandates())
+                .extracting(mandate -> mandate.symbol())
+                .containsExactly("DEMO001", "DEMO003");
+        assertThat(jdbcTemplate.queryForObject(
+                "select policy_version from stock_institution_portfolio where id = ?",
+                Long.class,
+                portfolioId
+        )).isEqualTo(1L);
+    }
+
+    @Test
+    void schedulePolicy_secondEdit_replacesSameNextVersion() {
+        long portfolioId = createDefaultPortfolio();
+        transactionTemplate.executeWithoutResult(status ->
+                policyControlService.schedulePolicy(
+                        portfolioId,
+                        momentumPolicyRequest("첫 정책 조정"),
+                        "stock-admin"
+                )
+        );
+
+        transactionTemplate.executeWithoutResult(status ->
+                policyControlService.schedulePolicy(
+                        portfolioId,
+                        momentumPolicyRequest("예약 정책 다시 계산"),
+                        "stock-risk-admin"
+                )
+        );
+
+        assertThat(jdbcTemplate.queryForObject(
+                """
+                select count(*)
+                  from stock_market_policy_version
+                 where policy_scope = 'INSTITUTIONAL_PORTFOLIO'
+                   and scope_key = 'INST_PENSION'
+                   and status = 'SCHEDULED'
+                """,
+                Integer.class
+        )).isOne();
+        assertThat(queryService.getPortfolio(portfolioId).scheduledPolicy().changeReason())
+                .isEqualTo("예약 정책 다시 계산");
+    }
+
+    @Test
+    void schedulePolicy_invalidBaseWeightSum_rejectsWithoutReplacingCreationPolicy() {
+        long portfolioId = createDefaultPortfolio();
+        InstitutionPortfolioPolicyUpdateRequest invalid = momentumPolicyRequest(
+                "잘못된 비중"
+        );
+        invalid = new InstitutionPortfolioPolicyUpdateRequest(
+                invalid.displayName(),
+                invalid.investmentStyle(),
+                invalid.baseStockAllocationRate(),
+                invalid.minStockAllocationRate(),
+                invalid.maxStockAllocationRate(),
+                invalid.primaryRegimeWeight(),
+                invalid.assetPreferenceSensitivity(),
+                invalid.volatilitySensitivity(),
+                invalid.entryThresholdRate(),
+                invalid.exitThresholdRate(),
+                invalid.dailyTurnoverLimitRate(),
+                invalid.maxDecisionTurnoverRate(),
+                invalid.decisionIntervalMinutes(),
+                List.of(
+                        withBaseWeight(invalid.mandates().get(0), "0.700000"),
+                        withBaseWeight(invalid.mandates().get(1), "0.700000")
+                ),
+                invalid.changeReason()
+        );
+        InstitutionPortfolioPolicyUpdateRequest request = invalid;
+
+        assertThatThrownBy(() -> transactionTemplate.executeWithoutResult(status ->
+                policyControlService.schedulePolicy(
+                        portfolioId,
+                        request,
+                        "stock-admin"
+                )
+        ))
+                .isInstanceOf(StockException.class)
+                .hasMessageContaining("base weights must sum");
+
+        assertThat(jdbcTemplate.queryForObject(
+                """
+                select count(*)
+                  from stock_market_policy_version
+                 where policy_scope = 'INSTITUTIONAL_PORTFOLIO'
+                   and scope_key = 'INST_PENSION'
+                   and status = 'SCHEDULED'
+                   and version_no = 1
+                """,
+                Integer.class
+        )).isOne();
     }
 
     @Test
@@ -381,6 +621,16 @@ class InstitutionPortfolioProvisionServiceTest {
                 assertThat(mandate.action()).isNull();
             });
         });
+    }
+
+    @Test
+    void getPortfolios_afterProvision_exposesFundingAccountUserKey() {
+        createDefaultPortfolio();
+
+        InstitutionPortfolioResponse portfolio =
+                transactionTemplate.execute(status -> queryService.getPortfolios().getFirst());
+
+        assertThat(portfolio.accountUserKey()).isEqualTo("stock-institution-inst-pension");
     }
 
     @Test
@@ -630,10 +880,12 @@ class InstitutionPortfolioProvisionServiceTest {
                 .containsEntry("submission_reason", null);
     }
 
-    private void createDefaultPortfolio() {
-        transactionTemplate.executeWithoutResult(status ->
+    private long createDefaultPortfolio() {
+        Long portfolioId = transactionTemplate.execute(status ->
                 provisionService.createPortfolio(defaultCreateRequest(), "stock-admin")
         );
+        assertThat(portfolioId).isNotNull();
+        return portfolioId;
     }
 
     private void createPortfolio(String portfolioCode, String investmentStyle) {
@@ -713,6 +965,71 @@ class InstitutionPortfolioProvisionServiceTest {
                 new BigDecimal("0.010000"),
                 List.of("DEMO001", "DEMO002", "DEMO003"),
                 "independent institution baseline"
+        );
+    }
+
+    private InstitutionPortfolioPolicyUpdateRequest momentumPolicyRequest(
+            String changeReason
+    ) {
+        return new InstitutionPortfolioPolicyUpdateRequest(
+                "축소 성장 기관",
+                "MOMENTUM",
+                new BigDecimal("0.600000"),
+                new BigDecimal("0.350000"),
+                new BigDecimal("0.850000"),
+                new BigDecimal("0.600000"),
+                new BigDecimal("0.015000"),
+                new BigDecimal("0.025000"),
+                new BigDecimal("0.004000"),
+                new BigDecimal("0.001500"),
+                new BigDecimal("0.015000"),
+                new BigDecimal("0.003000"),
+                60,
+                List.of(
+                        new InstitutionSymbolPolicyUpdateRequest(
+                                "DEMO001",
+                                new BigDecimal("0.250000"),
+                                BigDecimal.ZERO,
+                                new BigDecimal("0.500000"),
+                                new BigDecimal("0.150000"),
+                                new BigDecimal("0.250000"),
+                                new BigDecimal("-0.030000"),
+                                new BigDecimal("0.100000"),
+                                30_000L,
+                                new BigDecimal("0.020000")
+                        ),
+                        new InstitutionSymbolPolicyUpdateRequest(
+                                "DEMO003",
+                                new BigDecimal("0.750000"),
+                                BigDecimal.ZERO,
+                                new BigDecimal("0.500000"),
+                                new BigDecimal("0.150000"),
+                                new BigDecimal("0.250000"),
+                                new BigDecimal("-0.030000"),
+                                new BigDecimal("0.100000"),
+                                30_000L,
+                                new BigDecimal("0.020000")
+                        )
+                ),
+                changeReason
+        );
+    }
+
+    private InstitutionSymbolPolicyUpdateRequest withBaseWeight(
+            InstitutionSymbolPolicyUpdateRequest source,
+            String baseWeight
+    ) {
+        return new InstitutionSymbolPolicyUpdateRequest(
+                source.symbol(),
+                new BigDecimal(baseWeight),
+                source.minPortfolioAllocationRate(),
+                source.maxPortfolioAllocationRate(),
+                source.pricePressureSensitivity(),
+                source.momentumSensitivity(),
+                source.valueSensitivity(),
+                source.reportSensitivity(),
+                source.referenceDailyVolume(),
+                source.dailyParticipationRate()
         );
     }
 
@@ -833,6 +1150,46 @@ class InstitutionPortfolioProvisionServiceTest {
                 portfolioId,
                 decisionRunId,
                 createdAt
+        );
+    }
+
+    private long accountId(long portfolioId) {
+        Long accountId = jdbcTemplate.queryForObject(
+                "select account_id from stock_institution_portfolio where id = ?",
+                Long.class,
+                portfolioId
+        );
+        assertThat(accountId).isNotNull();
+        return accountId;
+    }
+
+    private void seedOpenBuyOrder(
+            long accountId,
+            String symbol,
+            BigDecimal reservedCash
+    ) {
+        jdbcTemplate.update(
+                """
+                insert into stock_order(
+                    id, client_order_id, account_id, origin_type,
+                    self_trade_group_id, symbol, market_type, side,
+                    order_type, status, limit_price, quantity,
+                    filled_quantity, reserved_cash, expires_at,
+                    created_at, updated_at
+                ) values (
+                    9901, 'institution-cash-adjustment-open-buy', ?,
+                    'INSTITUTIONAL_INVESTOR',
+                    'INSTITUTIONAL_INVESTOR:INST_PENSION', ?,
+                    'ORDER_BOOK', 'BUY', 'LIMIT', 'PENDING',
+                    100, 5000, 0, ?, ?, ?, ?
+                )
+                """,
+                accountId,
+                symbol,
+                reservedCash,
+                NOW.plusHours(1),
+                NOW,
+                NOW
         );
     }
 

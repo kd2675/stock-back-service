@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Updated: 2026-07-10 -->
+<!-- Updated: 2026-07-27 -->
 
 # stock-back-service
 
@@ -33,6 +33,8 @@
 - `GET /api/stock/v1/markets/institution-portfolios` (`ADMIN`, 축소시장용 기관 계정·목표 비중·최근 LIVE 결정·주문 감사)
 - `GET /api/stock/v1/markets/institution-portfolios/recommendations` (`ADMIN`, 활성 종목 수에 따른 권장 기관 개수·운용 유형별 생성 프리셋·AUM과 위험 수치·선택 가능한 종목)
 - `POST /api/stock/v1/markets/institution-portfolios` (`ADMIN`, 실행 중에도 운용 유형과 선택 종목 기준 AUM으로 기관 1개를 생성하고 다음 개장부터 LIVE 운용 시작)
+- `POST /api/stock/v1/markets/institution-portfolios/{portfolioId}/cash-adjustments` (`ADMIN`, 기관 전용 계좌의 가용 현금 입금·회수와 외부 현금흐름 원장 기록)
+- `PATCH /api/stock/v1/markets/institution-portfolios/{portfolioId}/policy` (`ADMIN`, 표시명·목표 비중·위험 한도·결정 주기·종목 위임을 다음 개장 정책으로 예약)
 - `POST /api/stock/v1/markets/institution-portfolios/{portfolioId}/suspend` (`ADMIN`, 실행 중에도 허용되는 비상 중단. 포트폴리오를 먼저 SUSPENDED로 고정한 뒤 대기 의도와 전용 계좌 미체결 주문을 취소하고 예약을 반환)
 - `GET /api/stock/v1/markets/liquidity-mandates` (`ADMIN`, 전용 LP 계약·계정 역할·자기체결 그룹·거래일 위험 상태 감사)
 - `GET /api/stock/v1/markets/liquidity-mandates/recommendations` (`ADMIN`, 종목별 권장 기준 거래량·시드 수량·초기 현금과 생성 가능 사유)

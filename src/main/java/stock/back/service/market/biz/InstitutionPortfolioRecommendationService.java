@@ -98,9 +98,17 @@ public class InstitutionPortfolioRecommendationService {
                                 policy.minStockAllocationRate(),
                                 policy.maxStockAllocationRate(),
                                 policy.primaryRegimeWeight(),
+                                policy.assetPreferenceSensitivity(),
+                                policy.volatilitySensitivity(),
+                                policy.entryThresholdRate(),
+                                policy.exitThresholdRate(),
                                 policy.dailyTurnoverLimitRate(),
                                 policy.maxDecisionTurnoverRate(),
                                 policy.decisionIntervalMinutes(),
+                                policy.pricePressureSensitivity(),
+                                policy.momentumSensitivity(),
+                                policy.valueSensitivity(),
+                                policy.reportSensitivity(),
                                 policy.dailyParticipationRate()
                         ))
                         .toList();

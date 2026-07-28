@@ -29,6 +29,8 @@ import stock.back.service.market.biz.AutoParticipantSymbolConfigQueryService;
 import stock.back.service.market.biz.AutoParticipantSymbolConfigService;
 import stock.back.service.market.biz.AutoParticipantWithdrawalQueryService;
 import stock.back.service.market.biz.InstitutionEmergencyStopService;
+import stock.back.service.market.biz.InstitutionPortfolioCashAdjustmentService;
+import stock.back.service.market.biz.InstitutionPortfolioPolicyControlService;
 import stock.back.service.market.biz.InstitutionPortfolioQueryService;
 import stock.back.service.market.biz.InstitutionPortfolioProvisionService;
 import stock.back.service.market.biz.InstitutionPortfolioRecommendationService;
@@ -61,8 +63,10 @@ import stock.back.service.market.vo.AutoParticipantResponse;
 import stock.back.service.market.vo.AutoParticipantSymbolConfigRequest;
 import stock.back.service.market.vo.AutoParticipantSymbolConfigResponse;
 import stock.back.service.market.vo.AutoParticipantWithdrawalAuditResponse;
+import stock.back.service.market.vo.InstitutionPortfolioCashAdjustmentRequest;
 import stock.back.service.market.vo.InstitutionPortfolioResponse;
 import stock.back.service.market.vo.InstitutionPortfolioCreateRequest;
+import stock.back.service.market.vo.InstitutionPortfolioPolicyUpdateRequest;
 import stock.back.service.market.vo.InstitutionPortfolioRecommendationResponse;
 import stock.back.service.market.vo.InstitutionSuspensionRequest;
 import stock.back.service.market.vo.LiquidityProviderMandateResponse;
@@ -97,6 +101,9 @@ public class AutoMarketAdminController {
     private final AutoParticipantWithdrawalQueryService autoParticipantWithdrawalQueryService;
     private final InstitutionPortfolioQueryService institutionPortfolioQueryService;
     private final InstitutionPortfolioProvisionService institutionPortfolioProvisionService;
+    private final InstitutionPortfolioCashAdjustmentService
+            institutionPortfolioCashAdjustmentService;
+    private final InstitutionPortfolioPolicyControlService institutionPortfolioPolicyControlService;
     private final InstitutionPortfolioRecommendationService
             institutionPortfolioRecommendationService;
     private final InstitutionEmergencyStopService institutionEmergencyStopService;
@@ -267,6 +274,34 @@ public class AutoMarketAdminController {
         return ResponseDataDTO.of(
                 institutionPortfolioQueryService.getPortfolio(portfolioId)
         );
+    }
+
+    @PatchMapping("/institution-portfolios/{portfolioId}/policy")
+    public ResponseDataDTO<InstitutionPortfolioResponse> updateInstitutionPortfolioPolicy(
+            @PathVariable long portfolioId,
+            @RequestBody InstitutionPortfolioPolicyUpdateRequest request,
+            UserContext userContext
+    ) {
+        institutionPortfolioPolicyControlService.schedulePolicy(
+                portfolioId,
+                request,
+                userContext.getUserKey()
+        );
+        return ResponseDataDTO.of(institutionPortfolioQueryService.getPortfolio(portfolioId));
+    }
+
+    @PostMapping("/institution-portfolios/{portfolioId}/cash-adjustments")
+    public ResponseDataDTO<InstitutionPortfolioResponse> adjustInstitutionPortfolioCash(
+            @PathVariable long portfolioId,
+            @RequestBody InstitutionPortfolioCashAdjustmentRequest request,
+            UserContext userContext
+    ) {
+        institutionPortfolioCashAdjustmentService.adjustCash(
+                portfolioId,
+                request,
+                userContext.getUserKey()
+        );
+        return ResponseDataDTO.of(institutionPortfolioQueryService.getPortfolio(portfolioId));
     }
 
     @PostMapping("/institution-portfolios/{portfolioId}/suspend")

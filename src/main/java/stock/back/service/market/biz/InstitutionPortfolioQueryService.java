@@ -1,5 +1,9 @@
 package stock.back.service.market.biz;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.sql.ResultSet;
@@ -17,19 +21,24 @@ import org.springframework.transaction.annotation.Transactional;
 
 import stock.back.service.common.exception.StockException;
 import stock.back.service.market.vo.InstitutionPortfolioResponse;
+import stock.back.service.market.vo.InstitutionPortfolioScheduledPolicyResponse;
 import stock.back.service.market.vo.InstitutionSymbolMandateResponse;
+import stock.back.service.market.vo.InstitutionSymbolPolicyResponse;
 
 @Service
 public class InstitutionPortfolioQueryService {
 
     private final JdbcClient jdbcClient;
+    private final ObjectMapper objectMapper;
     private final SimulationClockService simulationClockService;
 
     public InstitutionPortfolioQueryService(
             JdbcClient jdbcClient,
+            ObjectMapper objectMapper,
             SimulationClockService simulationClockService
     ) {
         this.jdbcClient = jdbcClient;
+        this.objectMapper = objectMapper;
         this.simulationClockService = simulationClockService;
     }
 
@@ -42,11 +51,18 @@ public class InstitutionPortfolioQueryService {
         }
         Map<Long, List<InstitutionSymbolMandateResponse>> mandatesByPortfolioId =
                 queryMandates(simulationTradeDate);
+        Map<String, InstitutionPortfolioScheduledPolicyResponse> scheduledPolicies =
+                queryScheduledPolicies();
         return headers.stream()
-                .map(header -> header.toResponse(
-                        simulationTradeDate,
-                        mandatesByPortfolioId.getOrDefault(header.portfolioId(), List.of())
-                ))
+                .map(header -> {
+                    List<InstitutionSymbolMandateResponse> mandates =
+                            mandatesByPortfolioId.getOrDefault(header.portfolioId(), List.of());
+                    return header.toResponse(
+                            simulationTradeDate,
+                            scheduledPolicies.get(header.portfolioCode()),
+                            mandates
+                    );
+                })
                 .toList();
     }
 
@@ -78,6 +94,7 @@ public class InstitutionPortfolioQueryService {
                                participant.status as participant_status,
                                participant.self_trade_group_id as participant_self_trade_group_id,
                                portfolio.account_id,
+                               account.user_key as account_user_key,
                                account.status as account_status,
                                account.self_trade_group_id as account_self_trade_group_id,
                                account.cash_balance,
@@ -326,6 +343,164 @@ public class InstitutionPortfolioQueryService {
         return result;
     }
 
+    private Map<String, InstitutionPortfolioScheduledPolicyResponse> queryScheduledPolicies() {
+        Map<String, InstitutionPortfolioScheduledPolicyResponse> result = new LinkedHashMap<>();
+        List<ScheduledPolicyRow> rows = jdbcClient.sql(
+                        """
+                        select scope_key, version_no, effective_business_date, config_json,
+                               change_reason, changed_by, updated_at
+                          from stock_market_policy_version
+                         where policy_scope = 'INSTITUTIONAL_PORTFOLIO'
+                           and status = 'SCHEDULED'
+                         order by scope_key asc, version_no asc
+                        """
+                )
+                .query((rs, rowNum) -> new ScheduledPolicyRow(
+                        rs.getString("scope_key"),
+                        rs.getLong("version_no"),
+                        rs.getObject("effective_business_date", LocalDate.class),
+                        rs.getString("config_json"),
+                        rs.getString("change_reason"),
+                        rs.getString("changed_by"),
+                        rs.getObject("updated_at", LocalDateTime.class)
+                ))
+                .list();
+        for (ScheduledPolicyRow row : rows) {
+            InstitutionPortfolioScheduledPolicyResponse response = parseScheduledPolicy(row);
+            if (response == null) {
+                continue;
+            }
+            InstitutionPortfolioScheduledPolicyResponse previous =
+                    result.putIfAbsent(row.portfolioCode(), response);
+            if (previous != null) {
+                throw new IllegalStateException(
+                        "Institution portfolio has multiple scheduled policies: "
+                                + row.portfolioCode()
+                );
+            }
+        }
+        return Map.copyOf(result);
+    }
+
+    private InstitutionPortfolioScheduledPolicyResponse parseScheduledPolicy(
+            ScheduledPolicyRow row
+    ) {
+        JsonNode root;
+        try {
+            root = objectMapper.readTree(row.configJson());
+            if (root != null && root.isTextual()) {
+                root = objectMapper.readTree(root.textValue());
+            }
+        } catch (JsonProcessingException ex) {
+            throw new IllegalStateException(
+                    "Scheduled institution policy JSON is invalid: " + row.portfolioCode(),
+                    ex
+            );
+        }
+        if (root == null || !root.isObject()) {
+            throw new IllegalStateException(
+                    "Scheduled institution policy JSON must be an object: "
+                            + row.portfolioCode()
+            );
+        }
+        if (!"INDEPENDENT_INSTITUTION_PORTFOLIO_V2".equals(text(root, "preset"))) {
+            return null;
+        }
+        JsonNode mandateNodes = requiredNode(root, "mandates");
+        if (!mandateNodes.isArray() || mandateNodes.isEmpty()) {
+            throw new IllegalStateException(
+                    "Scheduled institution policy mandates must be a non-empty array: "
+                            + row.portfolioCode()
+            );
+        }
+        List<InstitutionSymbolPolicyResponse> mandates = new ArrayList<>();
+        for (JsonNode mandate : mandateNodes) {
+            mandates.add(new InstitutionSymbolPolicyResponse(
+                    text(mandate, "symbol"),
+                    decimal(mandate, "baseSymbolWeight"),
+                    decimal(mandate, "minPortfolioAllocationRate"),
+                    decimal(mandate, "maxPortfolioAllocationRate"),
+                    decimal(mandate, "pricePressureSensitivity"),
+                    decimal(mandate, "momentumSensitivity"),
+                    decimal(mandate, "valueSensitivity"),
+                    decimal(mandate, "reportSensitivity"),
+                    longValue(mandate, "referenceDailyVolume"),
+                    decimal(mandate, "dailyParticipationRate")
+            ));
+        }
+        return new InstitutionPortfolioScheduledPolicyResponse(
+                row.version(),
+                row.effectiveBusinessDate(),
+                text(root, "displayName"),
+                text(root, "investmentStyle"),
+                decimal(root, "baseStockAllocationRate"),
+                decimal(root, "minStockAllocationRate"),
+                decimal(root, "maxStockAllocationRate"),
+                decimal(root, "primaryRegimeWeight"),
+                decimal(root, "assetPreferenceSensitivity"),
+                decimal(root, "volatilitySensitivity"),
+                decimal(root, "entryThresholdRate"),
+                decimal(root, "exitThresholdRate"),
+                decimal(root, "dailyTurnoverLimitRate"),
+                decimal(root, "maxDecisionTurnoverRate"),
+                integer(root, "decisionIntervalMinutes"),
+                mandates,
+                row.changeReason(),
+                row.changedBy(),
+                row.updatedAt()
+        );
+    }
+
+    private JsonNode requiredNode(JsonNode root, String fieldName) {
+        JsonNode value = root.get(fieldName);
+        if (value == null || value.isNull()) {
+            throw new IllegalStateException(
+                    "Scheduled institution policy field is missing: " + fieldName
+            );
+        }
+        return value;
+    }
+
+    private String text(JsonNode root, String fieldName) {
+        JsonNode value = requiredNode(root, fieldName);
+        if (!value.isTextual() || value.textValue().isBlank()) {
+            throw new IllegalStateException(
+                    "Scheduled institution policy field must be non-blank text: " + fieldName
+            );
+        }
+        return value.textValue();
+    }
+
+    private BigDecimal decimal(JsonNode root, String fieldName) {
+        JsonNode value = requiredNode(root, fieldName);
+        if (!value.isNumber()) {
+            throw new IllegalStateException(
+                    "Scheduled institution policy field must be numeric: " + fieldName
+            );
+        }
+        return value.decimalValue();
+    }
+
+    private long longValue(JsonNode root, String fieldName) {
+        JsonNode value = requiredNode(root, fieldName);
+        if (!value.canConvertToLong()) {
+            throw new IllegalStateException(
+                    "Scheduled institution policy field must be a long: " + fieldName
+            );
+        }
+        return value.longValue();
+    }
+
+    private int integer(JsonNode root, String fieldName) {
+        JsonNode value = requiredNode(root, fieldName);
+        if (!value.canConvertToInt()) {
+            throw new IllegalStateException(
+                    "Scheduled institution policy field must be an integer: " + fieldName
+            );
+        }
+        return value.intValue();
+    }
+
     private PortfolioHeader mapHeader(ResultSet rs) throws SQLException {
         return new PortfolioHeader(
                 rs.getLong("portfolio_id"),
@@ -340,6 +515,7 @@ public class InstitutionPortfolioQueryService {
                 rs.getString("participant_status"),
                 rs.getString("participant_self_trade_group_id"),
                 rs.getLong("account_id"),
+                rs.getString("account_user_key"),
                 rs.getString("account_status"),
                 rs.getString("account_self_trade_group_id"),
                 zero(rs.getBigDecimal("cash_balance")),
@@ -475,6 +651,7 @@ public class InstitutionPortfolioQueryService {
             String participantStatus,
             String participantSelfTradeGroupId,
             long accountId,
+            String accountUserKey,
             String accountStatus,
             String accountSelfTradeGroupId,
             BigDecimal cashBalance,
@@ -511,6 +688,7 @@ public class InstitutionPortfolioQueryService {
 
         InstitutionPortfolioResponse toResponse(
                 LocalDate budgetTradeDate,
+                InstitutionPortfolioScheduledPolicyResponse scheduledPolicy,
                 List<InstitutionSymbolMandateResponse> mandates
         ) {
             BigDecimal totalAsset = cashBalance.add(openBuyReservedCash).add(holdingMarketValue);
@@ -530,6 +708,7 @@ public class InstitutionPortfolioQueryService {
                     participantStatus,
                     participantSelfTradeGroupId,
                     accountId,
+                    accountUserKey,
                     accountStatus,
                     accountSelfTradeGroupId,
                     cashBalance,
@@ -565,9 +744,21 @@ public class InstitutionPortfolioQueryService {
                     institutionalOpenOrderCount,
                     completedDecisionTradingDays,
                     recentDecisionFailureCount,
+                    scheduledPolicy,
                     mandates
             );
         }
+    }
+
+    private record ScheduledPolicyRow(
+            String portfolioCode,
+            long version,
+            LocalDate effectiveBusinessDate,
+            String configJson,
+            String changeReason,
+            String changedBy,
+            LocalDateTime updatedAt
+    ) {
     }
 
     private record MandateRow(long portfolioId, InstitutionSymbolMandateResponse response) {

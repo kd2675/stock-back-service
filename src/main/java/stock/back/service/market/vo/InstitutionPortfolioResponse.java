@@ -18,6 +18,7 @@ public record InstitutionPortfolioResponse(
         String participantStatus,
         String participantSelfTradeGroupId,
         long accountId,
+        String accountUserKey,
         String accountStatus,
         String accountSelfTradeGroupId,
         BigDecimal cashBalance,
@@ -53,6 +54,7 @@ public record InstitutionPortfolioResponse(
         long institutionalOpenOrderCount,
         int completedDecisionTradingDays,
         int recentDecisionFailureCount,
+        InstitutionPortfolioScheduledPolicyResponse scheduledPolicy,
         List<InstitutionSymbolMandateResponse> mandates
 ) {
 
