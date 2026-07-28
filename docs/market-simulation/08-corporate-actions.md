@@ -210,7 +210,7 @@ batch 처리:
 3. 매도 주문 예약수량은 `stock_holding.reserved_quantity`에서 해제한다.
 4. `stock_order_book_instrument.enabled = false`, `tradable_shares = 0`으로 바꾼다.
 5. 주문장 시장은 `HALTED`와 `enabled = false`로 닫는다.
-6. 종목 자동장, 상장주관사 자동계정, 참여자별 종목 전략은 정지한다.
+6. 종목 자동장, 발행 인수기관 자동계정, 참여자별 종목 전략은 정지한다.
 7. `stock_price`와 `stock_price_tick`에 0원 가격을 남긴다.
 8. 시세 갱신 배치는 상장폐지된 주문장 종목을 다시 갱신 대상으로 잡지 않는다.
 
