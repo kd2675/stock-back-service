@@ -35,12 +35,18 @@ public class InstitutionPortfolioRecommendationService {
                         select instrument.symbol,
                                instrument.name,
                                instrument.tradable_shares,
-                               price.current_price
+                               price.current_price,
+                               market.enabled as market_enabled
                           from stock_order_book_instrument instrument
                           join stock_order_book_market_config market
                             on market.symbol = instrument.symbol
-                           and market.enabled = true
-                           and market.market_status in ('OPEN', 'CLOSED')
+                           and (
+                               market.market_status = 'CLOSED'
+                               or (
+                                   market.enabled = true
+                                   and market.market_status = 'OPEN'
+                               )
+                           )
                           join stock_price price
                             on price.symbol = instrument.symbol
                            and price.current_price > 0
@@ -53,7 +59,8 @@ public class InstitutionPortfolioRecommendationService {
                         rs.getString("symbol"),
                         rs.getString("name"),
                         rs.getLong("tradable_shares"),
-                        rs.getBigDecimal("current_price")
+                        rs.getBigDecimal("current_price"),
+                        rs.getBoolean("market_enabled")
                 ))
                 .list();
         Map<String, MarketReferenceVolumeResolver.Resolution> referenceVolumes =
@@ -93,7 +100,10 @@ public class InstitutionPortfolioRecommendationService {
                                 referenceVolumes.get(symbol.symbol())
                                         .referenceDailyVolumeRate(),
                                 referenceVolumes.get(symbol.symbol()).completedHistoryDays(),
-                                referenceVolumes.get(symbol.symbol()).source()
+                                referenceVolumes.get(symbol.symbol()).source(),
+                                symbol.marketEnabled()
+                                        ? "ACTIVE"
+                                        : "PENDING_MARKET_ACTIVATION"
                         ))
                         .toList();
         List<InstitutionPortfolioRecommendationResponse.Style> styles =
@@ -128,7 +138,11 @@ public class InstitutionPortfolioRecommendationService {
                         .toList();
         BigDecimal defaultAumRate = InstitutionPortfolioPolicyCatalog.recommendedPolicy()
                 .recommendedAumRateOfMarketCap();
+        int activeSymbolCount = (int) marketSymbols.stream()
+                .filter(MarketSymbol::marketEnabled)
+                .count();
         return new InstitutionPortfolioRecommendationResponse(
+                activeSymbolCount,
                 marketSymbols.size(),
                 currentPortfolioCount,
                 recommendedPortfolioCount,
@@ -151,14 +165,14 @@ public class InstitutionPortfolioRecommendationService {
                 .setScale(2, RoundingMode.DOWN);
     }
 
-    private int recommendedPortfolioCount(int activeSymbolCount) {
-        if (activeSymbolCount <= 0) {
+    private int recommendedPortfolioCount(int eligibleSymbolCount) {
+        if (eligibleSymbolCount <= 0) {
             return 0;
         }
-        if (activeSymbolCount <= 2) {
+        if (eligibleSymbolCount <= 2) {
             return 2;
         }
-        if (activeSymbolCount <= 5) {
+        if (eligibleSymbolCount <= 5) {
             return 3;
         }
         return 4;
@@ -192,7 +206,8 @@ public class InstitutionPortfolioRecommendationService {
             String symbol,
             String name,
             long tradableShares,
-            BigDecimal currentPrice
+            BigDecimal currentPrice,
+            boolean marketEnabled
     ) {
 
         BigDecimal marketCapitalization() {

@@ -17,14 +17,14 @@
 - `GET /api/stock/v1/markets/prices`
 - `GET /api/stock/v1/markets/prices/{symbol}/ticks`
 - `GET /api/stock/v1/markets/order-book-instruments`
-- `POST /api/stock/v1/markets/order-book-instruments` (`ADMIN`, 실행 중에도 유통 50%·잠금 50%의 역할 분리형으로 배정하고 LP 활성화 전까지 시장을 비활성/CLOSED로 유지)
+- `POST /api/stock/v1/markets/order-book-instruments` (`ADMIN`, 실행 중에도 유통 50%·잠금 50%의 역할 분리형으로 배정하고 자동시장 1회 주문상한은 `min(발행가 기준 500만원, 유통주식 0.02%)`로 생성하며 LP 활성화 전까지 시장을 비활성/CLOSED로 유지)
 - `POST /api/stock/v1/markets/order-book-instruments/{symbol}/corporate-actions` (`ADMIN`)
 - `GET /api/stock/v1/markets/order-book-instruments/{symbol}/corporate-actions`
 - `GET /api/stock/v1/markets/order-book-instruments/{symbol}/market-report`
 - `GET /api/stock/v1/markets/corporate-actions` (`actionType`, `limit` optional)
 - `GET /api/stock/v1/markets/order-book-instruments/{symbol}/reports`
 - `GET /api/stock/v1/markets/order-book-instruments/{symbol}/reports/latest`
-- `POST /api/stock/v1/markets/order-book-instruments` (`ADMIN`, 실행 중에도 신규 종목과 최초 배정원장을 원자적으로 생성하되 시장은 `CLOSED`·비활성으로 대기. 인수계약과 LP 준비 후 예약된 개장일부터 거래)
+- `POST /api/stock/v1/markets/order-book-instruments` (`ADMIN`, 실행 중에도 신규 종목과 최초 배정원장을 원자적으로 생성하되 시장은 `CLOSED`·비활성으로 대기. 자동시장 1회 주문상한은 `min(발행가 기준 500만원, 유통주식 0.02%)`로 생성하고, 인수계약과 LP 준비 후 예약된 개장일부터 거래)
 - `POST /api/stock/v1/markets/order-book-instruments/{symbol}/reports` (`ADMIN`)
 - `PATCH /api/stock/v1/markets/order-book-instruments/{symbol}/reports` (`ADMIN`)
 - `DELETE /api/stock/v1/markets/order-book-instruments/{symbol}/reports` (`ADMIN`)
@@ -35,7 +35,7 @@
 - `GET /api/stock/v1/markets/order-book-market`
 - `GET /api/stock/v1/markets/auto-market`
 - `GET /api/stock/v1/markets/institution-portfolios` (`ADMIN`, 기관 계정·목표 비중·최근 LIVE 결정·주문 감사)
-- `GET /api/stock/v1/markets/institution-portfolios/recommendations` (`ADMIN`, 활성 종목 수 기준 권장 기관 개수·운용 유형별 생성 프리셋·AUM과 위험 수치·선택 가능한 종목)
+- `GET /api/stock/v1/markets/institution-portfolios/recommendations` (`ADMIN`, 활성·개장 대기 종목 수 기준 권장 기관 개수·유통 시가총액 비중·운용 유형별 생성 프리셋·AUM과 위험 수치·선택 가능한 종목)
 - `POST /api/stock/v1/markets/institution-portfolios` (`ADMIN`, 실행 중에도 운용 유형과 선택 종목 기준 AUM으로 기관 1개를 생성하고 다음 개장부터 LIVE 운용 시작)
 - `POST /api/stock/v1/markets/institution-portfolios/{portfolioId}/cash-adjustments` (`ADMIN`, 기관 전용 계좌의 가용 현금을 입금·회수하고 외부 현금흐름 원장을 남김. 매수 예약금은 건드리지 않음)
 - `PATCH /api/stock/v1/markets/institution-portfolios/{portfolioId}/policy` (`ADMIN`, 표시명·운용 유형·목표 비중·위험 한도·결정 주기·종목별 위임을 다음 개장 정책으로 예약)

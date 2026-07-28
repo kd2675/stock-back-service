@@ -31,7 +31,7 @@
 - `GET /api/stock/v1/markets/admin/investor-flow-summary` (`ADMIN`, 현재 계좌 역할 기준 거래일 비동기 요약)
 - `GET /api/stock/v1/markets/admin/investor-flow-history` (`ADMIN`, 오늘은 비동기 요약, 과거 거래일은 권위 있는 full-market cycle의 역할 동결 스냅샷과 집계 상태를 반환)
 - `GET /api/stock/v1/markets/institution-portfolios` (`ADMIN`, 축소시장용 기관 계정·목표 비중·최근 LIVE 결정·주문 감사)
-- `GET /api/stock/v1/markets/institution-portfolios/recommendations` (`ADMIN`, 활성 종목 수에 따른 권장 기관 개수·운용 유형별 생성 프리셋·AUM과 위험 수치·선택 가능한 종목)
+- `GET /api/stock/v1/markets/institution-portfolios/recommendations` (`ADMIN`, 활성·개장 대기 종목 수에 따른 권장 기관 개수·유통 시가총액 비중·운용 유형별 생성 프리셋·AUM과 위험 수치·선택 가능한 종목)
 - `POST /api/stock/v1/markets/institution-portfolios` (`ADMIN`, 실행 중에도 운용 유형과 선택 종목 기준 AUM으로 기관 1개를 생성하고 다음 개장부터 LIVE 운용 시작)
 - `POST /api/stock/v1/markets/institution-portfolios/{portfolioId}/cash-adjustments` (`ADMIN`, 기관 전용 계좌의 가용 현금 입금·회수와 외부 현금흐름 원장 기록)
 - `PATCH /api/stock/v1/markets/institution-portfolios/{portfolioId}/policy` (`ADMIN`, 표시명·목표 비중·위험 한도·결정 주기·종목 위임을 다음 개장 정책으로 예약)

@@ -86,14 +86,16 @@ public class InstitutionPortfolioProvisionService {
                 permittedBusinessDate
         );
         LocalDate firstDecisionDate = firstDecisionAt.toLocalDate();
-        List<MarketSymbol> activeMarketSymbols = findActiveMarketSymbols();
+        List<MarketSymbol> policyEligibleMarketSymbols =
+                findPolicyEligibleMarketSymbols();
         List<MarketSymbol> symbols = selectMarketSymbols(
-                activeMarketSymbols,
+                policyEligibleMarketSymbols,
                 request.symbols()
         );
         if (symbols.isEmpty()) {
             throw StockException.conflict(
-                    "At least one active order-book symbol with a positive price is required"
+                    "At least one active or activation-pending order-book symbol "
+                            + "with a positive price is required"
             );
         }
         BigDecimal selectedMarketCapitalization = symbols.stream()
@@ -274,7 +276,7 @@ public class InstitutionPortfolioProvisionService {
         }
     }
 
-    private List<MarketSymbol> findActiveMarketSymbols() {
+    private List<MarketSymbol> findPolicyEligibleMarketSymbols() {
         return jdbcClient.sql(
                         """
                         select instrument.symbol,
@@ -283,8 +285,13 @@ public class InstitutionPortfolioProvisionService {
                           from stock_order_book_instrument instrument
                           join stock_order_book_market_config market
                             on market.symbol = instrument.symbol
-                           and market.enabled = true
-                           and market.market_status in ('OPEN', 'CLOSED')
+                           and (
+                               market.market_status = 'CLOSED'
+                               or (
+                                   market.enabled = true
+                                   and market.market_status = 'OPEN'
+                               )
+                           )
                           join stock_price price
                             on price.symbol = instrument.symbol
                            and price.current_price > 0
@@ -321,7 +328,8 @@ public class InstitutionPortfolioProvisionService {
                 .toList();
         if (!missing.isEmpty()) {
             throw StockException.badRequest(
-                    "Institution symbols must be active order-book symbols with positive prices: "
+                    "Institution symbols must be active or activation-pending "
+                            + "order-book symbols with positive prices: "
                             + String.join(",", missing)
             );
         }
@@ -473,8 +481,6 @@ public class InstitutionPortfolioProvisionService {
             Map<String, MarketReferenceVolumeResolver.Resolution> referenceVolumes,
             LocalDateTime now
     ) {
-        BigDecimal maximumSymbolAllocation =
-                maximumSymbolAllocation(preset, symbols.size());
         jdbcTemplate.batchUpdate(
                 """
                 insert into stock_institution_symbol_mandate(
@@ -491,8 +497,16 @@ public class InstitutionPortfolioProvisionService {
                 (statement, symbol) -> {
                     statement.setLong(1, portfolioId);
                     statement.setString(2, symbol.symbol());
-                    statement.setBigDecimal(3, marketWeights.get(symbol.symbol()));
-                    statement.setBigDecimal(4, maximumSymbolAllocation);
+                    BigDecimal baseSymbolWeight = marketWeights.get(symbol.symbol());
+                    statement.setBigDecimal(3, baseSymbolWeight);
+                    statement.setBigDecimal(
+                            4,
+                            maximumSymbolAllocation(
+                                    preset,
+                                    symbols.size(),
+                                    baseSymbolWeight
+                            )
+                    );
                     statement.setBigDecimal(5, preset.pricePressureSensitivity());
                     statement.setBigDecimal(6, preset.momentumSensitivity());
                     statement.setBigDecimal(7, preset.valueSensitivity());
@@ -570,14 +584,20 @@ public class InstitutionPortfolioProvisionService {
         );
         config.put("referenceDailyVolumeMethod", "COMPLETED_20_DAY_ADV_OR_FLOAT_FALLBACK");
         config.put("dailyParticipationRate", preset.dailyParticipationRate());
-        BigDecimal maximumSymbolAllocation =
-                maximumSymbolAllocation(preset, symbols.size());
         config.put("mandates", symbols.stream().map(symbol -> {
             Map<String, Object> mandate = new LinkedHashMap<>();
+            BigDecimal baseSymbolWeight = marketWeights.get(symbol.symbol());
             mandate.put("symbol", symbol.symbol());
-            mandate.put("baseSymbolWeight", marketWeights.get(symbol.symbol()));
+            mandate.put("baseSymbolWeight", baseSymbolWeight);
             mandate.put("minPortfolioAllocationRate", BigDecimal.ZERO);
-            mandate.put("maxPortfolioAllocationRate", maximumSymbolAllocation);
+            mandate.put(
+                    "maxPortfolioAllocationRate",
+                    maximumSymbolAllocation(
+                            preset,
+                            symbols.size(),
+                            baseSymbolWeight
+                    )
+            );
             mandate.put("pricePressureSensitivity", preset.pricePressureSensitivity());
             mandate.put("momentumSensitivity", preset.momentumSensitivity());
             mandate.put("valueSensitivity", preset.valueSensitivity());
@@ -621,12 +641,20 @@ public class InstitutionPortfolioProvisionService {
         );
     }
 
-    private BigDecimal maximumSymbolAllocation(PresetPolicy preset, int symbolCount) {
-        return symbolCount == 1
+    private BigDecimal maximumSymbolAllocation(
+            PresetPolicy preset,
+            int symbolCount,
+            BigDecimal baseSymbolWeight
+    ) {
+        BigDecimal diversificationLimit = symbolCount == 1
                 ? preset.maxStockAllocationRate()
                 : symbolCount <= 3
                         ? new BigDecimal("0.500000")
                         : new BigDecimal("0.300000");
+        BigDecimal baseWeightCapacity = baseSymbolWeight
+                .multiply(preset.maxStockAllocationRate())
+                .setScale(6, RoundingMode.HALF_UP);
+        return diversificationLimit.max(baseWeightCapacity).min(BigDecimal.ONE);
     }
 
     private long insertWithGeneratedKey(

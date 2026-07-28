@@ -1,22 +1,21 @@
 package stock.back.service.market.biz;
 
+import java.util.Optional;
+
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+
 import stock.back.service.common.exception.StockException;
-import stock.back.service.database.entity.StockAutoMarketConfig;
 import stock.back.service.database.entity.StockAutoParticipant;
 import stock.back.service.database.entity.StockAutoParticipantSymbolConfig;
-import stock.back.service.database.repository.StockAutoMarketConfigRepository;
 import stock.back.service.database.repository.StockAutoParticipantRepository;
 import stock.back.service.database.repository.StockAutoParticipantSymbolConfigRepository;
 import stock.back.service.database.repository.StockOrderBookInstrumentRepository;
 import stock.back.service.market.vo.AutoParticipantSymbolConfigRequest;
-
-import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -35,9 +34,6 @@ class AutoParticipantSymbolConfigServiceTest {
     private StockAutoParticipantSymbolConfigRepository stockAutoParticipantSymbolConfigRepository;
 
     @Mock
-    private StockAutoMarketConfigRepository stockAutoMarketConfigRepository;
-
-    @Mock
     private StockOrderBookInstrumentRepository stockOrderBookInstrumentRepository;
 
     private AutoParticipantSymbolConfigService service;
@@ -47,7 +43,6 @@ class AutoParticipantSymbolConfigServiceTest {
         service = new AutoParticipantSymbolConfigService(
                 stockAutoParticipantRepository,
                 stockAutoParticipantSymbolConfigRepository,
-                stockAutoMarketConfigRepository,
                 stockOrderBookInstrumentRepository
         );
     }
@@ -61,7 +56,6 @@ class AutoParticipantSymbolConfigServiceTest {
         );
         when(stockAutoParticipantRepository.findById("stock-auto-001")).thenReturn(Optional.of(participant));
         when(stockOrderBookInstrumentRepository.existsById("ZQ001")).thenReturn(true);
-        when(stockAutoMarketConfigRepository.findById("ZQ001")).thenReturn(Optional.of(StockAutoMarketConfig.defaults("ZQ001")));
         when(stockAutoParticipantSymbolConfigRepository.findById(any())).thenReturn(Optional.empty());
         when(stockAutoParticipantSymbolConfigRepository.save(any(StockAutoParticipantSymbolConfig.class)))
                 .thenAnswer(invocation -> invocation.getArgument(0));
@@ -87,11 +81,8 @@ class AutoParticipantSymbolConfigServiceTest {
                 "자동 참여자 1",
                 true
         );
-        StockAutoMarketConfig marketConfig = StockAutoMarketConfig.defaults("ZQ001");
-        marketConfig.update(true, null, null);
         when(stockAutoParticipantRepository.findById("stock-auto-001")).thenReturn(Optional.of(participant));
         when(stockOrderBookInstrumentRepository.existsById("ZQ001")).thenReturn(true);
-        when(stockAutoMarketConfigRepository.findById("ZQ001")).thenReturn(Optional.of(marketConfig));
         when(stockAutoParticipantSymbolConfigRepository.findById(any())).thenReturn(Optional.empty());
         when(stockAutoParticipantSymbolConfigRepository.save(any(StockAutoParticipantSymbolConfig.class)))
                 .thenAnswer(invocation -> invocation.getArgument(0));
@@ -114,8 +105,6 @@ class AutoParticipantSymbolConfigServiceTest {
         );
         when(stockAutoParticipantRepository.findById("stock-auto-001")).thenReturn(Optional.of(participant));
         when(stockOrderBookInstrumentRepository.existsById("ZQ001")).thenReturn(true);
-        when(stockAutoMarketConfigRepository.findById("ZQ001")).thenReturn(Optional.of(StockAutoMarketConfig.defaults("ZQ001")));
-
         assertThatThrownBy(() -> service.updateAutoParticipantSymbolConfig(
                 "stock-auto-001",
                 "zq001",

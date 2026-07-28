@@ -25,6 +25,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 
 import stock.back.service.common.exception.StockException;
 import stock.back.service.database.entity.MarketSessionStatus;
+import stock.back.service.database.entity.StockAutoMarketConfig;
 import stock.back.service.database.entity.StockCorporateAction;
 import stock.back.service.database.entity.StockOrderBookMarketConfig;
 import stock.back.service.database.repository.StockAutoMarketConfigRepository;
@@ -53,6 +54,7 @@ class OrderBookInstrumentRoleSeparatedIntegrationTest {
     private static final LocalDateTime NOW = LocalDateTime.of(2027, 1, 27, 5, 0);
 
     private JdbcTemplate jdbcTemplate;
+    private StockAutoMarketConfigRepository autoMarketConfigRepository;
     private StockOrderBookInstrumentRepository instrumentRepository;
     private StockCorporateActionRepository corporateActionRepository;
     private StockOrderBookMarketConfigRepository marketConfigRepository;
@@ -78,8 +80,7 @@ class OrderBookInstrumentRoleSeparatedIntegrationTest {
         StockInstrumentRepository virtualInstrumentRepository =
                 mock(StockInstrumentRepository.class);
         StockPriceRepository priceRepository = mock(StockPriceRepository.class);
-        StockAutoMarketConfigRepository autoMarketConfigRepository =
-                mock(StockAutoMarketConfigRepository.class);
+        autoMarketConfigRepository = mock(StockAutoMarketConfigRepository.class);
         instrumentRepository = mock(StockOrderBookInstrumentRepository.class);
         marketConfigRepository = mock(StockOrderBookMarketConfigRepository.class);
         corporateActionRepository = mock(StockCorporateActionRepository.class);
@@ -138,6 +139,10 @@ class OrderBookInstrumentRoleSeparatedIntegrationTest {
 
         assertThat(response.issuedShares()).isEqualTo(100_000L);
         assertThat(response.tradableShares()).isEqualTo(50_000L);
+        ArgumentCaptor<StockAutoMarketConfig> autoMarketConfigCaptor =
+                ArgumentCaptor.forClass(StockAutoMarketConfig.class);
+        verify(autoMarketConfigRepository).save(autoMarketConfigCaptor.capture());
+        assertThat(autoMarketConfigCaptor.getValue().getMaxOrderQuantity()).isEqualTo(10);
         ArgumentCaptor<StockOrderBookMarketConfig> marketConfigCaptor =
                 ArgumentCaptor.forClass(StockOrderBookMarketConfig.class);
         verify(marketConfigRepository).save(marketConfigCaptor.capture());

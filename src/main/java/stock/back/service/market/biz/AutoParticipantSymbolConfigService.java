@@ -3,12 +3,11 @@ package stock.back.service.market.biz;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+
 import stock.back.service.common.exception.StockException;
-import stock.back.service.database.entity.StockAutoMarketConfig;
 import stock.back.service.database.entity.StockAutoParticipant;
 import stock.back.service.database.entity.StockAutoParticipantSymbolConfig;
 import stock.back.service.database.entity.StockAutoParticipantSymbolConfigId;
-import stock.back.service.database.repository.StockAutoMarketConfigRepository;
 import stock.back.service.database.repository.StockAutoParticipantRepository;
 import stock.back.service.database.repository.StockAutoParticipantSymbolConfigRepository;
 import stock.back.service.database.repository.StockOrderBookInstrumentRepository;
@@ -21,7 +20,6 @@ public class AutoParticipantSymbolConfigService {
 
     private final StockAutoParticipantRepository stockAutoParticipantRepository;
     private final StockAutoParticipantSymbolConfigRepository stockAutoParticipantSymbolConfigRepository;
-    private final StockAutoMarketConfigRepository stockAutoMarketConfigRepository;
     private final StockOrderBookInstrumentRepository stockOrderBookInstrumentRepository;
 
     @Transactional
@@ -47,8 +45,6 @@ public class AutoParticipantSymbolConfigService {
             throw StockException.notFound("Unknown order book symbol: " + normalizedSymbol);
         }
 
-        StockAutoMarketConfig marketConfig = stockAutoMarketConfigRepository.findById(normalizedSymbol)
-                .orElseGet(() -> StockAutoMarketConfig.defaults(normalizedSymbol));
         Integer intensity = request == null ? null : request.intensity();
         if (intensity != null && (intensity < 1 || intensity > 10)) {
             throw StockException.badRequest("Intensity must be between 1 and 10");

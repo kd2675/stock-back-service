@@ -134,7 +134,18 @@ public class OrderBookInstrumentCommandService {
         stockOrderBookMarketConfigRepository.save(
                 StockOrderBookMarketConfig.pendingActivation(symbol, now)
         );
-        stockAutoMarketConfigRepository.save(StockAutoMarketConfig.defaults(symbol, now));
+        int recommendedMaxOrderQuantity =
+                AutoMarketOrderQuantityLimitPolicy.recommendedMaxOrderQuantity(
+                        request.initialPrice(),
+                        allocationPlan.tradableShares()
+                );
+        stockAutoMarketConfigRepository.save(
+                StockAutoMarketConfig.defaults(
+                        symbol,
+                        recommendedMaxOrderQuantity,
+                        now
+                )
+        );
         stockPriceRepository.save(StockPrice.initial(symbol, request.initialPrice(), now));
         seedRoleSeparatedInitialAllocation(
                 symbol,

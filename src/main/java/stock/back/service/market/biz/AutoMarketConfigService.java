@@ -9,8 +9,10 @@ import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+
 import stock.back.service.common.exception.StockException;
 import stock.back.service.database.entity.StockAutoMarketConfig;
+import stock.back.service.database.entity.StockOrderBookInstrument;
 import stock.back.service.database.repository.StockAutoMarketConfigRepository;
 import stock.back.service.database.repository.StockOrderBookInstrumentRepository;
 import stock.back.service.market.vo.AutoMarketConfigResponse;
@@ -41,7 +43,7 @@ public class AutoMarketConfigService {
             throw StockException.notFound("Unknown order book symbol: " + normalizedSymbol);
         }
         StockAutoMarketConfig config = stockAutoMarketConfigRepository.findById(normalizedSymbol)
-                .orElseGet(() -> StockAutoMarketConfig.defaults(normalizedSymbol));
+                .orElseGet(() -> recommendedDefaults(normalizedSymbol));
         Integer maxOrderQuantity = request == null ? null : request.maxOrderQuantity();
         Integer orderTtlSeconds = request == null ? null : request.orderTtlSeconds();
         if (maxOrderQuantity != null && maxOrderQuantity <= 0) {
@@ -76,7 +78,7 @@ public class AutoMarketConfigService {
             throw StockException.notFound("Unknown order book symbol: " + normalizedSymbol);
         }
         StockAutoMarketConfig config = stockAutoMarketConfigRepository.findById(normalizedSymbol)
-                .orElseGet(() -> StockAutoMarketConfig.defaults(normalizedSymbol));
+                .orElseGet(() -> recommendedDefaults(normalizedSymbol));
         LocalDateTime currentMarketDateTime = simulationClockService.currentMarketDateTime();
         String regimePhase = resolveRegimePhase(currentMarketDateTime);
         AutoMarketDailyRegimeResponse dailyRegime = regenerateDailyRegimeRow(config, currentMarketDateTime, regimePhase);
@@ -93,7 +95,7 @@ public class AutoMarketConfigService {
             throw StockException.notFound("Unknown order book symbol: " + normalizedSymbol);
         }
         StockAutoMarketConfig config = stockAutoMarketConfigRepository.findById(normalizedSymbol)
-                .orElseGet(() -> StockAutoMarketConfig.defaults(normalizedSymbol));
+                .orElseGet(() -> recommendedDefaults(normalizedSymbol));
         LocalDateTime currentMarketDateTime = simulationClockService.currentMarketDateTime();
         String regimePhase = resolveRegimePhase(currentMarketDateTime);
         AutoMarketDailyRegimeResponse dailyRegime = loadDailyRegime(config.getSymbol(), currentMarketDateTime, regimePhase);
@@ -114,6 +116,20 @@ public class AutoMarketConfigService {
 
     private AutoMarketConfigResponse toAutoMarketConfigResponse(StockAutoMarketConfig config) {
         return toAutoMarketConfigResponse(config, null);
+    }
+
+    private StockAutoMarketConfig recommendedDefaults(String symbol) {
+        StockOrderBookInstrument instrument =
+                stockOrderBookInstrumentRepository.findById(symbol)
+                        .orElseThrow(() -> StockException.notFound(
+                                "Unknown order book symbol: " + symbol
+                        ));
+        int maxOrderQuantity =
+                AutoMarketOrderQuantityLimitPolicy.recommendedMaxOrderQuantity(
+                        instrument.getInitialPrice(),
+                        instrument.getTradableShares()
+                );
+        return StockAutoMarketConfig.defaults(symbol, maxOrderQuantity);
     }
 
     private AutoMarketConfigResponse toAutoMarketConfigResponse(

@@ -284,7 +284,7 @@ public class InstitutionPortfolioPolicyControlService {
                             + MAX_MANDATE_COUNT + " active symbol mandates"
             );
         }
-        Set<String> marketSymbols = activeMarketSymbols();
+        Set<String> marketSymbols = policyEligibleMarketSymbols();
         Set<String> seenSymbols = new HashSet<>();
         List<SymbolPolicyValues> mandates = new ArrayList<>(requestedMandates.size());
         BigDecimal baseWeightSum = ZERO;
@@ -343,7 +343,8 @@ public class InstitutionPortfolioPolicyControlService {
         String symbol = normalizeSymbol(request.symbol());
         if (!marketSymbols.contains(symbol)) {
             throw StockException.badRequest(
-                    "Institution mandate requires an active order-book symbol with a positive price: "
+                    "Institution mandate requires an active or activation-pending "
+                            + "order-book symbol with a positive price: "
                             + symbol
             );
         }
@@ -395,15 +396,20 @@ public class InstitutionPortfolioPolicyControlService {
         );
     }
 
-    private Set<String> activeMarketSymbols() {
+    private Set<String> policyEligibleMarketSymbols() {
         return Set.copyOf(jdbcClient.sql(
                         """
                         select instrument.symbol
                           from stock_order_book_instrument instrument
                           join stock_order_book_market_config market
                             on market.symbol = instrument.symbol
-                           and market.enabled = true
-                           and market.market_status in ('OPEN', 'CLOSED')
+                           and (
+                               market.market_status = 'CLOSED'
+                               or (
+                                   market.enabled = true
+                                   and market.market_status = 'OPEN'
+                               )
+                           )
                           join stock_price price
                             on price.symbol = instrument.symbol
                            and price.current_price > 0

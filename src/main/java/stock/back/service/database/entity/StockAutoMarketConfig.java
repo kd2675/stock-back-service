@@ -74,11 +74,18 @@ public class StockAutoMarketConfig {
     @Column(name = "updated_at", nullable = false)
     private LocalDateTime updatedAt;
 
-    public static StockAutoMarketConfig defaults(String symbol) {
-        return defaults(symbol, LocalDateTime.now());
+    public static StockAutoMarketConfig defaults(String symbol, int maxOrderQuantity) {
+        return defaults(symbol, maxOrderQuantity, LocalDateTime.now());
     }
 
-    public static StockAutoMarketConfig defaults(String symbol, LocalDateTime updatedAt) {
+    public static StockAutoMarketConfig defaults(
+            String symbol,
+            int maxOrderQuantity,
+            LocalDateTime updatedAt
+    ) {
+        if (maxOrderQuantity <= 0) {
+            throw new IllegalArgumentException("Max order quantity must be positive");
+        }
         StockAutoMarketConfig config = new StockAutoMarketConfig();
         config.symbol = symbol;
         config.enabled = true;
@@ -96,7 +103,7 @@ public class StockAutoMarketConfig {
         config.secondaryVolatilityPressureBias = 0;
         config.secondaryLiquidityPressureBias = 0;
         config.secondaryExecutionAggressionPressureBias = 0;
-        config.maxOrderQuantity = 4;
+        config.maxOrderQuantity = maxOrderQuantity;
         config.orderTtlSeconds = 15;
         config.updatedAt = updatedAt == null ? LocalDateTime.now() : updatedAt;
         return config;

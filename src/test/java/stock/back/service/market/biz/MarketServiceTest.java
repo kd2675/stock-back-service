@@ -240,7 +240,6 @@ class MarketServiceTest {
                 new AutoParticipantSymbolConfigService(
                         stockAutoParticipantRepository,
                         stockAutoParticipantSymbolConfigRepository,
-                        stockAutoMarketConfigRepository,
                         stockOrderBookInstrumentRepository
                 ),
                 new AutoMarketConfigService(
@@ -536,7 +535,6 @@ class MarketServiceTest {
         );
         when(stockAutoParticipantRepository.findById("stock-auto-001")).thenReturn(Optional.of(participant));
         when(stockOrderBookInstrumentRepository.existsById("ZQ001")).thenReturn(true);
-        when(stockAutoMarketConfigRepository.findById("ZQ001")).thenReturn(Optional.of(StockAutoMarketConfig.defaults("ZQ001")));
         when(stockAutoParticipantSymbolConfigRepository.findById(any())).thenReturn(Optional.empty());
         when(stockAutoParticipantSymbolConfigRepository.save(any(StockAutoParticipantSymbolConfig.class)))
                 .thenAnswer(invocation -> invocation.getArgument(0));
@@ -564,7 +562,6 @@ class MarketServiceTest {
         );
         when(stockAutoParticipantRepository.findById("stock-auto-001")).thenReturn(Optional.of(participant));
         when(stockOrderBookInstrumentRepository.existsById("ZQ001")).thenReturn(true);
-        when(stockAutoMarketConfigRepository.findById("ZQ001")).thenReturn(Optional.of(StockAutoMarketConfig.defaults("ZQ001")));
 
         assertThatThrownBy(() -> marketService.updateAutoParticipantSymbolConfig(
                 "stock-auto-001",
@@ -579,7 +576,7 @@ class MarketServiceTest {
 
     @Test
     void getAutoMarketStatus_withoutSavedParticipantSymbolConfig_returnsEffectiveFallbackStrategies() {
-        StockAutoMarketConfig marketConfig = StockAutoMarketConfig.defaults("ZQ001");
+        StockAutoMarketConfig marketConfig = StockAutoMarketConfig.defaults("ZQ001", 4);
         marketConfig.update(true, 4, 15);
         LocalDateTime updatedAt = LocalDateTime.of(2026, 6, 30, 9, 30);
         when(stockAutoMarketConfigRepository.findAll()).thenReturn(List.of(marketConfig));
@@ -620,7 +617,7 @@ class MarketServiceTest {
 
     @Test
     void getAutoMarketStatus_withDailyRegime_includesGeneratedRandomValues() throws Exception {
-        StockAutoMarketConfig marketConfig = StockAutoMarketConfig.defaults("ZQ001");
+        StockAutoMarketConfig marketConfig = StockAutoMarketConfig.defaults("ZQ001", 4);
         marketConfig.update(true, 5, 90);
         when(stockAutoMarketConfigRepository.findAll()).thenReturn(List.of(marketConfig));
         stubAutoParticipantStatusQuery();
@@ -683,7 +680,7 @@ class MarketServiceTest {
                 updatedAt,
                 null
         );
-        StockAutoMarketConfig marketConfig = StockAutoMarketConfig.defaults("ZQ001");
+        StockAutoMarketConfig marketConfig = StockAutoMarketConfig.defaults("ZQ001", 4);
         when(stockAutoMarketConfigRepository.findAll()).thenReturn(List.of(marketConfig));
         stubAutoParticipantStatusQuery(participant);
         when(stockOrderRepository.countOpenAutoOrders(any(), any())).thenReturn(0L);

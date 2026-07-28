@@ -184,6 +184,39 @@ class InstitutionPortfolioProvisionServiceTest {
     }
 
     @Test
+    void createPortfolio_dominantSymbol_expandsMaximumToFitMarketWeightAtStockCeiling() {
+        seedActivationPendingSymbol();
+
+        long portfolioId = transactionTemplate.execute(status ->
+                provisionService.createPortfolio(
+                        new InstitutionPortfolioCreateRequest(
+                                "INST_DOMINANT",
+                                "대형 종목 추종 기관",
+                                "BALANCED_LONG_TERM",
+                                new BigDecimal("0.010000"),
+                                List.of("DEMO001", "DEMO002", "DEMO003", "DEMO004"),
+                                "유통 시가총액 비중 상한 검증"
+                        ),
+                        "stock-admin"
+                )
+        );
+
+        assertThat(portfolioId).isPositive();
+        assertThat(jdbcTemplate.queryForMap(
+                """
+                select base_symbol_weight, max_portfolio_allocation_rate
+                  from stock_institution_symbol_mandate
+                 where portfolio_id = ?
+                   and symbol = 'DEMO004'
+                """,
+                portfolioId
+        )).containsEntry(
+                "max_portfolio_allocation_rate",
+                new BigDecimal("0.673077")
+        );
+    }
+
+    @Test
     void createPortfolio_selectedSymbol_sizesAumFromSelectedMarketCapitalization() {
         transactionTemplate.executeWithoutResult(status ->
                 provisionService.createPortfolio(
@@ -413,6 +446,40 @@ class InstitutionPortfolioProvisionServiceTest {
     }
 
     @Test
+    void schedulePolicy_activationPendingSymbol_allowsNextOpenMandateReservation() {
+        long portfolioId = createDefaultPortfolio();
+        seedActivationPendingSymbol();
+        InstitutionPortfolioPolicyUpdateRequest source =
+                momentumPolicyRequest("신규 종목 편입");
+        InstitutionPortfolioPolicyUpdateRequest request =
+                withMandates(
+                        source,
+                        List.of(
+                                withBaseWeight(source.mandates().get(0), "0.250000"),
+                                withSymbol(
+                                        withBaseWeight(
+                                                source.mandates().get(1),
+                                                "0.750000"
+                                        ),
+                                        "DEMO004"
+                                )
+                        )
+                );
+
+        transactionTemplate.executeWithoutResult(status ->
+                policyControlService.schedulePolicy(
+                        portfolioId,
+                        request,
+                        "stock-admin"
+                )
+        );
+
+        assertThat(queryService.getPortfolio(portfolioId).scheduledPolicy().mandates())
+                .extracting(mandate -> mandate.symbol())
+                .containsExactly("DEMO001", "DEMO004");
+    }
+
+    @Test
     void schedulePolicy_invalidBaseWeightSum_rejectsWithoutReplacingCreationPolicy() {
         long portfolioId = createDefaultPortfolio();
         InstitutionPortfolioPolicyUpdateRequest invalid = momentumPolicyRequest(
@@ -469,10 +536,11 @@ class InstitutionPortfolioProvisionServiceTest {
 
         assertThat(List.of(
                 recommendation.activeSymbolCount(),
+                recommendation.policyEligibleSymbolCount(),
                 recommendation.recommendedPortfolioCount(),
                 recommendation.recommendedRemainingCount(),
                 recommendation.recommendedAumAmountPerPortfolio()
-        )).containsExactly(3, 3, 3L, new BigDecimal("30000000.00"));
+        )).containsExactly(3, 3, 3, 3L, new BigDecimal("30000000.00"));
         assertThat(recommendation.styles())
                 .extracting(style -> List.of(
                         style.investmentStyle(),
@@ -517,6 +585,31 @@ class InstitutionPortfolioProvisionServiceTest {
                         List.of("DEMO002", "테스트 종목 2", 30_000L),
                         List.of("DEMO003", "테스트 종목 3", 30_000L)
                 );
+    }
+
+    @Test
+    void getRecommendation_activationPendingSymbol_includesCandidateAndReweightsToOne() {
+        seedActivationPendingSymbol();
+
+        var recommendation = recommendationService.getRecommendation();
+
+        assertThat(recommendation.activeSymbolCount()).isEqualTo(3);
+        assertThat(recommendation.policyEligibleSymbolCount()).isEqualTo(4);
+        assertThat(recommendation.symbols())
+                .extracting(symbol -> List.of(
+                        symbol.symbol(),
+                        symbol.marketActivationStatus()
+                ))
+                .containsExactly(
+                        List.of("DEMO001", "ACTIVE"),
+                        List.of("DEMO002", "ACTIVE"),
+                        List.of("DEMO003", "ACTIVE"),
+                        List.of("DEMO004", "PENDING_MARKET_ACTIVATION")
+                );
+        assertThat(recommendation.symbols().stream()
+                .map(symbol -> symbol.marketWeight())
+                .reduce(BigDecimal.ZERO, BigDecimal::add))
+                .isEqualByComparingTo(BigDecimal.ONE);
     }
 
     @Test
@@ -1037,6 +1130,47 @@ class InstitutionPortfolioProvisionServiceTest {
         );
     }
 
+    private InstitutionSymbolPolicyUpdateRequest withSymbol(
+            InstitutionSymbolPolicyUpdateRequest source,
+            String symbol
+    ) {
+        return new InstitutionSymbolPolicyUpdateRequest(
+                symbol,
+                source.baseSymbolWeight(),
+                source.minPortfolioAllocationRate(),
+                source.maxPortfolioAllocationRate(),
+                source.pricePressureSensitivity(),
+                source.momentumSensitivity(),
+                source.valueSensitivity(),
+                source.reportSensitivity(),
+                source.referenceDailyVolume(),
+                source.dailyParticipationRate()
+        );
+    }
+
+    private InstitutionPortfolioPolicyUpdateRequest withMandates(
+            InstitutionPortfolioPolicyUpdateRequest source,
+            List<InstitutionSymbolPolicyUpdateRequest> mandates
+    ) {
+        return new InstitutionPortfolioPolicyUpdateRequest(
+                source.displayName(),
+                source.investmentStyle(),
+                source.baseStockAllocationRate(),
+                source.minStockAllocationRate(),
+                source.maxStockAllocationRate(),
+                source.primaryRegimeWeight(),
+                source.assetPreferenceSensitivity(),
+                source.volatilitySensitivity(),
+                source.entryThresholdRate(),
+                source.exitThresholdRate(),
+                source.dailyTurnoverLimitRate(),
+                source.maxDecisionTurnoverRate(),
+                source.decisionIntervalMinutes(),
+                mandates,
+                source.changeReason()
+        );
+    }
+
     private int count(String table) {
         return jdbcTemplate.queryForObject(
                 "select count(*) from " + table,
@@ -1236,6 +1370,40 @@ class InstitutionPortfolioProvisionServiceTest {
                     NOW
             );
         }
+    }
+
+    private void seedActivationPendingSymbol() {
+        jdbcTemplate.update(
+                """
+                insert into stock_order_book_instrument(
+                    symbol, name, market, initial_price,
+                    issued_shares, tradable_shares, tick_size,
+                    price_limit_rate, enabled, created_at, updated_at
+                ) values (
+                    'DEMO004', '신규 대기 종목', 'ORDER_BOOK', 3000,
+                    10000000, 5000000, 5,
+                    30, true, ?, ?
+                )
+                """,
+                NOW,
+                NOW
+        );
+        jdbcTemplate.update(
+                """
+                insert into stock_order_book_market_config(
+                    symbol, enabled, market_status, updated_at
+                ) values ('DEMO004', false, 'CLOSED', ?)
+                """,
+                NOW
+        );
+        jdbcTemplate.update(
+                """
+                insert into stock_price(
+                    symbol, current_price, previous_close, price_time, provider
+                ) values ('DEMO004', 3000, 3000, ?, 'test')
+                """,
+                NOW
+        );
     }
 
     private SimulationClockSnapshot clockSnapshot(boolean running) {

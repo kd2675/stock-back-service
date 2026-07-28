@@ -5,6 +5,7 @@ import java.util.List;
 
 public record InstitutionPortfolioRecommendationResponse(
         int activeSymbolCount,
+        int policyEligibleSymbolCount,
         long currentPortfolioCount,
         int recommendedPortfolioCount,
         long recommendedRemainingCount,
@@ -57,7 +58,8 @@ public record InstitutionPortfolioRecommendationResponse(
             long recommendedReferenceDailyVolume,
             BigDecimal recommendedReferenceDailyVolumeRate,
             int referenceVolumeHistoryDays,
-            String referenceVolumeSource
+            String referenceVolumeSource,
+            String marketActivationStatus
     ) {
     }
 }
