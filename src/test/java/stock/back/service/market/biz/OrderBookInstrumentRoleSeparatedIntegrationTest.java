@@ -1,5 +1,7 @@
 package stock.back.service.market.biz;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+
 import java.math.BigDecimal;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -98,6 +100,7 @@ class OrderBookInstrumentRoleSeparatedIntegrationTest {
         when(marketSessionService.currentSession()).thenReturn(SimulationMarketSession.PRE_OPEN);
         when(freezeGuard.acquireMutationPermit(any())).thenReturn(NOW.toLocalDate());
         when(freezeGuard.acquireJdbcPreOpenMutationPermit(any())).thenReturn(NOW.toLocalDate());
+        when(freezeGuard.acquireJdbcMutationPermit(any())).thenReturn(NOW.toLocalDate());
 
         service = new OrderBookInstrumentCommandService(
                 virtualInstrumentRepository,
@@ -113,12 +116,14 @@ class OrderBookInstrumentRoleSeparatedIntegrationTest {
         underwritingProvisionService = new UnderwritingContractProvisionService(
                 jdbcTemplate,
                 simulationClockService,
-                marketSessionService,
                 freezeGuard
         );
         JdbcClient jdbcClient = JdbcClient.create(dataSource);
         systemCustodyQueryService = new SystemCustodyQueryService(jdbcClient);
-        underwritingContractQueryService = new UnderwritingContractQueryService(jdbcClient);
+        underwritingContractQueryService = new UnderwritingContractQueryService(
+                jdbcClient,
+                new ObjectMapper()
+        );
         underwritingRecommendationService =
                 new UnderwritingContractRecommendationService(jdbcClient);
     }

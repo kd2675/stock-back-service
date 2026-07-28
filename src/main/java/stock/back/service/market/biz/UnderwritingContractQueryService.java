@@ -1,5 +1,9 @@
 package stock.back.service.market.biz;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.sql.ResultSet;
@@ -25,9 +29,14 @@ public class UnderwritingContractQueryService {
     private static final BigDecimal ZERO_MONEY = BigDecimal.ZERO.setScale(2);
 
     private final JdbcClient jdbcClient;
+    private final ObjectMapper objectMapper;
 
-    public UnderwritingContractQueryService(JdbcClient jdbcClient) {
+    public UnderwritingContractQueryService(
+            JdbcClient jdbcClient,
+            ObjectMapper objectMapper
+    ) {
         this.jdbcClient = jdbcClient;
+        this.objectMapper = objectMapper;
     }
 
     @Transactional(readOnly = true)
@@ -172,12 +181,15 @@ public class UnderwritingContractQueryService {
             }
         }
         Map<Long, SupplyAudit> supplyAudits = getSupplyAudits();
+        Map<String, UnderwritingContractResponse.ScheduledSupply> scheduledSupplies =
+                getScheduledSupplies();
 
         return contracts.stream()
                 .map(contract -> toResponse(
                         contract,
                         allocationsByContract.getOrDefault(contract.contractId(), List.of()),
-                        supplyAudits.getOrDefault(contract.contractId(), SupplyAudit.EMPTY)
+                        supplyAudits.getOrDefault(contract.contractId(), SupplyAudit.EMPTY),
+                        scheduledSupplies.get(contract.contractCode())
                 ))
                 .toList();
     }
@@ -329,6 +341,40 @@ public class UnderwritingContractQueryService {
         return Map.copyOf(audits);
     }
 
+    private Map<String, UnderwritingContractResponse.ScheduledSupply> getScheduledSupplies() {
+        Map<String, UnderwritingContractResponse.ScheduledSupply> scheduled = new LinkedHashMap<>();
+        jdbcClient.sql(
+                        """
+                        select scope_key, version_no, effective_business_date,
+                               config_json, change_reason, changed_by, updated_at
+                          from stock_market_policy_version
+                         where policy_scope = 'UNDERWRITING_CONTRACT'
+                           and status = 'SCHEDULED'
+                         order by scope_key, version_no
+                        """
+                )
+                .query((rs, rowNum) -> {
+                    JsonNode root = parsePolicyConfig(rs.getString("config_json"));
+                    return Map.entry(
+                            rs.getString("scope_key"),
+                            new UnderwritingContractResponse.ScheduledSupply(
+                                    rs.getLong("version_no"),
+                                    rs.getObject("effective_business_date", LocalDate.class),
+                                    requiredText(root, "activationAction"),
+                                    requiredText(root, "targetStatus"),
+                                    requiredDecimal(root, "supplyRate"),
+                                    requiredInt(root, "durationDays"),
+                                    rs.getString("change_reason"),
+                                    rs.getString("changed_by"),
+                                    rs.getObject("updated_at", LocalDateTime.class)
+                            )
+                    );
+                })
+                .list()
+                .forEach(entry -> scheduled.put(entry.getKey(), entry.getValue()));
+        return Map.copyOf(scheduled);
+    }
+
     private List<SecurityAllocationResponse> getAllocations() {
         return jdbcClient.sql(
                         """
@@ -448,7 +494,8 @@ public class UnderwritingContractQueryService {
     private UnderwritingContractResponse toResponse(
             ContractRow contract,
             List<SecurityAllocationResponse> allocations,
-            SupplyAudit supplyAudit
+            SupplyAudit supplyAudit,
+            UnderwritingContractResponse.ScheduledSupply scheduledSupply
     ) {
         long initialLedgerQuantity = initialAllocationQuantity(allocations, null);
         long initialTradableQuantity = initialAllocationQuantity(allocations, "TRADABLE");
@@ -557,6 +604,7 @@ public class UnderwritingContractQueryService {
                         supplyAudit.cancelledOrderCount(),
                         toDailyStateResponse(supplyAudit.latestDailyState())
                 ),
+                scheduledSupply,
                 new UnderwritingContractResponse.Reconciliation(
                         initialLedgerQuantity,
                         initialTradableQuantity,
@@ -573,6 +621,57 @@ public class UnderwritingContractQueryService {
                 contract.createdAt(),
                 contract.updatedAt()
         );
+    }
+
+    private JsonNode parsePolicyConfig(String configJson) {
+        JsonNode root;
+        try {
+            root = objectMapper.readTree(configJson);
+            if (root != null && root.isTextual()) {
+                root = objectMapper.readTree(root.textValue());
+            }
+        } catch (JsonProcessingException ex) {
+            throw new IllegalStateException(
+                    "Scheduled issue-underwriter policy JSON is invalid",
+                    ex
+            );
+        }
+        if (root == null || !root.isObject()) {
+            throw new IllegalStateException(
+                    "Scheduled issue-underwriter policy JSON must be an object"
+            );
+        }
+        return root;
+    }
+
+    private String requiredText(JsonNode root, String fieldName) {
+        JsonNode value = root.get(fieldName);
+        if (value == null || value.isNull() || value.asText().isBlank()) {
+            throw new IllegalStateException(
+                    "Scheduled issue-underwriter policy field is missing: " + fieldName
+            );
+        }
+        return value.asText();
+    }
+
+    private BigDecimal requiredDecimal(JsonNode root, String fieldName) {
+        JsonNode value = root.get(fieldName);
+        if (value == null || !value.isNumber()) {
+            throw new IllegalStateException(
+                    "Scheduled issue-underwriter policy field is invalid: " + fieldName
+            );
+        }
+        return value.decimalValue();
+    }
+
+    private int requiredInt(JsonNode root, String fieldName) {
+        JsonNode value = root.get(fieldName);
+        if (value == null || !value.canConvertToInt()) {
+            throw new IllegalStateException(
+                    "Scheduled issue-underwriter policy field is invalid: " + fieldName
+            );
+        }
+        return value.intValue();
     }
 
     private UnderwritingContractResponse.DailyState toDailyStateResponse(

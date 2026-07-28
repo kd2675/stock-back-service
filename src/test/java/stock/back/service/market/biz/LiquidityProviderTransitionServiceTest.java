@@ -28,7 +28,6 @@ import web.common.core.simulation.SimulationClockSnapshot;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -64,16 +63,22 @@ class LiquidityProviderTransitionServiceTest {
         SimulationMarketSessionService marketSessionService =
                 new SimulationMarketSessionService(simulationClockService, "06:00", "18:00");
         freezeGuard = mock(MarketLedgerFreezeGuard.class);
-        when(freezeGuard.acquireJdbcPreOpenMutationPermit("liquidity-provider live provisioning"))
+        when(freezeGuard.acquireJdbcMutationPermit("liquidity-provider live provisioning"))
                 .thenReturn(BUSINESS_DATE);
+        MarketRoleActivationDateService activationDateService =
+                mock(MarketRoleActivationDateService.class);
+        when(activationDateService.resolveNextOpeningDate(
+                org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any()
+        )).thenReturn(BUSINESS_DATE);
         MarketReferenceVolumeResolver referenceVolumeResolver =
                 new MarketReferenceVolumeResolver(JdbcClient.create(dataSource));
         service = new LiquidityProviderTransitionService(
                 jdbcTemplate,
                 new ObjectMapper(),
                 simulationClockService,
-                marketSessionService,
                 freezeGuard,
+                activationDateService,
                 new LiquidityProviderPolicyPresetCatalog(),
                 referenceVolumeResolver
         );
@@ -103,7 +108,7 @@ class LiquidityProviderTransitionServiceTest {
                        mandate.daily_submission_multiplier,
                        mandate.minimum_quote_lifetime_seconds,
                        mandate.order_ttl_seconds,
-                       mandate.quote_interval_seconds,
+                       mandate.quote_interval_seconds, mandate.status,
                        transition.stage,
                        transition.seed_inventory_quantity, transition.seed_cash_amount,
                        transition.activated_at
@@ -129,10 +134,11 @@ class LiquidityProviderTransitionServiceTest {
                 .containsEntry("minimum_quote_lifetime_seconds", 600)
                 .containsEntry("order_ttl_seconds", 1_800)
                 .containsEntry("quote_interval_seconds", 300)
-                .containsEntry("stage", "LIVE_ACTIVE")
+                .containsEntry("status", "PENDING")
+                .containsEntry("stage", "PENDING_ACTIVATION")
                 .containsEntry("seed_inventory_quantity", 5_000L)
                 .containsEntry("seed_cash_amount", new BigDecimal("500000.00"))
-                .doesNotContainValue(null);
+                .containsEntry("activated_at", null);
         assertThat(jdbcTemplate.queryForObject(
                 "select quantity from stock_holding where account_id = 100 and symbol = 'DEMO001'",
                 Long.class
@@ -177,14 +183,14 @@ class LiquidityProviderTransitionServiceTest {
                  where policy_scope = 'LIQUIDITY_MANDATE'
                    and scope_key = 'DEMO001'
                    and version_no = 1
-                   and status = 'ACTIVE'
+                   and status = 'SCHEDULED'
                 """,
                 Integer.class
         )).isOne();
     }
 
     @Test
-    void provisionLive_pendingRoleSeparatedListing_enablesMarketForNextSession() {
+    void provisionLive_pendingRoleSeparatedListing_keepsMarketClosedUntilActivation() {
         convertFixtureToPendingRoleSeparatedListing();
         transactionTemplate.executeWithoutResult(status ->
                 service.provisionLive(
@@ -205,7 +211,7 @@ class LiquidityProviderTransitionServiceTest {
                   from stock_order_book_market_config
                  where symbol = 'DEMO001'
                 """
-        )).containsEntry("enabled", true)
+        )).containsEntry("enabled", false)
                 .containsEntry("market_status", "CLOSED");
         assertThat(jdbcTemplate.queryForObject(
                 "select execution_mode from stock_liquidity_mandate where symbol = 'DEMO001'",
@@ -344,25 +350,24 @@ class LiquidityProviderTransitionServiceTest {
     }
 
     @Test
-    void provisionLive_runningClock_rejectsBeforeAssetMutation() {
+    void provisionLive_runningClock_preparesPendingActivation() {
         when(simulationClockService.currentSnapshot())
                 .thenReturn(clockSnapshot(true, PRE_OPEN));
 
-        assertThatThrownBy(() -> transactionTemplate.executeWithoutResult(status ->
+        transactionTemplate.executeWithoutResult(status ->
                 service.provisionLive("DEMO001", null, "stock-admin")
-        )).isInstanceOf(StockException.class)
-                .hasMessageContaining("Pause the simulation clock");
+        );
 
-        verify(freezeGuard, never())
-                .acquireJdbcPreOpenMutationPermit("liquidity-provider live provisioning");
+        verify(freezeGuard)
+                .acquireJdbcMutationPermit("liquidity-provider live provisioning");
         assertThat(jdbcTemplate.queryForObject(
                 "select quantity from stock_holding where account_id = 100 and symbol = 'DEMO001'",
                 Long.class
-        )).isEqualTo(1_000_000L);
+        )).isEqualTo(995_000L);
         assertThat(jdbcTemplate.queryForObject(
                 "select count(*) from stock_liquidity_transition",
                 Integer.class
-        )).isZero();
+        )).isOne();
     }
 
     @Test

@@ -69,25 +69,31 @@ class UnderwritingSupplyTransitionServiceTest {
                         "18:00"
                 );
         freezeGuard = mock(MarketLedgerFreezeGuard.class);
-        when(freezeGuard.acquireJdbcPreOpenMutationPermit(
+        when(freezeGuard.acquireJdbcMutationPermit(
                 "issue-underwriter scaled supply activation"
         )).thenReturn(BUSINESS_DATE);
         when(freezeGuard.acquireJdbcMutationPermit(
                 "issue-underwriter supply emergency suspension"
         )).thenReturn(BUSINESS_DATE);
+        MarketRoleActivationDateService activationDateService =
+                mock(MarketRoleActivationDateService.class);
+        when(activationDateService.resolveNextOpeningDate(
+                org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any()
+        )).thenReturn(BUSINESS_DATE);
         service = new UnderwritingSupplyTransitionService(
                 jdbcTemplate,
                 new ObjectMapper(),
                 simulationClockService,
-                marketSessionService,
                 freezeGuard,
+                activationDateService,
                 new MarketRoleOrderCleanupService(jdbcTemplate)
         );
         seedContract();
     }
 
     @Test
-    void activate_defaultScaledPolicy_setsFiniteQuotaWithoutCreatingOrders() {
+    void activate_defaultScaledPolicy_schedulesFiniteQuotaWithoutCreatingOrders() {
         transactionTemplate.executeWithoutResult(status ->
                 service.activate(401L, null, "stock-admin")
         );
@@ -101,21 +107,12 @@ class UnderwritingSupplyTransitionServiceTest {
                   from stock_underwriting_contract
                  where id = 401
                 """
-        )).containsEntry("status", "STABILIZING")
-                .containsEntry(
-                        "stabilization_start_date",
-                        java.sql.Date.valueOf(BUSINESS_DATE)
-                )
-                .containsEntry(
-                        "stabilization_end_date",
-                        java.sql.Date.valueOf(BUSINESS_DATE.plusDays(19))
-                )
-                .containsEntry("stabilization_quantity_limit", 5_000L)
-                .containsEntry(
-                        "stabilization_amount_limit",
-                        new BigDecimal("5000000.00")
-                )
-                .containsEntry("policy_version", 2L);
+        )).containsEntry("status", "ALLOCATED")
+                .containsEntry("stabilization_start_date", null)
+                .containsEntry("stabilization_end_date", null)
+                .containsEntry("stabilization_quantity_limit", 0L)
+                .containsEntry("stabilization_amount_limit", new BigDecimal("0.00"))
+                .containsEntry("policy_version", 1L);
         assertThat(jdbcTemplate.queryForObject(
                 "select count(*) from stock_order",
                 Integer.class
@@ -127,6 +124,46 @@ class UnderwritingSupplyTransitionServiceTest {
                  where policy_scope = 'UNDERWRITING_CONTRACT'
                    and scope_key = 'INITIAL-ISSUE:DEMO001'
                    and version_no = 2
+                   and status = 'SCHEDULED'
+                """,
+                Integer.class
+        )).isOne();
+        assertThat(jdbcTemplate.queryForObject(
+                """
+                select config_json
+                  from stock_market_policy_version
+                 where policy_scope = 'UNDERWRITING_CONTRACT'
+                   and scope_key = 'INITIAL-ISSUE:DEMO001'
+                   and status = 'SCHEDULED'
+                """,
+                String.class
+        )).contains("\"activationAction\":\"ACTIVATE_SUPPLY\"")
+                .contains("\"supplyRate\":0.100000")
+                .contains("\"durationDays\":20");
+    }
+
+    @Test
+    void activate_pendingListing_schedulesSupplyBeforeLiquidityProviderActivation() {
+        jdbcTemplate.update(
+                """
+                update stock_order_book_market_config
+                   set enabled = false,
+                       market_status = 'CLOSED'
+                 where symbol = 'DEMO001'
+                """
+        );
+
+        transactionTemplate.executeWithoutResult(status ->
+                service.activate(401L, null, "stock-admin")
+        );
+
+        assertThat(jdbcTemplate.queryForObject(
+                """
+                select count(*)
+                  from stock_market_policy_version
+                 where policy_scope = 'UNDERWRITING_CONTRACT'
+                   and scope_key = 'INITIAL-ISSUE:DEMO001'
+                   and status = 'SCHEDULED'
                 """,
                 Integer.class
         )).isOne();
@@ -162,7 +199,7 @@ class UnderwritingSupplyTransitionServiceTest {
         assertThatThrownBy(() -> transactionTemplate.executeWithoutResult(status ->
                 service.activate(401L, null, "stock-admin")
         )).isInstanceOf(StockException.class)
-                .hasMessageContaining("Activate the order-book and automatic market");
+                .hasMessageContaining("Prepare the order-book and automatic-market configuration");
 
         assertThat(jdbcTemplate.queryForObject(
                 "select status from stock_underwriting_contract where id = 401",
@@ -202,15 +239,13 @@ class UnderwritingSupplyTransitionServiceTest {
 
         assertThat(jdbcTemplate.queryForMap(
                 """
-                select stabilization_quantity_limit, stabilization_amount_limit
+                select status, stabilization_quantity_limit, stabilization_amount_limit
                   from stock_underwriting_contract
                  where id = 401
                 """
-        )).containsEntry("stabilization_quantity_limit", 25_000L)
-                .containsEntry(
-                        "stabilization_amount_limit",
-                        new BigDecimal("5000000.00")
-                );
+        )).containsEntry("status", "ALLOCATED")
+                .containsEntry("stabilization_quantity_limit", 0L)
+                .containsEntry("stabilization_amount_limit", new BigDecimal("0.00"));
     }
 
     @Test
@@ -248,6 +283,7 @@ class UnderwritingSupplyTransitionServiceTest {
         transactionTemplate.executeWithoutResult(status ->
                 service.activate(401L, null, "stock-admin")
         );
+        activateScheduledSupplyForTest();
         seedOpenSupplyOrderAndBudget();
 
         transactionTemplate.executeWithoutResult(status ->
@@ -319,6 +355,7 @@ class UnderwritingSupplyTransitionServiceTest {
         transactionTemplate.executeWithoutResult(status ->
                 service.activate(401L, null, "stock-admin")
         );
+        activateScheduledSupplyForTest();
         seedOpenSupplyOrderAndBudget();
         when(freezeGuard.acquireJdbcMutationPermit(
                 "issue-underwriter supply emergency suspension"
@@ -354,6 +391,7 @@ class UnderwritingSupplyTransitionServiceTest {
         transactionTemplate.executeWithoutResult(status ->
                 service.activate(401L, null, "stock-admin")
         );
+        activateScheduledSupplyForTest();
         seedOpenSupplyOrderAndBudget();
         transactionTemplate.executeWithoutResult(status ->
                 service.suspend(401L, null, "stock-admin")
@@ -364,15 +402,60 @@ class UnderwritingSupplyTransitionServiceTest {
 
         assertThat(jdbcTemplate.queryForMap(
                 """
-                select stabilization_quantity_limit, stabilization_amount_limit
+                select status, stabilization_quantity_limit, stabilization_amount_limit
                   from stock_underwriting_contract
                  where id = 401
                 """
-        )).containsEntry("stabilization_quantity_limit", 5_100L)
-                .containsEntry(
-                        "stabilization_amount_limit",
-                        new BigDecimal("5100000.00")
-                );
+        )).containsEntry("status", "ALLOCATED")
+                .containsEntry("stabilization_quantity_limit", 5_000L)
+                .containsEntry("stabilization_amount_limit", new BigDecimal("5000000.00"));
+        assertThat(jdbcTemplate.queryForObject(
+                """
+                select count(*)
+                  from stock_market_policy_version
+                 where policy_scope = 'UNDERWRITING_CONTRACT'
+                   and scope_key = 'INITIAL-ISSUE:DEMO001'
+                   and version_no = 4
+                   and status = 'SCHEDULED'
+                """,
+                Integer.class
+        )).isOne();
+    }
+
+    private void activateScheduledSupplyForTest() {
+        jdbcTemplate.update(
+                """
+                update stock_underwriting_contract
+                   set status = 'STABILIZING',
+                       stabilization_start_date = ?,
+                       stabilization_end_date = ?,
+                       stabilization_quantity_limit = 5000,
+                       stabilization_amount_limit = 5000000.00,
+                       policy_version = 2
+                 where id = 401
+                """,
+                BUSINESS_DATE,
+                BUSINESS_DATE.plusDays(19)
+        );
+        jdbcTemplate.update(
+                """
+                update stock_market_policy_version
+                   set status = 'RETIRED'
+                 where policy_scope = 'UNDERWRITING_CONTRACT'
+                   and scope_key = 'INITIAL-ISSUE:DEMO001'
+                   and status = 'ACTIVE'
+                """
+        );
+        jdbcTemplate.update(
+                """
+                update stock_market_policy_version
+                   set status = 'ACTIVE'
+                 where policy_scope = 'UNDERWRITING_CONTRACT'
+                   and scope_key = 'INITIAL-ISSUE:DEMO001'
+                   and version_no = 2
+                   and status = 'SCHEDULED'
+                """
+        );
     }
 
     private void seedContract() {

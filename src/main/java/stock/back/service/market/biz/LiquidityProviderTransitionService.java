@@ -24,7 +24,6 @@ import org.springframework.transaction.annotation.Transactional;
 import stock.back.service.common.exception.StockException;
 import stock.back.service.market.vo.LiquidityProviderProvisionRequest;
 import web.common.core.simulation.SimulationClockSnapshot;
-import web.common.core.simulation.SimulationMarketSession;
 
 @Service
 public class LiquidityProviderTransitionService {
@@ -33,6 +32,7 @@ public class LiquidityProviderTransitionService {
     private static final String PARTICIPANT_TYPE = "LIQUIDITY_PROVIDER";
     private static final String SELF_TRADE_GROUP_ID = "LIQUIDITY_PROVIDER:DEFAULT";
     private static final String LIVE_ACTIVE = "LIVE_ACTIVE";
+    private static final String PENDING_ACTIVATION = "PENDING_ACTIVATION";
 
     private static final BigDecimal DEFAULT_SEED_INVENTORY_RATE = new BigDecimal("0.005000");
     private static final BigDecimal MIN_SEED_INVENTORY_RATE = new BigDecimal("0.001000");
@@ -45,8 +45,8 @@ public class LiquidityProviderTransitionService {
     private final JdbcClient jdbcClient;
     private final ObjectMapper objectMapper;
     private final SimulationClockService simulationClockService;
-    private final SimulationMarketSessionService marketSessionService;
     private final MarketLedgerFreezeGuard marketLedgerFreezeGuard;
+    private final MarketRoleActivationDateService activationDateService;
     private final LiquidityProviderPolicyPresetCatalog policyPresetCatalog;
     private final MarketReferenceVolumeResolver referenceVolumeResolver;
 
@@ -54,8 +54,8 @@ public class LiquidityProviderTransitionService {
             JdbcTemplate jdbcTemplate,
             ObjectMapper objectMapper,
             SimulationClockService simulationClockService,
-            SimulationMarketSessionService marketSessionService,
             MarketLedgerFreezeGuard marketLedgerFreezeGuard,
+            MarketRoleActivationDateService activationDateService,
             LiquidityProviderPolicyPresetCatalog policyPresetCatalog,
             MarketReferenceVolumeResolver referenceVolumeResolver
     ) {
@@ -63,8 +63,8 @@ public class LiquidityProviderTransitionService {
         this.jdbcClient = JdbcClient.create(jdbcTemplate);
         this.objectMapper = objectMapper;
         this.simulationClockService = simulationClockService;
-        this.marketSessionService = marketSessionService;
         this.marketLedgerFreezeGuard = marketLedgerFreezeGuard;
+        this.activationDateService = activationDateService;
         this.policyPresetCatalog = policyPresetCatalog;
         this.referenceVolumeResolver = referenceVolumeResolver;
     }
@@ -78,24 +78,28 @@ public class LiquidityProviderTransitionService {
         String normalizedSymbol = normalizedSymbol(symbol);
         ExistingTransition existing = lockTransition(normalizedSymbol);
         if (existing != null) {
-            if (LIVE_ACTIVE.equals(existing.stage())) {
+            if (LIVE_ACTIVE.equals(existing.stage())
+                    || PENDING_ACTIVATION.equals(existing.stage())) {
                 return;
             }
             throw StockException.conflict(
                     "Liquidity transition is not provisionable in stage " + existing.stage()
             );
         }
-        requirePausedPreOpen();
-        LocalDate businessDate = marketLedgerFreezeGuard.acquireJdbcPreOpenMutationPermit(
+        LocalDate activeBusinessDate = marketLedgerFreezeGuard.acquireJdbcMutationPermit(
                 "liquidity-provider live provisioning"
         );
         SimulationClockSnapshot clock = simulationClockService.currentSnapshot();
-        requireBusinessDateAligned(clock, businessDate);
+        LocalDate activationDate = activationDateService.resolveNextOpeningDate(
+                clock,
+                activeBusinessDate
+        );
 
         MarketSymbol marketSymbol = lockMarketSymbol(normalizedSymbol);
         ExistingTransition concurrentlyProvisioned = lockTransition(normalizedSymbol);
         if (concurrentlyProvisioned != null) {
-            if (LIVE_ACTIVE.equals(concurrentlyProvisioned.stage())) {
+            if (LIVE_ACTIVE.equals(concurrentlyProvisioned.stage())
+                    || PENDING_ACTIVATION.equals(concurrentlyProvisioned.stage())) {
                 return;
             }
             throw StockException.conflict(
@@ -185,7 +189,7 @@ public class LiquidityProviderTransitionService {
                 participant.id(),
                 liquidityAccountId,
                 normalizedSymbol,
-                businessDate,
+                activationDate,
                 now
         );
         transferSeedInventory(
@@ -199,7 +203,7 @@ public class LiquidityProviderTransitionService {
         insertOpeningGrant(
                 liquidityAccountId,
                 seedCashAmount,
-                businessDate,
+                activationDate,
                 normalizeRequestedBy(requestedBy),
                 now
         );
@@ -212,7 +216,7 @@ public class LiquidityProviderTransitionService {
                 seedInventoryQuantity,
                 seedCashAmount,
                 marketSymbol.currentPrice(),
-                businessDate,
+                activationDate,
                 now
         );
         String changeReason = normalizeReason(
@@ -228,7 +232,7 @@ public class LiquidityProviderTransitionService {
                 referenceDailyVolume,
                 seedInventoryQuantity,
                 seedCashAmount,
-                businessDate,
+                activationDate,
                 normalizeRequestedBy(requestedBy),
                 changeReason,
                 now
@@ -239,15 +243,14 @@ public class LiquidityProviderTransitionService {
                     "Liquidity transition is missing after live provisioning"
             );
         }
-        requireLiquidityAccountEligible(provisioned, businessDate);
-        activatePendingRoleSeparatedMarket(normalizedSymbol, now);
+        requireLiquidityAccountEligible(provisioned, activationDate);
         insertAllocationAudit(
                 normalizedSymbol,
                 source.accountId(),
                 liquidityAccountId,
                 seedInventoryQuantity,
                 seedUnitPrice,
-                businessDate,
+                activationDate,
                 now
         );
         insertPolicyVersion(
@@ -260,40 +263,12 @@ public class LiquidityProviderTransitionService {
                 referenceDailyVolume,
                 seedInventoryQuantity,
                 seedCashAmount,
-                businessDate,
+                activationDate,
                 changeReason,
                 normalizeRequestedBy(requestedBy),
                 now
         );
         verifyIssuedShareReconciliation(normalizedSymbol, marketSymbol.issuedShares());
-    }
-
-    private void requirePausedPreOpen() {
-        SimulationClockSnapshot clock = simulationClockService.currentSnapshot();
-        if (clock.running()) {
-            throw StockException.conflict(
-                    "Pause the simulation clock before changing liquidity ownership"
-            );
-        }
-        if (marketSessionService.currentSession() != SimulationMarketSession.PRE_OPEN) {
-            throw StockException.conflict(
-                    "Liquidity ownership can only move directly to LIVE during a paused pre-open"
-            );
-        }
-    }
-
-    private void requireBusinessDateAligned(
-            SimulationClockSnapshot clock,
-            LocalDate businessDate
-    ) {
-        if (clock == null
-                || clock.simulationDate() == null
-                || businessDate == null
-                || !businessDate.equals(clock.simulationDate())) {
-            throw StockException.conflict(
-                    "Simulation date and active market business date must match"
-            );
-        }
     }
 
     private ExistingTransition lockTransition(String symbol) {
@@ -395,54 +370,6 @@ public class LiquidityProviderTransitionService {
                 .query(Boolean.class)
                 .single();
         return Boolean.TRUE.equals(exists);
-    }
-
-    private void activatePendingRoleSeparatedMarket(
-            String symbol,
-            LocalDateTime now
-    ) {
-        MarketActivationState state = jdbcClient.sql(
-                        """
-                        select enabled, market_status
-                          from stock_order_book_market_config
-                         where symbol = ?
-                         for update
-                        """
-                )
-                .param(symbol)
-                .query((rs, rowNum) -> new MarketActivationState(
-                        rs.getBoolean("enabled"),
-                        rs.getString("market_status")
-                ))
-                .optional()
-                .orElseThrow(() -> StockException.notFound(
-                        "Order-book market configuration not found: " + symbol
-                ));
-        if (state.configuredMarket()) {
-            return;
-        }
-        if (!state.pendingMarket() || !hasEligibleLiquiditySource(symbol)) {
-            throw StockException.conflict(
-                    "Only a pending role-separated listing can be enabled by LP activation: "
-                            + symbol
-            );
-        }
-        requireSingleUpdate(
-                jdbcTemplate.update(
-                        """
-                        update stock_order_book_market_config
-                           set enabled = true,
-                               market_status = 'CLOSED',
-                               updated_at = ?
-                         where symbol = ?
-                           and enabled = false
-                           and market_status = 'CLOSED'
-                        """,
-                        now,
-                        symbol
-                ),
-                "Pending role-separated market activation"
-        );
     }
 
     private boolean mandateExists(String symbol) {
@@ -734,7 +661,7 @@ public class LiquidityProviderTransitionService {
                     created_at, updated_at
                 ) values (
                     ?, ?, ?, ?,
-                    'LIVE', 'ACTIVE', ?, null,
+                    'LIVE', 'PENDING', ?, null,
                     ?, ?, ?,
                     ?, ?, ?,
                     ?, ?, ?,
@@ -742,7 +669,7 @@ public class LiquidityProviderTransitionService {
                     ?, ?, ?, ?,
                     ?, ?, ?, true,
                     ?, ?, ?, ?,
-                    ?, ?, 1, ?, ?
+                    ?, null, 1, ?, ?
                 )
                 """,
                 statement -> {
@@ -774,9 +701,8 @@ public class LiquidityProviderTransitionService {
                     statement.setInt(26, policy.orderTtlSeconds());
                     statement.setInt(27, policy.quoteIntervalSeconds());
                     statement.setBigDecimal(28, policy.dailyLossLimitAmount());
-                    statement.setObject(29, businessDate.atTime(marketSessionService.openTime()));
+                    statement.setObject(29, now);
                     statement.setObject(30, now);
-                    statement.setObject(31, now);
                 }
         );
     }
@@ -808,8 +734,8 @@ public class LiquidityProviderTransitionService {
                             created_at, updated_at
                         ) values (
                             ?, ?, ?, ?, ?, ?, null,
-                            'LIVE_ACTIVE', ?, ?, ?, ?,
-                            null, ?, ?, ?, 1, ?, ?
+                            'PENDING_ACTIVATION', ?, ?, ?, ?,
+                            null, null, ?, ?, 1, ?, ?
                         )
                         """,
                         "LP-TRANSITION:" + symbol,
@@ -822,7 +748,6 @@ public class LiquidityProviderTransitionService {
                         seedInventoryQuantity,
                         seedCashAmount,
                         businessDate,
-                        now,
                         requestedBy,
                         changeReason,
                         now,
@@ -889,6 +814,8 @@ public class LiquidityProviderTransitionService {
         config.put("preset", "SCALED_BALANCED_V1");
         config.put("symbol", symbol);
         config.put("executionMode", executionMode);
+        config.put("activationAction", "PROVISION");
+        config.put("targetStatus", "ACTIVE");
         config.put("referenceDailyVolumeRate", referenceVolumeRate);
         config.put("seedInventoryRate", seedInventoryRate);
         config.put("initialCashToInventoryValue", cashMultiplier);
@@ -912,7 +839,7 @@ public class LiquidityProviderTransitionService {
                             effective_business_date, status, config_json,
                             change_reason, changed_by, created_at, updated_at
                         ) values (
-                            'LIQUIDITY_MANDATE', ?, ?, ?, 'ACTIVE', ?,
+                            'LIQUIDITY_MANDATE', ?, ?, ?, 'SCHEDULED', ?,
                             ?, ?, ?, ?
                         )
                         """,
@@ -951,7 +878,7 @@ public class LiquidityProviderTransitionService {
                              where mandate.id = ?
                                and mandate.symbol = ?
                                and mandate.execution_mode = 'LIVE'
-                               and mandate.status = 'ACTIVE'
+                               and mandate.status = 'PENDING'
                                and mandate.reference_daily_volume = ?
                                and mandate.target_inventory_quantity = ?
                                and participant.id = ?
@@ -1123,20 +1050,6 @@ public class LiquidityProviderTransitionService {
 
         boolean pendingRoleSeparatedMarket() {
             return !marketEnabled && "CLOSED".equals(marketStatus);
-        }
-    }
-
-    private record MarketActivationState(
-            boolean enabled,
-            String marketStatus
-    ) {
-        boolean configuredMarket() {
-            return enabled
-                    && ("OPEN".equals(marketStatus) || "CLOSED".equals(marketStatus));
-        }
-
-        boolean pendingMarket() {
-            return !enabled && "CLOSED".equals(marketStatus);
         }
     }
 

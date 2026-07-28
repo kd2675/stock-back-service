@@ -29,6 +29,7 @@ public record UnderwritingContractResponse(
         long policyVersion,
         Account account,
         Supply supply,
+        ScheduledSupply scheduledSupply,
         Reconciliation reconciliation,
         List<SecurityAllocationResponse> allocations,
         LocalDateTime createdAt,
@@ -77,6 +78,19 @@ public record UnderwritingContractResponse(
             long generatedOrderCount,
             long cancelledOrderCount,
             DailyState latestDailyState
+    ) {
+    }
+
+    public record ScheduledSupply(
+            long policyVersion,
+            LocalDate effectiveBusinessDate,
+            String activationAction,
+            String targetStatus,
+            BigDecimal supplyRate,
+            int durationDays,
+            String changeReason,
+            String changedBy,
+            LocalDateTime updatedAt
     ) {
     }
 

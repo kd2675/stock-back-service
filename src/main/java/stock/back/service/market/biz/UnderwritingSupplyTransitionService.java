@@ -19,7 +19,6 @@ import stock.back.service.common.exception.StockException;
 import stock.back.service.market.vo.UnderwritingSupplyActivationRequest;
 import stock.back.service.market.vo.UnderwritingSupplySuspensionRequest;
 import web.common.core.simulation.SimulationClockSnapshot;
-import web.common.core.simulation.SimulationMarketSession;
 
 @Service
 public class UnderwritingSupplyTransitionService {
@@ -35,24 +34,24 @@ public class UnderwritingSupplyTransitionService {
     private final JdbcClient jdbcClient;
     private final ObjectMapper objectMapper;
     private final SimulationClockService simulationClockService;
-    private final SimulationMarketSessionService marketSessionService;
     private final MarketLedgerFreezeGuard marketLedgerFreezeGuard;
+    private final MarketRoleActivationDateService activationDateService;
     private final MarketRoleOrderCleanupService marketRoleOrderCleanupService;
 
     public UnderwritingSupplyTransitionService(
             JdbcTemplate jdbcTemplate,
             ObjectMapper objectMapper,
             SimulationClockService simulationClockService,
-            SimulationMarketSessionService marketSessionService,
             MarketLedgerFreezeGuard marketLedgerFreezeGuard,
+            MarketRoleActivationDateService activationDateService,
             MarketRoleOrderCleanupService marketRoleOrderCleanupService
     ) {
         this.jdbcTemplate = jdbcTemplate;
         this.jdbcClient = JdbcClient.create(jdbcTemplate);
         this.objectMapper = objectMapper;
         this.simulationClockService = simulationClockService;
-        this.marketSessionService = marketSessionService;
         this.marketLedgerFreezeGuard = marketLedgerFreezeGuard;
+        this.activationDateService = activationDateService;
         this.marketRoleOrderCleanupService = marketRoleOrderCleanupService;
     }
 
@@ -60,19 +59,17 @@ public class UnderwritingSupplyTransitionService {
     public void activate(
             long contractId,
             UnderwritingSupplyActivationRequest request,
-            String changedBy
+        String changedBy
     ) {
         requirePositiveContractId(contractId);
-        requirePausedPreOpen();
-        LocalDate businessDate = marketLedgerFreezeGuard.acquireJdbcPreOpenMutationPermit(
+        LocalDate activeBusinessDate = marketLedgerFreezeGuard.acquireJdbcMutationPermit(
                 "issue-underwriter scaled supply activation"
         );
         SimulationClockSnapshot clock = simulationClockService.currentSnapshot();
-        if (!clock.simulationDate().equals(businessDate)) {
-            throw StockException.conflict(
-                    "Simulation date changed while activating issue-underwriter supply"
-            );
-        }
+        LocalDate effectiveBusinessDate = activationDateService.resolveNextOpeningDate(
+                clock,
+                activeBusinessDate
+        );
 
         ContractTarget target = lockContract(contractId);
         if ("STABILIZING".equals(target.status())) {
@@ -84,7 +81,7 @@ public class UnderwritingSupplyTransitionService {
             );
         }
         requireSupplyMarketPrerequisites(target.symbol());
-        RoleSnapshot role = lockRoleSnapshot(target, businessDate);
+        RoleSnapshot role = lockRoleSnapshot(target, effectiveBusinessDate);
         validateDedicatedRole(role);
         validateSupplyReconciliation(target);
         if (role.openContractOrderCount() > 0L) {
@@ -105,73 +102,23 @@ public class UnderwritingSupplyTransitionService {
          * current unreserved inventory as the policy base and keep the contract limit
          * as a separate lifetime cap.
          */
-        long requestedSupplyQuantity = BigDecimal.valueOf(availableQuantity)
-                .multiply(supplyRate)
-                .setScale(0, RoundingMode.DOWN)
-                .longValueExact();
-        requestedSupplyQuantity = Math.min(
-                Math.max(1L, requestedSupplyQuantity),
-                availableQuantity
-        );
-        if (requestedSupplyQuantity <= 0L) {
+        if (availableQuantity <= 0L) {
             throw StockException.conflict(
                     "No unreserved issue-underwriter inventory remains"
             );
         }
-        SupplyUsage usage = findSupplyUsage(contractId);
-        /*
-         * Daily states retain submitted budget across suspend/resume. Contract limits are
-         * cumulative, so a newly approved tranche must be added to past usage instead of
-         * comparing a percentage of remaining inventory directly with historical usage.
-         */
-        long quantityLimit = Math.addExact(
-                usage.submittedQuantity(),
-                requestedSupplyQuantity
-        );
-        BigDecimal amountLimit = usage.submittedAmount().add(
-                target.issuePrice().multiply(BigDecimal.valueOf(requestedSupplyQuantity))
-        )
-                .setScale(2, RoundingMode.HALF_UP);
-
-        LocalDate endDate = businessDate.plusDays(durationDays - 1L);
         long nextPolicyVersion = Math.addExact(target.policyVersion(), 1L);
         LocalDateTime now = clock.simulationDateTime();
-        requireSingleUpdate(
-                jdbcTemplate.update(
-                        """
-                        update stock_underwriting_contract
-                           set stabilization_start_date = ?,
-                               stabilization_end_date = ?,
-                               stabilization_quantity_limit = ?,
-                               stabilization_amount_limit = ?,
-                               status = 'STABILIZING',
-                               policy_version = ?,
-                               updated_at = ?
-                         where id = ?
-                           and status = 'ALLOCATED'
-                        """,
-                        businessDate,
-                        endDate,
-                        quantityLimit,
-                        amountLimit,
-                        nextPolicyVersion,
-                        now,
-                        contractId
-                ),
-                "Issue-underwriter supply activation"
-        );
-        insertPolicyVersion(
+        upsertScheduledPolicyVersion(
                 target,
                 nextPolicyVersion,
-                businessDate,
+                effectiveBusinessDate,
                 "STABILIZING",
                 supplyRate,
                 durationDays,
-                quantityLimit,
-                amountLimit,
                 normalizeReason(
                         request == null ? null : request.changeReason(),
-                        "Activate finite passive issue-underwriter supply"
+                        "Schedule finite passive issue-underwriter supply for the next opening"
                 ),
                 normalizeChangedBy(changedBy),
                 now
@@ -191,6 +138,7 @@ public class UnderwritingSupplyTransitionService {
         );
         ContractTarget target = lockContract(contractId);
         if ("ALLOCATED".equals(target.status())) {
+            cancelScheduledSupply(target.contractCode());
             return;
         }
         if (!"STABILIZING".equals(target.status())) {
@@ -248,20 +196,6 @@ public class UnderwritingSupplyTransitionService {
                 normalizeChangedBy(changedBy),
                 now
         );
-    }
-
-    private void requirePausedPreOpen() {
-        SimulationClockSnapshot clock = simulationClockService.currentSnapshot();
-        if (clock.running()) {
-            throw StockException.conflict(
-                    "Pause the simulation clock before activating issue-underwriter supply"
-            );
-        }
-        if (marketSessionService.currentSession() != SimulationMarketSession.PRE_OPEN) {
-            throw StockException.conflict(
-                    "Issue-underwriter supply can only activate during a paused pre-open"
-            );
-        }
     }
 
     private ContractTarget lockContract(long contractId) {
@@ -517,8 +451,8 @@ public class UnderwritingSupplyTransitionService {
                            and instrument.enabled = true
                            and instrument.tradable_shares > 0
                            and instrument.tick_size > 0
-                           and market_config.enabled = true
                            and auto_config.enabled = true
+                           and market_config.market_status in ('OPEN', 'CLOSED')
                            and price.current_price > 0
                            and price.previous_close > 0
                         """
@@ -528,8 +462,8 @@ public class UnderwritingSupplyTransitionService {
                 .single();
         if (ready == null || ready != 1) {
             throw StockException.conflict(
-                    "Activate the order-book and automatic market "
-                            + "before issue-underwriter supply: "
+                    "Prepare the order-book and automatic-market configuration "
+                            + "before scheduling issue-underwriter supply: "
                             + symbol
             );
         }
@@ -576,6 +510,134 @@ public class UnderwritingSupplyTransitionService {
                 now,
                 simulationTradeDate,
                 contractId
+        );
+    }
+
+    private void upsertScheduledPolicyVersion(
+            ContractTarget target,
+            long version,
+            LocalDate effectiveBusinessDate,
+            String targetStatus,
+            BigDecimal supplyRate,
+            int durationDays,
+            String reason,
+            String changedBy,
+            LocalDateTime now
+    ) {
+        String configJson = scheduledPolicyConfigJson(
+                target,
+                targetStatus,
+                supplyRate,
+                durationDays
+        );
+        ScheduledPolicy scheduledPolicy = jdbcClient.sql(
+                        """
+                        select id, version_no
+                          from stock_market_policy_version
+                         where policy_scope = 'UNDERWRITING_CONTRACT'
+                           and scope_key = ?
+                           and status = 'SCHEDULED'
+                         for update
+                        """
+                )
+                .param(target.contractCode())
+                .query((rs, rowNum) -> new ScheduledPolicy(
+                        rs.getLong("id"),
+                        rs.getLong("version_no")
+                ))
+                .optional()
+                .orElse(null);
+        if (scheduledPolicy == null) {
+            requireSingleUpdate(
+                    jdbcTemplate.update(
+                            """
+                            insert into stock_market_policy_version(
+                                policy_scope, scope_key, version_no,
+                                effective_business_date, status, config_json,
+                                change_reason, changed_by, created_at, updated_at
+                            ) values (
+                                'UNDERWRITING_CONTRACT', ?, ?, ?, 'SCHEDULED', ?,
+                                ?, ?, ?, ?
+                            )
+                            """,
+                            target.contractCode(),
+                            version,
+                            effectiveBusinessDate,
+                            configJson,
+                            reason,
+                            changedBy,
+                            now,
+                            now
+                    ),
+                    "Scheduled issue-underwriter supply policy"
+            );
+            return;
+        }
+        if (scheduledPolicy.version() != version) {
+            throw StockException.conflict(
+                    "Scheduled issue-underwriter supply policy version is not aligned"
+            );
+        }
+        requireSingleUpdate(
+                jdbcTemplate.update(
+                        """
+                        update stock_market_policy_version
+                           set effective_business_date = ?,
+                               config_json = ?,
+                               change_reason = ?,
+                               changed_by = ?,
+                               updated_at = ?
+                         where id = ?
+                           and status = 'SCHEDULED'
+                        """,
+                        effectiveBusinessDate,
+                        configJson,
+                        reason,
+                        changedBy,
+                        now,
+                        scheduledPolicy.id()
+                ),
+                "Scheduled issue-underwriter supply policy update"
+        );
+    }
+
+    private String scheduledPolicyConfigJson(
+            ContractTarget target,
+            String targetStatus,
+            BigDecimal supplyRate,
+            int durationDays
+    ) {
+        Map<String, Object> config = new LinkedHashMap<>();
+        config.put("preset", "INDEPENDENT_PASSIVE_UNDERWRITER_SUPPLY_V1");
+        config.put("activationAction", "ACTIVATE_SUPPLY");
+        config.put("targetStatus", targetStatus);
+        config.put("contractId", target.contractId());
+        config.put("contractCode", target.contractCode());
+        config.put("symbol", target.symbol());
+        config.put("supplyRate", supplyRate);
+        config.put("durationDays", durationDays);
+        config.put("sellOnly", true);
+        config.put("passiveOnly", true);
+        config.put("cancellationRefundsSubmissionBudget", false);
+        try {
+            return objectMapper.writeValueAsString(config);
+        } catch (JsonProcessingException ex) {
+            throw new IllegalStateException(
+                    "Issue-underwriter policy JSON serialization failed",
+                    ex
+            );
+        }
+    }
+
+    private void cancelScheduledSupply(String contractCode) {
+        jdbcTemplate.update(
+                """
+                delete from stock_market_policy_version
+                 where policy_scope = 'UNDERWRITING_CONTRACT'
+                   and scope_key = ?
+                   and status = 'SCHEDULED'
+                """,
+                contractCode
         );
     }
 
@@ -751,6 +813,9 @@ public class UnderwritingSupplyTransitionService {
     }
 
     private record SupplyUsage(long submittedQuantity, BigDecimal submittedAmount) {
+    }
+
+    private record ScheduledPolicy(long id, long version) {
     }
 
     private record SupplyReconciliation(

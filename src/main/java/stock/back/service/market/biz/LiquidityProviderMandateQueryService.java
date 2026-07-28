@@ -359,7 +359,7 @@ public class LiquidityProviderMandateQueryService {
                 account,
                 policy,
                 policyPresets,
-                mapScheduledPolicy(rs),
+                mapScheduledPolicy(rs, policy),
                 dailyState,
                 mapTransition(rs)
         );
@@ -436,17 +436,33 @@ public class LiquidityProviderMandateQueryService {
     }
 
     private LiquidityProviderMandateResponse.ScheduledPolicy mapScheduledPolicy(
-            ResultSet rs
+            ResultSet rs,
+            LiquidityProviderMandateResponse.Policy currentPolicy
     ) throws SQLException {
         Long policyVersion = nullableLong(rs, "scheduled_policy_version");
         if (policyVersion == null) {
             return null;
         }
         String configJson = rs.getString("scheduled_config_json");
+        JsonNode root = parsePolicyRoot(configJson);
+        String activationAction = textOrDefault(
+                root,
+                "activationAction",
+                "POLICY_UPDATE"
+        );
+        String targetStatus = textOrDefault(
+                root,
+                "targetStatus",
+                textOrDefault(root, "status", "SUSPENDED")
+        );
         return new LiquidityProviderMandateResponse.ScheduledPolicy(
                 policyVersion,
                 localDate(rs, "scheduled_effective_business_date"),
-                parsePolicyConfig(configJson),
+                activationAction,
+                targetStatus,
+                root.hasNonNull("targetSpreadTicks")
+                        ? parsePolicyConfig(root)
+                        : currentPolicy,
                 rs.getString("scheduled_change_reason"),
                 rs.getString("scheduled_changed_by"),
                 localDateTime(rs, "scheduled_updated_at")
@@ -454,6 +470,10 @@ public class LiquidityProviderMandateQueryService {
     }
 
     private LiquidityProviderMandateResponse.Policy parsePolicyConfig(String configJson) {
+        return parsePolicyConfig(parsePolicyRoot(configJson));
+    }
+
+    private JsonNode parsePolicyRoot(String configJson) {
         JsonNode root;
         try {
             root = objectMapper.readTree(configJson);
@@ -466,6 +486,10 @@ public class LiquidityProviderMandateQueryService {
         if (root == null || !root.isObject()) {
             throw new IllegalStateException("Scheduled LP policy JSON must be an object");
         }
+        return root;
+    }
+
+    private LiquidityProviderMandateResponse.Policy parsePolicyConfig(JsonNode root) {
         return new LiquidityProviderMandateResponse.Policy(
                 requiredNode(root, "targetSpreadTicks").intValue(),
                 requiredNode(root, "maxSpreadTicks").intValue(),
@@ -494,6 +518,13 @@ public class LiquidityProviderMandateQueryService {
                 requiredNode(root, "quoteIntervalSeconds").intValue(),
                 money(requiredNode(root, "dailyLossLimitAmount").decimalValue())
         );
+    }
+
+    private String textOrDefault(JsonNode root, String fieldName, String defaultValue) {
+        JsonNode value = root.get(fieldName);
+        return value == null || value.isNull() || value.asText().isBlank()
+                ? defaultValue
+                : value.asText();
     }
 
     private JsonNode requiredNode(JsonNode root, String fieldName) {

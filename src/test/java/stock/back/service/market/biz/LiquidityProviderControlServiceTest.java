@@ -68,16 +68,22 @@ class LiquidityProviderControlServiceTest {
         when(freezeGuard.acquireJdbcMutationPermit(
                 "liquidity-provider policy scheduling"
         )).thenReturn(BUSINESS_DATE);
-        when(freezeGuard.acquireJdbcPreOpenMutationPermit(
+        when(freezeGuard.acquireJdbcMutationPermit(
                 "liquidity-provider resume"
         )).thenReturn(BUSINESS_DATE);
+        MarketRoleActivationDateService activationDateService =
+                mock(MarketRoleActivationDateService.class);
+        when(activationDateService.resolveNextOpeningDate(
+                org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any()
+        )).thenReturn(BUSINESS_DATE.plusDays(1));
 
         service = new LiquidityProviderControlService(
                 jdbcTemplate,
                 new ObjectMapper(),
                 simulationClockService,
-                marketSessionService,
                 freezeGuard,
+                activationDateService,
                 new MarketRoleOrderCleanupService(jdbcTemplate)
         );
         seedMandate();
@@ -129,7 +135,7 @@ class LiquidityProviderControlServiceTest {
     }
 
     @Test
-    void resume_suspendedUnusedPreOpen_reactivatesMandateAndAuditState() {
+    void resume_suspendedUnusedPreOpen_schedulesNextOpeningActivation() {
         jdbcTemplate.update(
                 """
                 update stock_liquidity_mandate
@@ -150,6 +156,9 @@ class LiquidityProviderControlServiceTest {
                 """,
                 BUSINESS_DATE
         );
+        jdbcTemplate.update(
+                "update stock_liquidity_transition set stage = 'SUSPENDED' where mandate_id = 1"
+        );
 
         transactionTemplate.executeWithoutResult(ignored ->
                 service.resume(
@@ -165,28 +174,38 @@ class LiquidityProviderControlServiceTest {
                   from stock_liquidity_mandate
                  where id = 1
                 """
-        )).containsEntry("status", "ACTIVE")
-                .containsEntry("policy_version", 4L)
-                .containsEntry(
-                        "next_quote_at",
-                        java.sql.Timestamp.valueOf(BUSINESS_DATE.atTime(6, 0))
-                );
-        assertThat(jdbcTemplate.queryForMap(
-                """
-                select state_status, gate_reason, policy_version
-                  from stock_liquidity_daily_state
-                 where simulation_trade_date = ?
-                   and mandate_id = 1
-                """,
-                BUSINESS_DATE
-        )).containsEntry("state_status", "EXEMPT")
-                .containsEntry("gate_reason", "ADMIN_RESUMED_PREOPEN")
-                .containsEntry("policy_version", 4L);
+        )).containsEntry("status", "SUSPENDED")
+                .containsEntry("policy_version", 3L)
+                .containsEntry("next_quote_at", null);
         assertThat(jdbcTemplate.queryForMap(
                 "select stage, policy_version from stock_liquidity_transition where mandate_id = 1"
-        )).containsEntry("stage", "LIVE_ACTIVE")
-                .containsEntry("policy_version", 4L);
-        verify(freezeGuard).acquireJdbcPreOpenMutationPermit(
+        )).containsEntry("stage", "SUSPENDED")
+                .containsEntry("policy_version", 3L);
+        assertThat(jdbcTemplate.queryForMap(
+                """
+                select version_no, effective_business_date, status, config_json
+                  from stock_market_policy_version
+                 where policy_scope = 'LIQUIDITY_MANDATE'
+                   and scope_key = 'DEMO001'
+                   and status = 'SCHEDULED'
+                """
+        )).containsEntry("version_no", 4L)
+                .containsEntry(
+                        "effective_business_date",
+                        java.sql.Date.valueOf(BUSINESS_DATE.plusDays(1))
+                )
+                .containsEntry("status", "SCHEDULED");
+        assertThat(jdbcTemplate.queryForObject(
+                """
+                select config_json
+                  from stock_market_policy_version
+                 where policy_scope = 'LIQUIDITY_MANDATE'
+                   and scope_key = 'DEMO001'
+                   and status = 'SCHEDULED'
+                """,
+                String.class
+        )).contains("\"activationAction\":\"RESUME\"");
+        verify(freezeGuard).acquireJdbcMutationPermit(
                 "liquidity-provider resume"
         );
     }
@@ -488,8 +507,8 @@ class LiquidityProviderControlServiceTest {
                   from stock_liquidity_mandate
                  where id = 1
                 """
-        )).containsEntry("status", "ACTIVE")
-                .containsEntry("policy_version", 5L);
+        )).containsEntry("status", "SUSPENDED")
+                .containsEntry("policy_version", 4L);
         assertThat(jdbcTemplate.queryForMap(
                 """
                 select version_no, effective_business_date,
@@ -499,12 +518,12 @@ class LiquidityProviderControlServiceTest {
                    and scope_key = 'DEMO001'
                    and status = 'SCHEDULED'
                 """
-        )).containsEntry("version_no", 6L)
+        )).containsEntry("version_no", 5L)
                 .containsEntry(
                         "effective_business_date",
-                        java.sql.Date.valueOf(BUSINESS_DATE)
+                        java.sql.Date.valueOf(BUSINESS_DATE.plusDays(1))
                 )
-                .containsEntry("change_reason", "다음 장 정책")
+                .containsEntry("change_reason", "장전 재개")
                 .containsEntry("changed_by", "stock-admin");
         assertThat(jdbcTemplate.queryForObject(
                 """
@@ -515,7 +534,8 @@ class LiquidityProviderControlServiceTest {
                    and status = 'SCHEDULED'
                 """,
                 String.class
-        )).contains("\"referenceDailyVolume\":30000");
+        )).contains("\"referenceDailyVolume\":30000")
+                .contains("\"activationAction\":\"RESUME\"");
         assertThat(jdbcTemplate.queryForObject(
                 """
                 select count(*)

@@ -17,7 +17,6 @@ import org.springframework.transaction.annotation.Transactional;
 import stock.back.service.common.exception.StockException;
 import stock.back.service.market.vo.UnderwritingContractCreateRequest;
 import web.common.core.simulation.SimulationClockSnapshot;
-import web.common.core.simulation.SimulationMarketSession;
 
 @Service
 public class UnderwritingContractProvisionService {
@@ -29,19 +28,16 @@ public class UnderwritingContractProvisionService {
     private final JdbcTemplate jdbcTemplate;
     private final JdbcClient jdbcClient;
     private final SimulationClockService simulationClockService;
-    private final SimulationMarketSessionService marketSessionService;
     private final MarketLedgerFreezeGuard marketLedgerFreezeGuard;
 
     public UnderwritingContractProvisionService(
             JdbcTemplate jdbcTemplate,
             SimulationClockService simulationClockService,
-            SimulationMarketSessionService marketSessionService,
             MarketLedgerFreezeGuard marketLedgerFreezeGuard
     ) {
         this.jdbcTemplate = jdbcTemplate;
         this.jdbcClient = JdbcClient.create(jdbcTemplate);
         this.simulationClockService = simulationClockService;
-        this.marketSessionService = marketSessionService;
         this.marketLedgerFreezeGuard = marketLedgerFreezeGuard;
     }
 
@@ -55,15 +51,10 @@ public class UnderwritingContractProvisionService {
         String underwritingType = normalizedUnderwritingType(request);
         String changeReason = normalizeReason(request);
         String normalizedChangedBy = normalizeChangedBy(changedBy);
-        SimulationClockSnapshot clock = requirePausedPreOpen();
-        LocalDate businessDate = marketLedgerFreezeGuard.acquireJdbcPreOpenMutationPermit(
+        SimulationClockSnapshot clock = simulationClockService.currentSnapshot();
+        LocalDate businessDate = marketLedgerFreezeGuard.acquireJdbcMutationPermit(
                 "independent underwriting contract creation"
         );
-        if (!businessDate.equals(clock.simulationDate())) {
-            throw StockException.conflict(
-                    "Simulation date and active market business date must match"
-            );
-        }
         requireNoExistingContract(normalizedSymbol);
         PendingAllocation allocation = lockPendingAllocation(normalizedSymbol);
         MarketParticipant participant = requireParticipant();
@@ -115,21 +106,6 @@ public class UnderwritingContractProvisionService {
                 allocation.issuedShares()
         );
         return contractId;
-    }
-
-    private SimulationClockSnapshot requirePausedPreOpen() {
-        SimulationClockSnapshot clock = simulationClockService.currentSnapshot();
-        if (clock.running()) {
-            throw StockException.conflict(
-                    "Pause the simulation clock before creating an underwriting contract"
-            );
-        }
-        if (marketSessionService.currentSession() != SimulationMarketSession.PRE_OPEN) {
-            throw StockException.conflict(
-                    "Underwriting contracts can only be created during a paused pre-open"
-            );
-        }
-        return clock;
     }
 
     private void requireNoExistingContract(String symbol) {

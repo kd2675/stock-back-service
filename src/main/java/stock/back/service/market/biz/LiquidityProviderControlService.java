@@ -1,7 +1,9 @@
 package stock.back.service.market.biz;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -19,7 +21,6 @@ import stock.back.service.common.exception.StockException;
 import stock.back.service.market.vo.LiquidityProviderPolicyUpdateRequest;
 import stock.back.service.market.vo.LiquidityProviderStatusChangeRequest;
 import web.common.core.simulation.SimulationClockSnapshot;
-import web.common.core.simulation.SimulationMarketSession;
 
 @Service
 public class LiquidityProviderControlService {
@@ -32,24 +33,24 @@ public class LiquidityProviderControlService {
     private final JdbcClient jdbcClient;
     private final ObjectMapper objectMapper;
     private final SimulationClockService simulationClockService;
-    private final SimulationMarketSessionService marketSessionService;
     private final MarketLedgerFreezeGuard marketLedgerFreezeGuard;
+    private final MarketRoleActivationDateService activationDateService;
     private final MarketRoleOrderCleanupService marketRoleOrderCleanupService;
 
     public LiquidityProviderControlService(
             JdbcTemplate jdbcTemplate,
             ObjectMapper objectMapper,
             SimulationClockService simulationClockService,
-            SimulationMarketSessionService marketSessionService,
             MarketLedgerFreezeGuard marketLedgerFreezeGuard,
+            MarketRoleActivationDateService activationDateService,
             MarketRoleOrderCleanupService marketRoleOrderCleanupService
     ) {
         this.jdbcTemplate = jdbcTemplate;
         this.jdbcClient = JdbcClient.create(jdbcTemplate);
         this.objectMapper = objectMapper;
         this.simulationClockService = simulationClockService;
-        this.marketSessionService = marketSessionService;
         this.marketLedgerFreezeGuard = marketLedgerFreezeGuard;
+        this.activationDateService = activationDateService;
         this.marketRoleOrderCleanupService = marketRoleOrderCleanupService;
     }
 
@@ -67,7 +68,7 @@ public class LiquidityProviderControlService {
         LocalDate activeBusinessDate = marketLedgerFreezeGuard.acquireJdbcMutationPermit(
                 "liquidity-provider policy scheduling"
         );
-        LocalDate effectiveBusinessDate = resolveScheduledEffectiveBusinessDate(
+        LocalDate effectiveBusinessDate = activationDateService.resolveNextOpeningDate(
                 clock,
                 activeBusinessDate
         );
@@ -96,6 +97,8 @@ public class LiquidityProviderControlService {
                     effectiveBusinessDate,
                     reason,
                     actor,
+                    "POLICY_UPDATE",
+                    target.status(),
                     now
             );
             return;
@@ -112,6 +115,8 @@ public class LiquidityProviderControlService {
                 effectiveBusinessDate,
                 reason,
                 actor,
+                scheduledPolicy.activationAction(),
+                scheduledPolicy.targetStatus(),
                 now
         );
     }
@@ -129,6 +134,7 @@ public class LiquidityProviderControlService {
         );
         MandateTarget target = lockMandate(normalizedSymbol);
         if ("SUSPENDED".equals(target.status())) {
+            cancelScheduledPolicies(normalizedSymbol);
             marketRoleOrderCleanupService.cancelOpenOrderBookOrders(
                     target.accountId(),
                     "LIQUIDITY_PROVIDER",
@@ -213,13 +219,14 @@ public class LiquidityProviderControlService {
             String changedBy
     ) {
         String normalizedSymbol = requireSymbol(symbol);
-        SimulationClockSnapshot clock = requirePausedPreOpen(
+        SimulationClockSnapshot clock = simulationClockService.currentSnapshot();
+        LocalDate activeBusinessDate = marketLedgerFreezeGuard.acquireJdbcMutationPermit(
                 "liquidity-provider resume"
         );
-        LocalDate businessDate = marketLedgerFreezeGuard.acquireJdbcPreOpenMutationPermit(
-                "liquidity-provider resume"
+        LocalDate effectiveBusinessDate = activationDateService.resolveNextOpeningDate(
+                clock,
+                activeBusinessDate
         );
-        requireAlignedBusinessDate(clock, businessDate);
 
         MandateTarget target = lockMandate(normalizedSymbol);
         if ("ACTIVE".equals(target.status())) {
@@ -230,110 +237,38 @@ public class LiquidityProviderControlService {
                     "Only a suspended liquidity provider can be resumed"
             );
         }
-        requireDedicatedRole(target, businessDate);
+        requireDedicatedRole(target, effectiveBusinessDate);
         requireNoOpenOrders(target);
-        requireUnusedDailyState(target.mandateId(), businessDate);
-
-        long nextPolicyVersion = Math.addExact(target.policyVersion(), 1L);
         LocalDateTime now = clock.simulationDateTime();
-        rebaseScheduledPolicyVersion(
-                normalizedSymbol,
-                nextPolicyVersion,
-                Math.addExact(nextPolicyVersion, 1L),
-                now
+        String reason = normalizeReason(
+                request == null ? null : request.changeReason(),
+                "Schedule liquidity-provider resume for the next opening"
         );
-        LocalDateTime nextQuoteAt = businessDate.atTime(marketSessionService.openTime());
-        requireSingleUpdate(
-                jdbcTemplate.update(
-                        """
-                        update stock_liquidity_mandate
-                           set status = 'ACTIVE',
-                               next_quote_at = ?,
-                               policy_version = ?,
-                               updated_at = ?
-                         where id = ?
-                           and status = 'SUSPENDED'
-                           and policy_version = ?
-                        """,
-                        nextQuoteAt,
-                        nextPolicyVersion,
-                        now,
-                        target.mandateId(),
-                        target.policyVersion()
-                ),
-                "Liquidity-provider resume"
-        );
-        updateZeroUsageDailyState(
-                target.mandateId(),
-                businessDate,
-                nextPolicyVersion,
-                "ADMIN_RESUMED_PREOPEN",
-                now
-        );
-        updateTransitionStage(
-                target.mandateId(),
-                "LIVE_ACTIVE",
-                nextPolicyVersion,
-                now
-        );
-        retireActivePolicy(normalizedSymbol, now);
-        insertPolicyVersion(
-                target,
-                target.policy(),
-                nextPolicyVersion,
-                businessDate,
+        String actor = normalizeChangedBy(changedBy);
+        ScheduledPolicyVersion scheduledPolicy = lockScheduledPolicy(normalizedSymbol);
+        if (scheduledPolicy == null) {
+            insertScheduledPolicyVersion(
+                    target,
+                    target.policy(),
+                    Math.addExact(target.policyVersion(), 1L),
+                    effectiveBusinessDate,
+                    reason,
+                    actor,
+                    "RESUME",
+                    "ACTIVE",
+                    now
+            );
+            return;
+        }
+        updateScheduledPolicyLifecycle(
+                scheduledPolicy.id(),
+                effectiveBusinessDate,
+                reason,
+                actor,
+                "RESUME",
                 "ACTIVE",
-                normalizeReason(
-                        request == null ? null : request.changeReason(),
-                        "Resume liquidity provider during paused pre-open"
-                ),
-                normalizeChangedBy(changedBy),
                 now
         );
-    }
-
-    private SimulationClockSnapshot requirePausedPreOpen(String operation) {
-        SimulationClockSnapshot clock = simulationClockService.currentSnapshot();
-        if (clock.running()) {
-            throw StockException.conflict(
-                    "Pause the simulation clock before " + operation
-            );
-        }
-        if (marketSessionService.currentSession() != SimulationMarketSession.PRE_OPEN) {
-            throw StockException.conflict(
-                    operation + " is only allowed during pre-open"
-            );
-        }
-        return clock;
-    }
-
-    private LocalDate resolveScheduledEffectiveBusinessDate(
-            SimulationClockSnapshot clock,
-            LocalDate activeBusinessDate
-    ) {
-        if (clock == null || clock.simulationDate() == null || activeBusinessDate == null) {
-            throw StockException.conflict(
-                    "Simulation and active business dates are required to schedule an LP policy"
-            );
-        }
-        LocalDate simulationDate = clock.simulationDate();
-        if (marketSessionService.currentSession() == SimulationMarketSession.PRE_OPEN
-                && !simulationDate.isBefore(activeBusinessDate)
-                && !simulationDate.isAfter(activeBusinessDate.plusDays(1))) {
-            return simulationDate;
-        }
-        return activeBusinessDate.plusDays(1);
-    }
-
-    private void requireAlignedBusinessDate(
-            SimulationClockSnapshot clock,
-            LocalDate businessDate
-    ) {
-        if (businessDate == null || !businessDate.equals(clock.simulationDate())) {
-            throw StockException.conflict(
-                    "Simulation date and active market business date must match"
-            );
-        }
     }
 
     private MandateTarget lockMandate(String symbol) {
@@ -444,7 +379,7 @@ public class LiquidityProviderControlService {
     private ScheduledPolicyVersion lockScheduledPolicy(String symbol) {
         return jdbcClient.sql(
                         """
-                        select id, version_no
+                        select id, version_no, config_json
                           from stock_market_policy_version
                          where policy_scope = 'LIQUIDITY_MANDATE'
                            and scope_key = ?
@@ -453,10 +388,27 @@ public class LiquidityProviderControlService {
                         """
                 )
                 .param(symbol)
-                .query((rs, rowNum) -> new ScheduledPolicyVersion(
-                        rs.getLong("id"),
-                        rs.getLong("version_no")
-                ))
+                .query((rs, rowNum) -> {
+                    String configJson = rs.getString("config_json");
+                    JsonNode root = readPolicyConfig(configJson);
+                    String activationAction = textOrDefault(
+                            root,
+                            "activationAction",
+                            "POLICY_UPDATE"
+                    );
+                    String targetStatus = textOrDefault(
+                            root,
+                            "targetStatus",
+                            textOrDefault(root, "status", "SUSPENDED")
+                    );
+                    return new ScheduledPolicyVersion(
+                            rs.getLong("id"),
+                            rs.getLong("version_no"),
+                            configJson,
+                            activationAction,
+                            targetStatus
+                    );
+                })
                 .optional()
                 .orElse(null);
     }
@@ -532,34 +484,6 @@ public class LiquidityProviderControlService {
         if (count != null && count > 0L) {
             throw StockException.conflict(
                     "Liquidity-provider open orders must be cancelled before this operation"
-            );
-        }
-    }
-
-    private void requireUnusedDailyState(long mandateId, LocalDate businessDate) {
-        Boolean used = jdbcClient.sql(
-                        """
-                        select exists(
-                            select 1
-                              from stock_liquidity_daily_state
-                             where mandate_id = ?
-                               and simulation_trade_date = ?
-                               and (
-                                   submitted_buy_quantity > 0
-                                   or submitted_sell_quantity > 0
-                                   or executed_buy_quantity > 0
-                                   or executed_sell_quantity > 0
-                               )
-                        )
-                        """
-                )
-                .param(mandateId)
-                .param(businessDate)
-                .query(Boolean.class)
-                .single();
-        if (Boolean.TRUE.equals(used)) {
-            throw StockException.conflict(
-                    "Liquidity-provider daily usage already exists; apply the change on the next pre-open"
             );
         }
     }
@@ -806,37 +730,6 @@ public class LiquidityProviderControlService {
         );
     }
 
-    private void updateZeroUsageDailyState(
-            long mandateId,
-            LocalDate businessDate,
-            long policyVersion,
-            String gateReason,
-            LocalDateTime now
-    ) {
-        jdbcTemplate.update(
-                """
-                update stock_liquidity_daily_state
-                   set state_status = 'EXEMPT',
-                       gate_reason = ?,
-                       limit_breached = false,
-                       policy_version = ?,
-                       version = version + 1,
-                       updated_at = ?
-                 where simulation_trade_date = ?
-                   and mandate_id = ?
-                   and submitted_buy_quantity = 0
-                   and submitted_sell_quantity = 0
-                   and executed_buy_quantity = 0
-                   and executed_sell_quantity = 0
-                """,
-                gateReason,
-                policyVersion,
-                now,
-                businessDate,
-                mandateId
-        );
-    }
-
     private void updateTransitionStage(
             long mandateId,
             String stage,
@@ -906,6 +799,8 @@ public class LiquidityProviderControlService {
             LocalDate effectiveBusinessDate,
             String reason,
             String changedBy,
+            String activationAction,
+            String targetStatus,
             LocalDateTime now
     ) {
         requireSingleUpdate(
@@ -923,7 +818,13 @@ public class LiquidityProviderControlService {
                         target.symbol(),
                         version,
                         effectiveBusinessDate,
-                        policyConfigJson(target, policy, target.status()),
+                        policyConfigJson(
+                                target,
+                                policy,
+                                target.status(),
+                                activationAction,
+                                targetStatus
+                        ),
                         reason,
                         changedBy,
                         now,
@@ -940,6 +841,8 @@ public class LiquidityProviderControlService {
             LocalDate effectiveBusinessDate,
             String reason,
             String changedBy,
+            String activationAction,
+            String targetStatus,
             LocalDateTime now
     ) {
         requireSingleUpdate(
@@ -955,7 +858,13 @@ public class LiquidityProviderControlService {
                            and status = 'SCHEDULED'
                         """,
                         effectiveBusinessDate,
-                        policyConfigJson(target, policy, target.status()),
+                        policyConfigJson(
+                                target,
+                                policy,
+                                target.status(),
+                                activationAction,
+                                targetStatus
+                        ),
                         reason,
                         changedBy,
                         now,
@@ -1006,11 +915,29 @@ public class LiquidityProviderControlService {
             PolicyValues policy,
             String mandateStatus
     ) {
+        return policyConfigJson(
+                target,
+                policy,
+                mandateStatus,
+                "POLICY_UPDATE",
+                mandateStatus
+        );
+    }
+
+    private String policyConfigJson(
+            MandateTarget target,
+            PolicyValues policy,
+            String mandateStatus,
+            String activationAction,
+            String targetStatus
+    ) {
         Map<String, Object> config = new LinkedHashMap<>();
         config.put("preset", "INDEPENDENT_LIQUIDITY_PROVIDER_V2");
         config.put("symbol", target.symbol());
         config.put("executionMode", target.executionMode());
         config.put("status", mandateStatus);
+        config.put("activationAction", activationAction);
+        config.put("targetStatus", targetStatus);
         config.put("targetSpreadTicks", policy.targetSpreadTicks());
         config.put("maxSpreadTicks", policy.maxSpreadTicks());
         config.put("maxOrderQuantity", policy.maxOrderQuantity());
@@ -1037,6 +964,110 @@ public class LiquidityProviderControlService {
         config.put("dailyLossLimitAmount", policy.dailyLossLimitAmount());
         try {
             return objectMapper.writeValueAsString(config);
+        } catch (JsonProcessingException ex) {
+            throw new IllegalStateException(
+                    "Liquidity-provider policy JSON serialization failed",
+                    ex
+            );
+        }
+    }
+
+    private void updateScheduledPolicyLifecycle(
+            long policyId,
+            LocalDate effectiveBusinessDate,
+            String reason,
+            String changedBy,
+            String activationAction,
+            String targetStatus,
+            LocalDateTime now
+    ) {
+        String configJson = jdbcClient.sql(
+                        """
+                        select config_json
+                          from stock_market_policy_version
+                         where id = ?
+                           and status = 'SCHEDULED'
+                         for update
+                        """
+                )
+                .param(policyId)
+                .query(String.class)
+                .optional()
+                .orElseThrow(() -> StockException.conflict(
+                        "Scheduled liquidity-provider policy is missing"
+                ));
+        ObjectNode root = requireObjectPolicyConfig(configJson);
+        root.put("activationAction", activationAction);
+        root.put("targetStatus", targetStatus);
+        requireSingleUpdate(
+                jdbcTemplate.update(
+                        """
+                        update stock_market_policy_version
+                           set effective_business_date = ?,
+                               config_json = ?,
+                               change_reason = ?,
+                               changed_by = ?,
+                               updated_at = ?
+                         where id = ?
+                           and status = 'SCHEDULED'
+                        """,
+                        effectiveBusinessDate,
+                        writePolicyConfig(root),
+                        reason,
+                        changedBy,
+                        now,
+                        policyId
+                ),
+                "Scheduled liquidity-provider lifecycle update"
+        );
+    }
+
+    private void cancelScheduledPolicies(String symbol) {
+        jdbcTemplate.update(
+                """
+                delete from stock_market_policy_version
+                 where policy_scope = 'LIQUIDITY_MANDATE'
+                   and scope_key = ?
+                   and status = 'SCHEDULED'
+                """,
+                symbol
+        );
+    }
+
+    private JsonNode readPolicyConfig(String configJson) {
+        try {
+            JsonNode root = objectMapper.readTree(configJson);
+            if (root != null && root.isTextual()) {
+                root = objectMapper.readTree(root.textValue());
+            }
+            if (root == null || !root.isObject()) {
+                throw new IllegalStateException(
+                        "Scheduled liquidity-provider policy JSON must be an object"
+                );
+            }
+            return root;
+        } catch (JsonProcessingException ex) {
+            throw new IllegalStateException(
+                    "Scheduled liquidity-provider policy JSON is invalid",
+                    ex
+            );
+        }
+    }
+
+    private ObjectNode requireObjectPolicyConfig(String configJson) {
+        return (ObjectNode) readPolicyConfig(configJson);
+    }
+
+    private String textOrDefault(JsonNode root, String fieldName, String defaultValue) {
+        JsonNode value = root.get(fieldName);
+        return value == null || value.isNull() || value.asText().isBlank()
+                ? defaultValue
+                : value.asText();
+    }
+
+    private String writePolicyConfig(JsonNode root) {
+        try {
+            return objectMapper.writeValueAsString(root);
         } catch (JsonProcessingException ex) {
             throw new IllegalStateException(
                     "Liquidity-provider policy JSON serialization failed",
@@ -1130,7 +1161,10 @@ public class LiquidityProviderControlService {
 
     private record ScheduledPolicyVersion(
             long id,
-            long version
+            long version,
+            String configJson,
+            String activationAction,
+            String targetStatus
     ) {
     }
 

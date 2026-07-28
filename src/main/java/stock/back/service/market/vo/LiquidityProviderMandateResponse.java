@@ -101,6 +101,8 @@ public record LiquidityProviderMandateResponse(
     public record ScheduledPolicy(
             long policyVersion,
             LocalDate effectiveBusinessDate,
+            String activationAction,
+            String targetStatus,
             Policy policy,
             String changeReason,
             String changedBy,

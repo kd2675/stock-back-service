@@ -959,6 +959,33 @@ class StockMysqlDdlContractTest {
     }
 
     @Test
+    void marketRoleScheduledActivationAlter_matchesBatchCopyAndAllowsPendingLifecycle()
+            throws IOException {
+        String backDdl = Files.readString(
+                Path.of("src/main/resources/db/ddl/stock_market_role_scheduled_activation_alter.sql"),
+                StandardCharsets.UTF_8
+        );
+        String batchDdl = Files.readString(
+                Path.of("../stock-batch-service/src/main/resources/db/ddl/"
+                        + "stock_market_role_scheduled_activation_alter.sql"),
+                StandardCharsets.UTF_8
+        );
+
+        assertThat(firstExecutableSqlLine(backDdl)).isEqualTo("USE STOCK_SERVICE;");
+        assertThat(normalizeSqlBlock(backDdl)).isEqualTo(normalizeSqlBlock(batchDdl));
+        assertThat(backDdl).contains(
+                "status IN ('PENDING', 'ACTIVE', 'SUSPENDED', 'EXPIRED')",
+                "stage IN ('PENDING_ACTIVATION', 'LIVE_ACTIVE', 'SUSPENDED')",
+                "(stage = 'PENDING_ACTIVATION' AND activated_at IS NULL)"
+        ).doesNotContain(
+                "UPDATE stock_account",
+                "UPDATE stock_holding",
+                "UPDATE stock_order",
+                "DELETE FROM stock_order"
+        );
+    }
+
+    @Test
     void legacyLiquidityRetirementAlter_transfersWholeAccountsAndIsBackOwned()
             throws IOException {
         Path backPath = Path.of(

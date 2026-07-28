@@ -17,14 +17,14 @@
 - `GET /api/stock/v1/markets/prices`
 - `GET /api/stock/v1/markets/prices/{symbol}/ticks`
 - `GET /api/stock/v1/markets/order-book-instruments`
-- `POST /api/stock/v1/markets/order-book-instruments` (`ADMIN`, 일시정지 장전 전용. 유통 50%·잠금 50%의 역할 분리형으로 배정하고 LP LIVE 전까지 시장을 비활성/CLOSED로 유지)
+- `POST /api/stock/v1/markets/order-book-instruments` (`ADMIN`, 실행 중에도 유통 50%·잠금 50%의 역할 분리형으로 배정하고 LP 활성화 전까지 시장을 비활성/CLOSED로 유지)
 - `POST /api/stock/v1/markets/order-book-instruments/{symbol}/corporate-actions` (`ADMIN`)
 - `GET /api/stock/v1/markets/order-book-instruments/{symbol}/corporate-actions`
 - `GET /api/stock/v1/markets/order-book-instruments/{symbol}/market-report`
 - `GET /api/stock/v1/markets/corporate-actions` (`actionType`, `limit` optional)
 - `GET /api/stock/v1/markets/order-book-instruments/{symbol}/reports`
 - `GET /api/stock/v1/markets/order-book-instruments/{symbol}/reports/latest`
-- `POST /api/stock/v1/markets/order-book-instruments` (`ADMIN`, 실행 중에도 신규 종목과 최초 배정원장을 원자적으로 생성하되 시장은 `CLOSED`·비활성으로 대기. 일시정지 장전에서 인수계약과 LP를 준비하면 다음 개장부터 거래)
+- `POST /api/stock/v1/markets/order-book-instruments` (`ADMIN`, 실행 중에도 신규 종목과 최초 배정원장을 원자적으로 생성하되 시장은 `CLOSED`·비활성으로 대기. 인수계약과 LP 준비 후 예약된 개장일부터 거래)
 - `POST /api/stock/v1/markets/order-book-instruments/{symbol}/reports` (`ADMIN`)
 - `PATCH /api/stock/v1/markets/order-book-instruments/{symbol}/reports` (`ADMIN`)
 - `DELETE /api/stock/v1/markets/order-book-instruments/{symbol}/reports` (`ADMIN`)
@@ -42,14 +42,14 @@
 - `POST /api/stock/v1/markets/institution-portfolios/{portfolioId}/suspend` (`ADMIN`, 실행 중 비상 중단. 정책 버전을 즉시 동결하고 대기 주문 의도·전용 계좌 미체결 주문과 예약을 정리)
 - `GET /api/stock/v1/markets/liquidity-mandates` (`ADMIN`, 전용 LP 계약·계정/STP·거래일 위험 상태 감사)
 - `GET /api/stock/v1/markets/liquidity-mandates/recommendations` (`ADMIN`, 종목별 권장 기준 거래량·시드 수량·초기 현금과 생성 가능 상태)
-- `POST /api/stock/v1/markets/liquidity-mandates/{symbol}` (`ADMIN`, 일시정지 장전에서 유통 대기·인수 계정의 시드 자산을 이전하고 종목 전용 LP를 LIVE로 생성. 역할 분리형 신규 상장은 같은 커밋에서 다음 장 개장 대상으로 활성화)
+- `POST /api/stock/v1/markets/liquidity-mandates/{symbol}` (`ADMIN`, 실행 중에도 유통 대기·인수 계정의 시드 자산을 LP 계정으로 이전하고 PENDING 상태와 다음 안전 개장일 활성화 예약을 함께 생성)
 - `PATCH /api/stock/v1/markets/liquidity-mandates/{symbol}/policy` (`ADMIN`, 활성·중단 LP의 호가·재고·일일한도 정책을 다음 거래일 적용으로 예약하며 당일 정책과 누적 상태는 변경하지 않음)
 - `POST /api/stock/v1/markets/liquidity-mandates/{symbol}/suspend` (`ADMIN`, 즉시 LP 중단과 해당 LP 미체결 주문·예약 취소)
-- `POST /api/stock/v1/markets/liquidity-mandates/{symbol}/resume` (`ADMIN`, 일시정지 장전·당일 미사용 상태에서 LP LIVE 재개)
+- `POST /api/stock/v1/markets/liquidity-mandates/{symbol}/resume` (`ADMIN`, SUSPENDED 상태를 유지하고 다음 안전 개장일 재개를 예약. 중단 요청은 예약된 재개도 취소)
 - `GET /api/stock/v1/markets/underwriting-contracts` (`ADMIN`, 인수재고·최초 배정·누적 제출/체결·최근 일일 공급 게이트 감사)
 - `GET /api/stock/v1/markets/underwriting-contracts/recommendations` (`ADMIN`, 권장 인수기관·종목별 계정 수와 발행 대기 수량)
-- `POST /api/stock/v1/markets/underwriting-contracts/{symbol}` (`ADMIN`, 발행 대기 유통분을 종목 전용 인수계정으로 옮기고 계약 1건만 생성)
-- `POST /api/stock/v1/markets/underwriting-contracts/{contractId}/supply/activate` (`ADMIN`, 일시정지 장전에서 주문장 시장·종목 자동시장·기준 거래량 위험 설정과 계약·최초 배정원장·전체 발행주식 보존을 사전 검증하고 현재 가용 인수재고 대비 1~25%·1~60일의 유한 수동 매도 공급 활성화)
+- `POST /api/stock/v1/markets/underwriting-contracts/{symbol}` (`ADMIN`, 실행 중에도 발행 대기 유통분을 종목 전용 인수계정으로 옮기고 ALLOCATED 계약 1건만 생성)
+- `POST /api/stock/v1/markets/underwriting-contracts/{contractId}/supply/activate` (`ADMIN`, ALLOCATED 상태를 유지하고 다음 안전 개장일 공급률·기간 적용을 예약. 장전 배치가 실제 가용 인수재고와 원장 대사를 다시 검증한 뒤 STABILIZING으로 전환)
 - `POST /api/stock/v1/markets/underwriting-contracts/{contractId}/supply/suspend` (`ADMIN`, 실행 중 즉시 신규 공급을 중단하고 계약 전용 미체결 주문과 주식 예약을 정리하되 사용한 제출예산은 복원하지 않음)
 - `GET /api/stock/v1/markets/system-custody` (`ADMIN`, 탈퇴·유통 대기·잠금 시스템 보관계정의 권장 개수와 실제 잔고)
 - `GET /api/stock/v1/markets/batch-jobs/eod/overview` (`ADMIN`)
@@ -134,7 +134,7 @@ scripts/stock-smoke.sh
 - 기관 현금 조정은 정책 수정과 분리합니다. 입금·회수는 `stock_account.cash_balance`와 `stock_account_cash_flow`를 같은 트랜잭션에서 갱신하며 회수는 매수 예약금을 제외한 가용 현금까지만 허용합니다. 현재 AUM은 가용 현금+예약 현금+보유 평가액이므로 다음 기관 결정의 목표 금액과 일일·결정당 회전 한도도 별도 기준값 수정 없이 현재 자산으로 재계산됩니다.
 - Hikari 풀은 local/dev 기본 8개이며, prod는 `STOCK_DB_MAX_POOL_SIZE`, `STOCK_DB_CONNECTION_TIMEOUT`, `STOCK_DB_MAX_LIFETIME`, `STOCK_DB_KEEPALIVE_TIME`로 조정합니다.
 - DDL은 schema와 제약만 생성합니다. 기본 종목, 최초 가격, 자동 참여자는 seed하지 않으며 관리자 API 또는 smoke/test 데이터에서 명시적으로 등록합니다.
-- 기존 DB에 축소시장 역할 재구성 스키마를 추가할 때는 서버와 스케줄러를 모두 중지하고 `stock_market_role_foundation_alter.sql` → `stock_system_custody_withdrawal_alter.sql` → `stock_institution_engine_alter.sql` → `stock_institution_live_only_alter.sql` → `stock_liquidity_provider_engine_alter.sql` → `stock_issuance_underwriting_alter.sql` → `stock_market_role_independent_provisioning_alter.sql` → `stock_underwriter_scaled_supply_alter.sql` → `stock_liquidity_transition_alter.sql` → `stock_liquidity_live_only_alter.sql` → `stock_obsolete_participant_role_cleanup_alter.sql` → `stock_legacy_liquidity_retirement_alter.sql` → `stock_legacy_underwriting_history_backfill.sql` 순서로 적용합니다. 기관 LIVE 정리 파일은 과거 비LIVE 대기 intent를 거절한 뒤 포트폴리오와 결정 실행모드를 모두 LIVE 계약으로 고정합니다. 역할 정리 파일은 유동성 전환 원장에 연결된 과거 계좌와 장마감 스냅샷을 `ISSUE_UNDERWRITER`로 통합하고 반환 감사 스키마의 호환 필드를 제거합니다. retirement 파일은 일시정지 상태와 예약·미체결·발행량 대사를 확인하고 기존 자동유동성 계좌의 현금·주식 전량을 종목별 LP 계좌로 옮긴 뒤 구계좌를 0잔고 `CLOSED` 감사 계좌로 남기고 레거시 설정 테이블을 제거합니다. 이어지는 인수 이력 백필은 이 폐쇄 계정을 종목별 과거 `ISSUE_UNDERWRITER` 계정으로 연결하고 완료 계약·최초 유통 배정·폐기된 정책 이력만 복원합니다. 역할 정리 외의 현금·보유·주문·체결 수량은 변경하지 않습니다. 각 파일은 재실행 가능하게 작성했지만 MySQL DDL 묶음 전체가 하나의 트랜잭션은 아니므로 파일별 적용 결과와 원장 대사를 남긴 뒤 다음 파일로 진행합니다. 코드 배포는 역할 스키마 readiness가 모두 통과한 뒤에만 합니다.
+- 기존 DB에 축소시장 역할 재구성 스키마를 추가할 때는 서버와 스케줄러를 모두 중지하고 `stock_market_role_foundation_alter.sql` → `stock_system_custody_withdrawal_alter.sql` → `stock_institution_engine_alter.sql` → `stock_institution_live_only_alter.sql` → `stock_liquidity_provider_engine_alter.sql` → `stock_issuance_underwriting_alter.sql` → `stock_market_role_independent_provisioning_alter.sql` → `stock_underwriter_scaled_supply_alter.sql` → `stock_liquidity_transition_alter.sql` → `stock_liquidity_live_only_alter.sql` → `stock_market_role_scheduled_activation_alter.sql` → `stock_obsolete_participant_role_cleanup_alter.sql` → `stock_legacy_liquidity_retirement_alter.sql` → `stock_legacy_underwriting_history_backfill.sql` 순서로 적용합니다. 기관 LIVE 정리 파일은 과거 비LIVE 대기 intent를 거절한 뒤 포트폴리오와 결정 실행모드를 모두 LIVE 계약으로 고정합니다. 예약 활성화 파일은 LP 전환 테이블 생성과 LIVE 전용 레거시 정리가 끝난 뒤 PENDING 상태를 허용하는 최종 제약으로 교체합니다. 역할 정리 파일은 유동성 전환 원장에 연결된 과거 계좌와 장마감 스냅샷을 `ISSUE_UNDERWRITER`로 통합하고 반환 감사 스키마의 호환 필드를 제거합니다. retirement 파일은 일시정지 상태와 예약·미체결·발행량 대사를 확인하고 기존 자동유동성 계좌의 현금·주식 전량을 종목별 LP 계좌로 옮긴 뒤 구계좌를 0잔고 `CLOSED` 감사 계좌로 남기고 레거시 설정 테이블을 제거합니다. 이어지는 인수 이력 백필은 이 폐쇄 계정을 종목별 과거 `ISSUE_UNDERWRITER` 계정으로 연결하고 완료 계약·최초 유통 배정·폐기된 정책 이력만 복원합니다. 역할 정리 외의 현금·보유·주문·체결 수량은 변경하지 않습니다. 각 파일은 재실행 가능하게 작성했지만 MySQL DDL 묶음 전체가 하나의 트랜잭션은 아니므로 파일별 적용 결과와 원장 대사를 남긴 뒤 다음 파일로 진행합니다. 코드 배포는 역할 스키마 readiness가 모두 통과한 뒤에만 합니다.
 - 역할 분리형 신규 상장의 비유통·락업 물량은 종목별 `SYSTEM_CUSTODY` 하위계정(`ISSUANCE_LOCKUP:<symbol>`)에 보관합니다. 탈퇴자산을 받는 기본 `stock-system-custody` 계정과 실물 보유를 섞지 않으며, 두 계정군의 경제적 출처는 `stock_security_allocation_ledger`와 탈퇴 이전 감사 원장으로 각각 추적합니다.
 - 현재 역할 재구성 범위는 기반 스키마, 기관 다종목 직접 LIVE, 종목별 LP 직접 LIVE, 유한 인수 공급, 탈퇴 custody까지입니다. 기관과 LP에는 SHADOW/PILOT 생성·활성화 단계를 두지 않습니다. 레짐 V2, 역할별 별도 일일 snapshot, 락업 해제 workflow는 구현 완료로 간주하지 않습니다. `unlock_business_date`가 `NULL`인 최초 락업 배정은 현재 영구 보관 상태이며 운영자가 임의로 유통량에 포함하거나 계정 간 이전해서는 안 됩니다.
 - 7종목에서 인수계정 7개, LP계정 7개, 종목별 유통 대기 custody 7개, 락업 custody 7개, 기관 포트폴리오 4개, 탈퇴 custody 1개를 모두 만들면 총 33계정입니다. 기관·인수·LP는 각각 단건 생성하며 이 수치는 전 역할을 모두 채웠을 때의 권장 상한 설명일 뿐 자동 생성 개수가 아닙니다.

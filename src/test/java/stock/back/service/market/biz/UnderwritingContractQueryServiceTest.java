@@ -1,5 +1,7 @@
 package stock.back.service.market.biz;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+
 import java.math.BigDecimal;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -43,7 +45,10 @@ class UnderwritingContractQueryServiceTest {
         );
         new ResourceDatabasePopulator(new FileSystemResource(batchH2Ddl())).execute(dataSource);
         jdbcTemplate = new JdbcTemplate(dataSource);
-        service = new UnderwritingContractQueryService(JdbcClient.create(dataSource));
+        service = new UnderwritingContractQueryService(
+                JdbcClient.create(dataSource),
+                new ObjectMapper()
+        );
         underwriterParticipantId = jdbcTemplate.queryForObject(
                 "select id from stock_market_participant "
                         + "where participant_code = 'DEFAULT_ISSUE_UNDERWRITER'",
@@ -82,6 +87,37 @@ class UnderwritingContractQueryServiceTest {
                     .extracting(allocation -> allocation.tradabilityStatus())
                     .containsExactly("TRADABLE", "LOCKED");
         });
+    }
+
+    @Test
+    void getContracts_scheduledSupply_exposesActivationDateAndPolicy() {
+        jdbcTemplate.update(
+                """
+                insert into stock_market_policy_version(
+                    policy_scope, scope_key, version_no,
+                    effective_business_date, status, config_json,
+                    change_reason, changed_by, created_at, updated_at
+                ) values (
+                    'UNDERWRITING_CONTRACT', 'INITIAL-ISSUE:DEMO001', 2,
+                    ?, 'SCHEDULED',
+                    '{"activationAction":"ACTIVATE_SUPPLY","targetStatus":"STABILIZING","contractId":401,"contractCode":"INITIAL-ISSUE:DEMO001","symbol":"DEMO001","supplyRate":0.100000,"durationDays":20}',
+                    '다음 개장 공급', 'stock-admin', ?, ?
+                )
+                """,
+                BUSINESS_DATE.plusDays(1),
+                NOW,
+                NOW
+        );
+
+        UnderwritingContractResponse.ScheduledSupply scheduledSupply =
+                service.getContracts().getFirst().scheduledSupply();
+
+        assertThat(scheduledSupply).isNotNull();
+        assertThat(scheduledSupply.effectiveBusinessDate())
+                .isEqualTo(BUSINESS_DATE.plusDays(1));
+        assertThat(scheduledSupply.activationAction()).isEqualTo("ACTIVATE_SUPPLY");
+        assertThat(scheduledSupply.supplyRate()).isEqualByComparingTo("0.100000");
+        assertThat(scheduledSupply.durationDays()).isEqualTo(20);
     }
 
     @Test
