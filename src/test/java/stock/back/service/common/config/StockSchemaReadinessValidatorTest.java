@@ -39,6 +39,19 @@ class StockSchemaReadinessValidatorTest {
     }
 
     @Test
+    void extractCheckLiterals_mysqlEscapedQuotes_returnsExactValues() {
+        String checkClause = """
+                (`participant_category` in (
+                  _utf8mb4\\'MANUAL_PARTICIPANT\\',
+                  _utf8mb4\\'AUTO_PARTICIPANT\\'
+                ))
+                """;
+
+        assertThat(StockSchemaReadinessValidator.extractCheckLiterals(checkClause))
+                .containsExactlyInAnyOrder("manual_participant", "auto_participant");
+    }
+
+    @Test
     void run_missingEodSchema_failsClosedBeforeApiAcceptsRequests() {
         DriverManagerDataSource dataSource = new DriverManagerDataSource(
                 "jdbc:h2:mem:back_schema_readiness_missing;MODE=MySQL;DB_CLOSE_DELAY=-1",
