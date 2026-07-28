@@ -54,6 +54,7 @@ class OrderBookInstrumentRoleSeparatedIntegrationTest {
     private StockOrderBookInstrumentRepository instrumentRepository;
     private StockCorporateActionRepository corporateActionRepository;
     private StockOrderBookMarketConfigRepository marketConfigRepository;
+    private SimulationClockService simulationClockService;
     private OrderBookInstrumentCommandService service;
     private SystemCustodyQueryService systemCustodyQueryService;
     private UnderwritingContractQueryService underwritingContractQueryService;
@@ -80,7 +81,7 @@ class OrderBookInstrumentRoleSeparatedIntegrationTest {
         instrumentRepository = mock(StockOrderBookInstrumentRepository.class);
         marketConfigRepository = mock(StockOrderBookMarketConfigRepository.class);
         corporateActionRepository = mock(StockCorporateActionRepository.class);
-        SimulationClockService simulationClockService = mock(SimulationClockService.class);
+        simulationClockService = mock(SimulationClockService.class);
         SimulationMarketSessionService marketSessionService =
                 mock(SimulationMarketSessionService.class);
         MarketLedgerFreezeGuard freezeGuard = mock(MarketLedgerFreezeGuard.class);
@@ -95,7 +96,7 @@ class OrderBookInstrumentRoleSeparatedIntegrationTest {
         when(simulationClockService.currentMarketDateTime()).thenReturn(NOW);
         when(simulationClockService.currentSnapshot()).thenReturn(pausedClock());
         when(marketSessionService.currentSession()).thenReturn(SimulationMarketSession.PRE_OPEN);
-        when(freezeGuard.acquirePreOpenMutationPermit(any())).thenReturn(NOW.toLocalDate());
+        when(freezeGuard.acquireMutationPermit(any())).thenReturn(NOW.toLocalDate());
         when(freezeGuard.acquireJdbcPreOpenMutationPermit(any())).thenReturn(NOW.toLocalDate());
 
         service = new OrderBookInstrumentCommandService(
@@ -107,7 +108,6 @@ class OrderBookInstrumentRoleSeparatedIntegrationTest {
                 corporateActionRepository,
                 jdbcTemplate,
                 simulationClockService,
-                marketSessionService,
                 freezeGuard
         );
         underwritingProvisionService = new UnderwritingContractProvisionService(
@@ -125,6 +125,8 @@ class OrderBookInstrumentRoleSeparatedIntegrationTest {
 
     @Test
     void create_defaultIssueStagesFloatAndLockedSharesWithoutEconomicRoles() {
+        when(simulationClockService.currentSnapshot()).thenReturn(runningClock());
+
         OrderBookInstrumentResponse response = service.createOrderBookInstrument(
                 defaultRequest()
         );
@@ -480,6 +482,14 @@ class OrderBookInstrumentRoleSeparatedIntegrationTest {
     }
 
     private SimulationClockSnapshot pausedClock() {
+        return clock(false);
+    }
+
+    private SimulationClockSnapshot runningClock() {
+        return clock(true);
+    }
+
+    private SimulationClockSnapshot clock(boolean running) {
         return new SimulationClockSnapshot(
                 NOW.toLocalDate(),
                 NOW,
@@ -487,11 +497,11 @@ class OrderBookInstrumentRoleSeparatedIntegrationTest {
                 NOW,
                 NOW.toLocalDate().atStartOfDay(),
                 7_200,
-                false,
+                running,
                 false,
                 0L,
-                null,
-                null
+                running ? NOW : null,
+                running ? NOW : null
         );
     }
 }

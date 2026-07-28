@@ -17,7 +17,6 @@ import stock.back.service.database.repository.StockOrderBookMarketConfigReposito
 import stock.back.service.database.repository.StockPriceRepository;
 import stock.back.service.market.vo.OrderBookInstrumentRequest;
 import web.common.core.simulation.SimulationClockSnapshot;
-import web.common.core.simulation.SimulationMarketSession;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -57,9 +56,6 @@ class OrderBookInstrumentCommandServiceTest {
     @Mock
     private MarketLedgerFreezeGuard marketLedgerFreezeGuard;
 
-    @Mock
-    private SimulationMarketSessionService marketSessionService;
-
     private final LocalDateTime simulationNow = LocalDateTime.of(2026, 7, 1, 5, 0);
     private JdbcTemplate jdbcTemplate;
 
@@ -71,9 +67,7 @@ class OrderBookInstrumentCommandServiceTest {
         lenient().when(simulationClockService.currentMarketDateTime()).thenReturn(simulationNow);
         lenient().when(simulationClockService.currentSnapshot())
                 .thenReturn(pausedClock(simulationNow));
-        lenient().when(marketSessionService.currentSession())
-                .thenReturn(SimulationMarketSession.PRE_OPEN);
-        lenient().when(marketLedgerFreezeGuard.acquirePreOpenMutationPermit(any()))
+        lenient().when(marketLedgerFreezeGuard.acquireMutationPermit(any()))
                 .thenReturn(simulationNow.toLocalDate());
         service = new OrderBookInstrumentCommandService(
                 stockInstrumentRepository,
@@ -84,15 +78,15 @@ class OrderBookInstrumentCommandServiceTest {
                 stockCorporateActionRepository,
                 jdbcTemplate,
                 simulationClockService,
-                marketSessionService,
                 marketLedgerFreezeGuard
         );
     }
 
     @Test
-    void createOrderBookInstrument_runningClock_rejectsBeforeLedgerMutation() {
+    void createOrderBookInstrument_runningClock_allowsStagingUntilDomainValidation() {
         when(simulationClockService.currentSnapshot())
                 .thenReturn(runningClock(simulationNow));
+        when(stockOrderBookInstrumentRepository.existsById("ZQ001")).thenReturn(true);
 
         assertThatThrownBy(() -> service.createOrderBookInstrument(
                 new OrderBookInstrumentRequest(
@@ -106,9 +100,11 @@ class OrderBookInstrumentCommandServiceTest {
                 )
         ))
                 .isInstanceOf(StockException.class)
-                .hasMessageContaining("Pause the simulation clock");
+                .hasMessageContaining("Order book symbol already exists: ZQ001");
 
-        verify(marketLedgerFreezeGuard, never()).acquirePreOpenMutationPermit(any());
+        verify(marketLedgerFreezeGuard).acquireMutationPermit(
+                "order-book instrument staging"
+        );
         verify(stockOrderBookInstrumentRepository, never()).save(any());
         verify(stockCorporateActionRepository, never()).save(any());
     }

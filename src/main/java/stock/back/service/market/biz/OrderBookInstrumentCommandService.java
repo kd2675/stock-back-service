@@ -21,7 +21,6 @@ import stock.back.service.market.vo.OrderBookInstrumentRequest;
 import stock.back.service.market.vo.OrderBookInstrumentResponse;
 import stock.back.service.market.vo.OrderBookInstrumentTradingRulesRequest;
 import web.common.core.simulation.SimulationClockSnapshot;
-import web.common.core.simulation.SimulationMarketSession;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -57,7 +56,6 @@ public class OrderBookInstrumentCommandService {
     private final JdbcTemplate jdbcTemplate;
     private final JdbcClient jdbcClient;
     private final SimulationClockService simulationClockService;
-    private final SimulationMarketSessionService marketSessionService;
     private final MarketLedgerFreezeGuard marketLedgerFreezeGuard;
 
     public OrderBookInstrumentCommandService(
@@ -69,7 +67,6 @@ public class OrderBookInstrumentCommandService {
             StockCorporateActionRepository stockCorporateActionRepository,
             JdbcTemplate jdbcTemplate,
             SimulationClockService simulationClockService,
-            SimulationMarketSessionService marketSessionService,
             MarketLedgerFreezeGuard marketLedgerFreezeGuard
     ) {
         this.stockInstrumentRepository = stockInstrumentRepository;
@@ -81,7 +78,6 @@ public class OrderBookInstrumentCommandService {
         this.jdbcTemplate = jdbcTemplate;
         this.jdbcClient = JdbcClient.create(jdbcTemplate);
         this.simulationClockService = simulationClockService;
-        this.marketSessionService = marketSessionService;
         this.marketLedgerFreezeGuard = marketLedgerFreezeGuard;
     }
 
@@ -99,15 +95,11 @@ public class OrderBookInstrumentCommandService {
         if (market.isBlank()) {
             market = "ORDERBOOK";
         }
-        SimulationClockSnapshot clock = requirePausedPreOpen();
-        LocalDate activeBusinessDate = marketLedgerFreezeGuard.acquirePreOpenMutationPermit(
-                "order-book instrument listing"
+        SimulationClockSnapshot clock = simulationClockService.currentSnapshot();
+        LocalDate activeBusinessDate = marketLedgerFreezeGuard.acquireMutationPermit(
+                "order-book instrument staging"
         );
-        if (!activeBusinessDate.equals(clock.simulationDate())) {
-            throw StockException.conflict(
-                    "Simulation date and active market business date must match"
-            );
-        }
+        requireCompatibleBusinessDate(clock, activeBusinessDate);
         validateInstrumentRequest(symbol, name, market, request);
         if (stockInstrumentRepository.existsById(symbol)) {
             throw StockException.conflict("Symbol already exists in virtual price market: " + symbol);
@@ -155,19 +147,19 @@ public class OrderBookInstrumentCommandService {
         return OrderBookInstrumentResponseMapper.toResponse(instrument, findPrice(instrument));
     }
 
-    private SimulationClockSnapshot requirePausedPreOpen() {
-        SimulationClockSnapshot clock = simulationClockService.currentSnapshot();
-        if (clock.running()) {
+    private void requireCompatibleBusinessDate(
+            SimulationClockSnapshot clock,
+            LocalDate activeBusinessDate
+    ) {
+        LocalDate simulationDate = clock.simulationDate();
+        if (!simulationDate.equals(activeBusinessDate)
+                && !simulationDate.equals(activeBusinessDate.plusDays(1))) {
             throw StockException.conflict(
-                    "Pause the simulation clock before listing an order-book instrument"
+                    "Simulation date is inconsistent with the active market business date: "
+                            + "active=" + activeBusinessDate
+                            + ", simulation=" + simulationDate
             );
         }
-        if (marketSessionService.currentSession() != SimulationMarketSession.PRE_OPEN) {
-            throw StockException.conflict(
-                    "Order-book instruments can only be listed during a paused pre-open"
-            );
-        }
-        return clock;
     }
 
     @Transactional

@@ -173,14 +173,10 @@ class MarketServiceTest {
         SimulationMarketSessionService simulationMarketSessionService =
                 new SimulationMarketSessionService(simulationClockService, "00:00", "23:59");
         SimulationClockService listingClockService = mock(SimulationClockService.class);
-        SimulationMarketSessionService listingSessionService =
-                mock(SimulationMarketSessionService.class);
         LocalDateTime listingNow = LocalDate.now().atTime(5, 0);
         lenient().when(listingClockService.currentSnapshot())
                 .thenReturn(pausedSimulationClockSnapshot(listingNow));
-        lenient().when(listingSessionService.currentSession())
-                .thenReturn(SimulationMarketSession.PRE_OPEN);
-        lenient().when(marketLedgerFreezeGuard.acquirePreOpenMutationPermit("order-book instrument listing"))
+        lenient().when(marketLedgerFreezeGuard.acquireMutationPermit("order-book instrument staging"))
                 .thenReturn(listingNow.toLocalDate());
         AutoMarketStatusDataLoader autoMarketStatusDataLoader = new AutoMarketStatusDataLoader(
                 jdbcTemplate,
@@ -196,7 +192,6 @@ class MarketServiceTest {
                         stockCorporateActionRepository,
                         commandJdbcTemplate,
                         listingClockService,
-                        listingSessionService,
                         marketLedgerFreezeGuard
                 ),
                 new MarketCatalogQueryService(

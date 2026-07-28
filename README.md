@@ -24,6 +24,7 @@
 - `GET /api/stock/v1/markets/corporate-actions` (`actionType`, `limit` optional)
 - `GET /api/stock/v1/markets/order-book-instruments/{symbol}/reports`
 - `GET /api/stock/v1/markets/order-book-instruments/{symbol}/reports/latest`
+- `POST /api/stock/v1/markets/order-book-instruments` (`ADMIN`, 실행 중에도 신규 종목과 최초 배정원장을 원자적으로 생성하되 시장은 `CLOSED`·비활성으로 대기. 일시정지 장전에서 인수계약과 LP를 준비하면 다음 개장부터 거래)
 - `POST /api/stock/v1/markets/order-book-instruments/{symbol}/reports` (`ADMIN`)
 - `PATCH /api/stock/v1/markets/order-book-instruments/{symbol}/reports` (`ADMIN`)
 - `DELETE /api/stock/v1/markets/order-book-instruments/{symbol}/reports` (`ADMIN`)
