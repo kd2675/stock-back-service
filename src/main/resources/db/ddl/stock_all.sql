@@ -2106,6 +2106,8 @@ CREATE TABLE IF NOT EXISTS stock_institution_order_intent (
     CASE status
       WHEN 'PENDING' THEN 1
       WHEN 'SUBMITTED' THEN 1
+      WHEN 'COMPLETED' THEN 1
+      WHEN 'CANCELLED' THEN 1
       WHEN 'REJECTED' THEN 1
       WHEN 'FAILED' THEN 1
       ELSE 0
@@ -2113,14 +2115,14 @@ CREATE TABLE IF NOT EXISTS stock_institution_order_intent (
   ),
   CONSTRAINT chk_stock_institution_order_intent_submission CHECK (
     (
-      status = 'SUBMITTED'
+      status IN ('SUBMITTED', 'COMPLETED', 'CANCELLED')
       AND submitted_order_id IS NOT NULL
       AND submitted_price > 0
       AND submitted_quantity > 0
       AND submitted_at IS NOT NULL
     )
     OR (
-      status <> 'SUBMITTED'
+      status NOT IN ('SUBMITTED', 'COMPLETED', 'CANCELLED')
       AND submitted_order_id IS NULL
       AND submitted_price IS NULL
       AND submitted_quantity = 0

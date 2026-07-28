@@ -836,7 +836,12 @@ class StockMysqlDdlContractTest {
                 "reference_daily_volume",
                 "remaining_daily_quantity_budget",
                 "planned_buy_quantity",
-                "uk_stock_institution_decision_slot"
+                "uk_stock_institution_decision_slot",
+                "WHEN 'COMPLETED' THEN 1",
+                "WHEN 'CANCELLED' THEN 1",
+                "status IN ('SUBMITTED', 'COMPLETED', 'CANCELLED')",
+                "DROP CHECK chk_stock_institution_order_intent_status",
+                "DROP CHECK chk_stock_institution_order_intent_submission"
         );
         assertThat(backDdl).doesNotContain(
                 "INSERT INTO stock_order",
